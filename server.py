@@ -98,45 +98,77 @@ def check_policy(command: str):
 # MCP tool
 # ---------------------------------------------------------------------------
 
+# Maximum number of blocked attempts allowed before the action is permanently
+# refused for this request. The agent may retry up to this many times total.
+MAX_RETRIES = 3
+
+
 @mcp.tool()
-def execute_command(command: str) -> str:
+def execute_command(command: str, retry_count: int = 0) -> str:
     """
     Execute a shell command and return its output.
 
     The command is checked against the policy engine before execution.
-    Blocked commands are logged and rejected without running.
+    Blocked commands are logged and rejected without running. The agent
+    may retry with a safer alternative up to MAX_RETRIES times total.
 
     Args:
-        command: The shell command to run (e.g. "ls -la" or "echo hello").
+        command:     The shell command to run (e.g. "ls -la" or "echo hello").
+        retry_count: How many times this command has already been retried
+                     after a policy block (default 0, max MAX_RETRIES).
 
     Returns:
-        stdout from the command, stderr/exit-code on failure, or a policy
-        error message if the command was blocked.
+        stdout from the command, stderr/exit-code on failure, or a structured
+        policy block message (with retry guidance) if the command was blocked.
     """
 
     # --- 1. Run the policy check ---
     allowed, reason = check_policy(command)
 
-    # --- 2. Build the log entry (common fields for both outcomes) ---
+    # --- 2. Build the log entry (common fields for all outcomes) ---
     log_entry = {
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "source": "ai-agent",
         "tool": "execute_command",
         "command": command,
         "policy_decision": "allowed" if allowed else "blocked",
+        # Always record the retry count so the log shows the full retry history
+        "retry_count": retry_count,
     }
 
     if not allowed:
         # Add the block reason so the log explains exactly why
         log_entry["block_reason"] = reason
 
+        # If this is the final attempt, mark it permanently blocked in the log
+        if retry_count >= MAX_RETRIES:
+            log_entry["final_block"] = True
+
     # --- 3. Write the log entry (always, regardless of allow/block) ---
     with open("/Users/liviu/Documents/ai-runtime-guard/activity.log", "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
-    # --- 4. If blocked, return an error message without executing anything ---
+    # --- 4. If blocked, return a structured message without executing anything ---
     if not allowed:
-        return f"[POLICY BLOCK] {reason}"
+        if retry_count >= MAX_RETRIES:
+            # The agent has used all of its attempts — refuse permanently.
+            return (
+                f"[POLICY BLOCK] {reason}\n\n"
+                "Maximum retries reached (3/3). This action is permanently "
+                "blocked for the current request. No further attempts will be accepted."
+            )
+
+        # Calculate how many attempts the agent still has left.
+        attempts_remaining = MAX_RETRIES - retry_count
+
+        # Return a structured message that tells the agent what went wrong,
+        # how many attempts remain, and asks it to try a safer alternative.
+        return (
+            f"[POLICY BLOCK] {reason}\n\n"
+            f"You have {attempts_remaining} attempt(s) remaining. "
+            "Please retry execute_command with a safer alternative command "
+            f"and set retry_count={retry_count + 1}."
+        )
 
     # --- 5. Execute the command ---
     result = subprocess.run(
