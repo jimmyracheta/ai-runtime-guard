@@ -8,6 +8,7 @@ are logged and rejected. Allowed file writes are backed up first; allowed
 commands are optionally backed up and then executed via subprocess.
 """
 
+import hashlib
 import json
 import os
 import pathlib
@@ -41,13 +42,61 @@ POLICY: dict = _load_policy()
 # MAX_RETRIES is read from policy so it can be tuned without touching code.
 MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
-# Tracks commands the user has explicitly approved during this session.
+# Tracks sha256 hashes of normalized commands approved during this session.
+# Storing hashes instead of raw strings means whitespace variations of an
+# approved command (e.g. "ls  -la" vs "ls -la") are treated as identical.
 # When requires_confirmation.session_whitelist_enabled is True in policy,
-# a command in this set bypasses the confirmation check on future calls.
+# a command whose hash is in this set bypasses the confirmation check.
 SESSION_WHITELIST: set = set()
 
 # Create the MCP server with a descriptive name.
 mcp = FastMCP("ai-runtime-guard")
+
+
+# ---------------------------------------------------------------------------
+# Command normalization
+# ---------------------------------------------------------------------------
+
+def normalize_command(command: str) -> str:
+    """
+    Normalize a shell command for policy matching.
+
+    Steps:
+      1. Strip leading and trailing whitespace.
+      2. Collapse consecutive whitespace characters into a single space.
+      3. Lowercase the result.
+
+    The lowercased form is used exclusively for pattern matching inside the
+    policy engine. Original casing is never used for matching — only for
+    logging via normalize_for_audit().
+    """
+    return re.sub(r"\s+", " ", command.strip()).lower()
+
+
+def normalize_for_audit(command: str) -> str:
+    """
+    Normalize a shell command for audit logging.
+
+    Steps:
+      1. Strip leading and trailing whitespace.
+      2. Collapse consecutive whitespace characters into a single space.
+      3. Preserve original case.
+
+    Used when building log entries so the audit trail shows a clean command
+    string while still reflecting the original capitalization the agent used.
+    """
+    return re.sub(r"\s+", " ", command.strip())
+
+
+def command_hash(command: str) -> str:
+    """
+    Return the sha256 hex digest of the normalized command.
+
+    Normalization is applied first so whitespace variations of the same
+    command always produce the same hash. Used as the key for SESSION_WHITELIST
+    so "ls  -la" and "ls -la" are treated as a single approval.
+    """
+    return hashlib.sha256(normalize_command(command).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +184,11 @@ def _check_confirmation_tier(command: str) -> str | None:
     conf  = POLICY.get("requires_confirmation", {})
     lower = command.lower()
 
-    # Skip the confirmation check for previously approved commands.
+    # Skip the confirmation check if the command was approved earlier this
+    # session. Comparison is done by hash so whitespace variants of an
+    # approved command don't require a second confirmation.
     whitelist_enabled = conf.get("session_whitelist_enabled", True)
-    if whitelist_enabled and command in SESSION_WHITELIST:
+    if whitelist_enabled and command_hash(command) in SESSION_WHITELIST:
         return None
 
     for pattern in conf.get("commands", []):
@@ -187,19 +238,23 @@ def _check_simulation_tier(command: str) -> str | None:
     return None
 
 
-def _log_policy_conflict(command: str, matching_tiers: list) -> None:
+def _log_policy_conflict(command: str, normalized: str, matching_tiers: list) -> None:
     """
     Append a warning entry to activity.log when *command* matches more than
     one policy tier. Records which tiers matched and which one won so the
     audit trail explains the resolution.
+
+    Both the original command string and the normalized form used for matching
+    are included so the log is unambiguous.
     """
     tier_names = [tier for tier, _ in matching_tiers]
     warning = {
-        "timestamp":      datetime.datetime.utcnow().isoformat() + "Z",
-        "event":          "policy_conflict_warning",
-        "command":        command,
-        "matching_tiers": tier_names,
-        "resolved_to":    tier_names[0],  # highest-priority tier always wins
+        "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
+        "event":              "policy_conflict_warning",
+        "command":            command,
+        "normalized_command": normalized,
+        "matching_tiers":     tier_names,
+        "resolved_to":        tier_names[0],  # highest-priority tier always wins
     }
     with open(LOG_PATH, "a") as f:
         f.write(json.dumps(warning) + "\n")
@@ -211,6 +266,11 @@ def check_policy(command: str):
 
         blocked  >  requires_confirmation  >  requires_simulation  >  allowed
 
+    The command is normalized (whitespace-collapsed and lowercased) before
+    being passed to every tier function so pattern matching is consistent
+    regardless of how the agent formatted the command string. The original
+    command is preserved for logging purposes only.
+
     Each tier is checked independently so we can detect conflicts. If a
     command matches more than one tier, the highest-priority tier wins and
     a warning is silently logged to activity.log.
@@ -221,23 +281,28 @@ def check_policy(command: str):
         - allowed=False, reason=<str>       — command is blocked with
                                               an explanation of why
     """
+    # Normalize once here; all tier helpers receive the already-normalized
+    # string so their internal .lower() calls become harmless no-ops.
+    norm = normalize_command(command)
+
     matching_tiers = []
 
-    blocked_reason = _check_blocked_tier(command)
+    blocked_reason = _check_blocked_tier(norm)
     if blocked_reason:
         matching_tiers.append(("blocked", blocked_reason))
 
-    confirmation_reason = _check_confirmation_tier(command)
+    confirmation_reason = _check_confirmation_tier(norm)
     if confirmation_reason:
         matching_tiers.append(("requires_confirmation", confirmation_reason))
 
-    simulation_reason = _check_simulation_tier(command)
+    simulation_reason = _check_simulation_tier(norm)
     if simulation_reason:
         matching_tiers.append(("requires_simulation", simulation_reason))
 
     # Log a warning whenever a command lands in more than one tier.
+    # Pass both forms so the conflict entry shows what was matched against.
     if len(matching_tiers) > 1:
-        _log_policy_conflict(command, matching_tiers)
+        _log_policy_conflict(command, norm, matching_tiers)
 
     if not matching_tiers:
         return True, "allowed"
@@ -396,13 +461,16 @@ def execute_command(command: str, retry_count: int = 0) -> str:
 
     # --- 2. Build the log entry (common fields for all outcomes) ---
     log_entry = {
-        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-        "source":          "ai-agent",
-        "tool":            "execute_command",
-        "command":         command,
-        "policy_decision": "allowed" if allowed else "blocked",
+        "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
+        "source":             "ai-agent",
+        "tool":               "execute_command",
+        "command":            command,
+        # normalized_command shows the whitespace-collapsed, case-preserved form
+        # that was used as the base for policy matching (lowercased internally).
+        "normalized_command": normalize_for_audit(command),
+        "policy_decision":    "allowed" if allowed else "blocked",
         # Always record retry_count so the log shows the full retry history.
-        "retry_count":     retry_count,
+        "retry_count":        retry_count,
     }
 
     if not allowed:
