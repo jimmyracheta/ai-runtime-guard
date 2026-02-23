@@ -7,7 +7,9 @@ then executed via subprocess, returning stdout or stderr.
 """
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import datetime
 
@@ -46,6 +48,35 @@ SENSITIVE_PATHS = [".env", ".ssh", "/etc/passwd"]
 # Rule 3 — Wildcard pattern combined with destructive operations.
 # Matches commands that use * or ? alongside rm or mv.
 WILDCARD_DESTRUCTIVE_RE = re.compile(r"\b(rm|mv)\b[^|;&\n]*[*?]")
+
+# ---------------------------------------------------------------------------
+# Backup layer
+# ---------------------------------------------------------------------------
+
+# Root folder where all timestamped backups are stored.
+BACKUP_DIR = "/Users/liviu/Documents/ai-runtime-guard/backups"
+
+# Detects commands that modify or delete files and therefore need a backup.
+# Matches: rm, mv, or a single > redirect (overwrite). The negative look-
+# behind/ahead on > prevents matching >> (append), which is non-destructive.
+MODIFYING_COMMAND_RE = re.compile(r"\b(rm|mv)\b|(?<![>])>(?!>)")
+
+# Extracts candidate file/directory paths from a shell command string.
+# Matches four token shapes (tried in order via alternation):
+#   1. Absolute paths           — /foo/bar/baz.txt
+#   2. Explicit relative paths  — ./foo or ../foo/bar
+#   3. Multi-segment bare paths — foo/bar/baz  (contains at least one /)
+#   4. Bare filenames with an extension — report.txt, config.json
+# Flags, operators ($VAR, &&, >>, ;) are excluded by the character classes.
+PATH_TOKEN_RE = re.compile(
+    r"(?<!\S)"                          # must be preceded by whitespace or start
+    r"("
+    r"/[^\s;|&<>'\"\\]+"               # 1. absolute path
+    r"|\.{1,2}/[^\s;|&<>'\"\\]+"       # 2. ./relative or ../relative
+    r"|[A-Za-z0-9_][A-Za-z0-9_.\\-]*/[^\s;|&<>'\"\\]+"  # 3. bare multi-segment
+    r"|[A-Za-z0-9_][A-Za-z0-9_.\\-]*\.[A-Za-z0-9]+"     # 4. bare name.ext
+    r")"
+)
 
 
 def check_policy(command: str):
@@ -92,6 +123,68 @@ def check_policy(command: str):
         )
 
     return True, "allowed"
+
+
+# ---------------------------------------------------------------------------
+# Backup helpers
+# ---------------------------------------------------------------------------
+
+def extract_paths(command: str) -> list:
+    """
+    Extract file and directory paths mentioned in a shell command.
+
+    Uses PATH_TOKEN_RE to find candidate tokens, then filters the list down
+    to only paths that actually exist on the filesystem so we don't try to
+    back up non-existent targets.
+
+    Args:
+        command: The shell command string to scan.
+
+    Returns:
+        A list of existing path strings found in the command.
+    """
+    candidates = PATH_TOKEN_RE.findall(command)
+
+    # Strip surrounding quotes that the shell would normally remove
+    candidates = [c.strip().strip("'\"") for c in candidates]
+
+    # Keep only paths that exist so we never back up a phantom target
+    return [c for c in candidates if os.path.exists(c)]
+
+
+def backup_paths(paths: list) -> str:
+    """
+    Copy a list of files/directories to a timestamped backup folder.
+
+    Each call creates a unique subfolder under BACKUP_DIR named after the
+    current UTC time (colons replaced with hyphens for filesystem safety),
+    e.g. backups/2026-02-23T16-30-00/. Files are copied with metadata
+    preserved; directories are copied recursively.
+
+    Args:
+        paths: List of existing file or directory path strings to back up.
+
+    Returns:
+        The path to the newly created backup folder.
+    """
+    # Build a filesystem-safe timestamp (no colons — macOS/Windows disallow them)
+    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    backup_location = os.path.join(BACKUP_DIR, timestamp)
+
+    # Create the backup folder (and BACKUP_DIR itself if it doesn't exist yet)
+    os.makedirs(backup_location, exist_ok=True)
+
+    for path in paths:
+        if os.path.isfile(path):
+            # copy2 preserves file metadata (timestamps, permissions)
+            shutil.copy2(path, backup_location)
+        elif os.path.isdir(path):
+            # copytree requires the destination not to exist, so append the
+            # directory's own name to keep multiple dirs in the same backup slot
+            dest = os.path.join(backup_location, os.path.basename(path))
+            shutil.copytree(path, dest)
+
+    return backup_location
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +263,22 @@ def execute_command(command: str, retry_count: int = 0) -> str:
             f"and set retry_count={retry_count + 1}."
         )
 
-    # --- 5. Execute the command ---
+    # --- 5. Back up any files that the command might modify or delete ---
+    # Only triggered for commands that contain rm, mv, or a > overwrite redirect.
+    if MODIFYING_COMMAND_RE.search(command):
+        affected = extract_paths(command)
+        if affected:
+            backup_location = backup_paths(affected)
+            # Record the backup location in the log so the audit trail shows
+            # exactly where the pre-execution snapshot was saved.
+            log_entry["backup_location"] = backup_location
+            # Re-write the log entry now that we have the backup location.
+            # (The entry was already written above; append an updated copy so
+            # the final record on disk reflects the backup that was made.)
+            with open("/Users/liviu/Documents/ai-runtime-guard/activity.log", "a") as log_file:
+                log_file.write(json.dumps({**log_entry, "event": "backup_created"}) + "\n")
+
+    # --- 6. Execute the command ---
     result = subprocess.run(
         command,
         shell=True,          # Allows pipes, redirects, etc.
@@ -178,7 +286,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         text=True,           # Decodes bytes to str automatically
     )
 
-    # --- 6. Return output or error ---
+    # --- 7. Return output or error ---
     if result.returncode != 0:
         # Non-zero exit code means the command failed
         return result.stderr or f"Command exited with code {result.returncode}"
