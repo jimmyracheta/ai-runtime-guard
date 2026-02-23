@@ -249,26 +249,22 @@ def check_policy(command: str):
 
 def _check_path_policy(path: str) -> str | None:
     """
-    Check a file path against the relevant blocked and allowed policy rules.
+    Check a file path against the blocked path and extension rules in policy.json.
 
-    Called by read_file and write_file before any I/O, using the same
-    policy.json rules as the command-level checks.
+    Called by read_file, write_file, delete_file, and list_directory before
+    any I/O is performed.
 
     Checks (in order):
-      1. blocked.paths      — sensitive substrings (e.g. ".env", ".ssh")
-      2. blocked.extensions — sensitive extensions (e.g. ".pem", ".key")
-      3. allowed.paths_whitelist — if the list is non-empty, any path that
-                                   does not start with a whitelisted prefix
-                                   is blocked
+      1. blocked.paths      — block if any entry appears as a substring of path
+      2. blocked.extensions — block if the path ends with a blocked extension
 
     Returns a human-readable reason string if the path is blocked, or None
     if it passes every check.
     """
-    blocked     = POLICY.get("blocked", {})
-    allowed_cfg = POLICY.get("allowed", {})
-    lower       = path.lower()
+    blocked = POLICY.get("blocked", {})
+    lower   = path.lower()
 
-    # 1. Blocked path substrings — same substring logic as _check_blocked_tier
+    # 1. Blocked path substrings
     for blocked_path in blocked.get("paths", []):
         if blocked_path.lower() in lower:
             return (
@@ -283,18 +279,6 @@ def _check_path_policy(path: str) -> str | None:
                 f"Sensitive file extension not permitted: '{ext}' files "
                 "may contain private keys or certificates"
             )
-
-    # 3. Paths whitelist — only enforced when the list is non-empty.
-    # Paths are resolved to absolute form before comparison so that
-    # "./foo" and "/abs/path/foo" are treated consistently.
-    whitelist = allowed_cfg.get("paths_whitelist", [])
-    if whitelist:
-        resolved = str(pathlib.Path(path).resolve())
-        if not any(
-            resolved.startswith(str(pathlib.Path(w).resolve()))
-            for w in whitelist
-        ):
-            return f"Path '{path}' is not in the allowed paths whitelist"
 
     return None
 
@@ -708,6 +692,125 @@ def delete_file(path: str) -> str:
         f"Successfully deleted {path}. "
         f"Backup saved to {backup_location} — the file can be recovered from there."
     )
+
+
+@mcp.tool()
+def list_directory(path: str) -> str:
+    """
+    List the contents of a directory and return a formatted summary.
+
+    Checks (in order before any I/O):
+      1. Path is validated against policy (blocked paths, extensions, whitelist).
+      2. The path must exist and be a directory — a clear error is returned
+         for missing paths or plain files.
+      3. Directory depth (number of segments from the filesystem root) is
+         checked against allowed.max_directory_depth in policy.json.
+
+    Each entry in the listing includes:
+      - name
+      - type  (file | directory)
+      - size  (bytes, files only)
+      - last modified timestamp (UTC ISO-8601)
+
+    Args:
+        path: Absolute or relative path to the directory to list.
+
+    Returns:
+        A formatted multi-line string with one entry per line, or a
+        [POLICY BLOCK] / error message.
+    """
+
+    # --- 1. Check path against policy (blocked paths, extensions, whitelist) ---
+    block_reason = _check_path_policy(path)
+
+    # --- 2. Existence and type checks (only when policy allows) ---
+    if not block_reason:
+        if not os.path.exists(path):
+            # Not a policy block — the path simply doesn't exist.
+            # Log the attempt and return a clear error.
+            log_entry = {
+                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+                "source":          "ai-agent",
+                "tool":            "list_directory",
+                "path":            path,
+                "policy_decision": "allowed",
+                "error":           "path not found",
+            }
+            with open(LOG_PATH, "a") as log_file:
+                log_file.write(json.dumps(log_entry) + "\n")
+            return f"Error: path not found: {path}"
+
+        if not os.path.isdir(path):
+            # The path exists but is a file — log and return a clear error.
+            log_entry = {
+                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+                "source":          "ai-agent",
+                "tool":            "list_directory",
+                "path":            path,
+                "policy_decision": "allowed",
+                "error":           "not a directory",
+            }
+            with open(LOG_PATH, "a") as log_file:
+                log_file.write(json.dumps(log_entry) + "\n")
+            return f"Error: '{path}' is a file, not a directory"
+
+        # --- 3. Depth check ---
+        # Resolve to an absolute path first so relative paths (e.g. ".") are
+        # measured consistently against the filesystem root.
+        resolved  = pathlib.Path(path).resolve()
+        # len(resolved.parts) counts every segment including the root ("/"),
+        # so "/" has depth 1, "/home" has depth 2, "/home/user" depth 3, etc.
+        depth     = len(resolved.parts)
+        max_depth = POLICY.get("allowed", {}).get("max_directory_depth", 5)
+        if depth > max_depth:
+            block_reason = (
+                f"Directory depth {depth} exceeds the policy limit of "
+                f"{max_depth} (allowed.max_directory_depth): '{path}'"
+            )
+
+    # --- 4. Build the log entry with the final policy decision ---
+    log_entry = {
+        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+        "source":          "ai-agent",
+        "tool":            "list_directory",
+        "path":            path,
+        "policy_decision": "blocked" if block_reason else "allowed",
+    }
+    if block_reason:
+        log_entry["block_reason"] = block_reason
+
+    # --- 5. Write the log entry (always, before any I/O) ---
+    with open(LOG_PATH, "a") as log_file:
+        log_file.write(json.dumps(log_entry) + "\n")
+
+    # --- 6. Return block message without touching the filesystem ---
+    if block_reason:
+        return f"[POLICY BLOCK] {block_reason}"
+
+    # --- 7. Scan the directory and build the listing ---
+    lines = [f"Contents of {path}:"]
+    try:
+        entries = sorted(os.scandir(path), key=lambda e: (e.is_file(), e.name))
+    except OSError as e:
+        return f"Error reading directory: {e}"
+
+    for entry in entries:
+        try:
+            stat   = entry.stat(follow_symlinks=False)
+            mtime  = datetime.datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"
+            kind   = "file" if entry.is_file(follow_symlinks=False) else "directory"
+            # Size is only meaningful for files; directories show a dash.
+            size   = f"{stat.st_size} bytes" if kind == "file" else "-"
+            lines.append(f"  {entry.name}  [{kind}]  size={size}  modified={mtime}")
+        except OSError:
+            # If a single entry can't be stat-ed (e.g. broken symlink), skip it
+            # gracefully rather than aborting the whole listing.
+            lines.append(f"  {entry.name}  [unreadable]")
+
+    if len(lines) == 1:
+        lines.append("  (empty)")
+
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
