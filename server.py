@@ -1,11 +1,17 @@
 """
-MCP server that exposes three tools: execute_command, read_file, write_file.
+MCP server that exposes five tools: execute_command, read_file, write_file,
+delete_file, and list_directory.
 
 Policy rules are loaded from policy.json at startup. Every tool call passes
 through the policy engine (blocked → requires_confirmation →
 requires_simulation → allowed) before any I/O is performed. Blocked calls
 are logged and rejected. Allowed file writes are backed up first; allowed
 commands are optionally backed up and then executed via subprocess.
+
+Every log entry written to activity.log is produced by build_log_entry() and
+carries a session_id (UUID4, stable for the process lifetime) and a workspace
+field so audit records from concurrent or sequential server instances can be
+correlated and scoped to the correct working directory.
 """
 
 import hashlib
@@ -15,6 +21,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import uuid
 import datetime
 from dataclasses import dataclass
 
@@ -49,6 +56,14 @@ MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 # When requires_confirmation.session_whitelist_enabled is True in policy,
 # a command whose hash is in this set bypasses the confirmation check.
 SESSION_WHITELIST: set = set()
+
+# Generated once when the server process starts. Every log entry includes
+# this ID so related records across tools can be correlated by session.
+SESSION_ID: str = str(uuid.uuid4())
+
+# Root directory that this server instance is authorised to work in.
+# Override by setting the AIRG_WORKSPACE environment variable before launch.
+WORKSPACE_ROOT: str = os.environ.get("AIRG_WORKSPACE", str(BASE_DIR))
 
 # Create the MCP server with a descriptive name.
 mcp = FastMCP("ai-runtime-guard")
@@ -293,6 +308,8 @@ def _log_policy_conflict(command: str, normalized: str, matching_tiers: list) ->
     warning = {
         "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
         "event":              "policy_conflict_warning",
+        "session_id":         SESSION_ID,
+        "workspace":          WORKSPACE_ROOT,
         "command":            command,
         "normalized_command": normalized,
         "matching_tiers":     tier_names,
@@ -408,6 +425,66 @@ def _check_path_policy(path: str) -> tuple[str, str] | None:
 
 
 # ---------------------------------------------------------------------------
+# Log entry builder
+# ---------------------------------------------------------------------------
+
+def build_log_entry(tool: str, result: PolicyResult, **kwargs) -> dict:
+    """
+    Build the standard log-entry dictionary for a tool invocation.
+
+    Every entry written to activity.log is produced by this function so the
+    schema is consistent across all tools.
+
+    Standard fields (always present):
+        timestamp       — UTC ISO-8601 string of when the entry was built.
+        source          — "ai-agent" (constant; identifies the log producer).
+        session_id      — SESSION_ID UUID4, stable for the lifetime of this
+                          server process; correlates records across tools.
+        tool            — The MCP tool that triggered this log write.
+        workspace       — WORKSPACE_ROOT for the current server instance.
+        policy_decision — "allowed" or "blocked".
+        decision_tier   — Which policy tier made the decision.
+
+    Conditional fields (omitted when not applicable):
+        matched_rule    — The specific rule that fired (omitted if None).
+        block_reason    — Human-readable explanation (omitted when allowed).
+
+    Additional fields:
+        Any keyword arguments (command, path, normalized_command, retry_count,
+        error, backup_location, final_block, event, …) are merged in after
+        the standard fields via dict.update() in the order they are passed.
+
+    Args:
+        tool:     Name of the calling MCP tool.
+        result:   PolicyResult returned by check_policy() or synthesised
+                  inline by a file tool from _check_path_policy().
+        **kwargs: Extra fields to include verbatim in the log entry.
+
+    Returns:
+        A plain dict ready to be serialised with json.dumps().
+    """
+    entry: dict = {
+        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+        "source":          "ai-agent",
+        "session_id":      SESSION_ID,
+        "tool":            tool,
+        "workspace":       WORKSPACE_ROOT,
+        "policy_decision": "allowed" if result.allowed else "blocked",
+        "decision_tier":   result.decision_tier,
+    }
+    # Omit matched_rule entirely when no rule fired (cleaner logs for allowed ops).
+    if result.matched_rule is not None:
+        entry["matched_rule"] = result.matched_rule
+    # Omit block_reason for allowed decisions to keep the happy-path log terse.
+    if not result.allowed:
+        entry["block_reason"] = result.reason
+    # Caller-supplied fields (command, path, retry_count, error, …) are appended
+    # last so standard fields are always the first keys in every log line.
+    entry.update(kwargs)
+    return entry
+
+
+# ---------------------------------------------------------------------------
 # Backup layer
 # ---------------------------------------------------------------------------
 
@@ -518,30 +595,19 @@ def execute_command(command: str, retry_count: int = 0) -> str:
     # --- 1. Run the policy check ---
     result = check_policy(command)
 
-    # --- 2. Build the log entry (common fields for all outcomes) ---
-    log_entry = {
-        "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
-        "source":             "ai-agent",
-        "tool":               "execute_command",
-        "command":            command,
-        # normalized_command shows the whitespace-collapsed, case-preserved form
-        # that was used as the base for policy matching (lowercased internally).
-        "normalized_command": normalize_for_audit(command),
-        "policy_decision":    "allowed" if result.allowed else "blocked",
-        "decision_tier":      result.decision_tier,
-        # Always record retry_count so the log shows the full retry history.
-        "retry_count":        retry_count,
-    }
-    # Include matched_rule only when a rule actually fired (omit when None).
-    if result.matched_rule is not None:
-        log_entry["matched_rule"] = result.matched_rule
-
-    if not result.allowed:
-        # Record why the command was blocked.
-        log_entry["block_reason"] = result.reason
-        # Flag the entry when no further retries will be accepted.
-        if retry_count >= MAX_RETRIES:
-            log_entry["final_block"] = True
+    # --- 2. Build the log entry via the standard builder ---
+    # final_block is set when the agent has exhausted all retry attempts so
+    # downstream consumers can identify permanently refused operations.
+    final_block = not result.allowed and retry_count >= MAX_RETRIES
+    log_entry = build_log_entry(
+        "execute_command", result,
+        command=command,
+        # normalized_command is the whitespace-collapsed, case-preserved form
+        # used as the base for policy matching (lowercased internally).
+        normalized_command=normalize_for_audit(command),
+        retry_count=retry_count,
+        **({"final_block": True} if final_block else {}),
+    )
 
     # --- 3. Write the log entry (always, regardless of allow/block) ---
     with open(LOG_PATH, "a") as log_file:
@@ -583,7 +649,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
                 log_file.write(json.dumps({**log_entry, "event": "backup_created"}) + "\n")
 
     # --- 6. Execute the command ---
-    result = subprocess.run(
+    proc = subprocess.run(
         command,
         shell=True,          # Allows pipes, redirects, etc.
         capture_output=True, # Captures both stdout and stderr.
@@ -591,12 +657,12 @@ def execute_command(command: str, retry_count: int = 0) -> str:
     )
 
     # --- 7. Return output or error ---
-    if result.returncode != 0:
+    if proc.returncode != 0:
         # Non-zero exit code means the command failed.
-        return result.stderr or f"Command exited with code {result.returncode}"
+        return proc.stderr or f"Command exited with code {proc.returncode}"
 
     # Success: return standard output (may be an empty string).
-    return result.stdout
+    return proc.stdout
 
 
 @mcp.tool()
@@ -606,7 +672,6 @@ def read_file(path: str) -> str:
 
     The path is checked against policy before any data is read:
       - blocked.paths and blocked.extensions are rejected outright
-      - If allowed.paths_whitelist is non-empty, only whitelisted paths pass
       - Files larger than allowed.max_file_size_mb are rejected
 
     Args:
@@ -617,47 +682,42 @@ def read_file(path: str) -> str:
     """
 
     # --- 1. Check path against policy ---
-    path_check   = _check_path_policy(path)
-    block_reason = path_check[0] if path_check else None
-    matched_rule = path_check[1] if path_check else None
+    path_check = _check_path_policy(path)
+    if path_check:
+        result = PolicyResult(allowed=False, reason=path_check[0],
+                              decision_tier="blocked", matched_rule=path_check[1])
+    else:
+        result = PolicyResult(allowed=True, reason="allowed",
+                              decision_tier="allowed", matched_rule=None)
 
-    # --- 2. If path is allowed, also check file size before committing ---
-    if not block_reason:
+    # --- 2. File-size check (only when policy allows) ---
+    if result.allowed:
         max_mb = POLICY.get("allowed", {}).get("max_file_size_mb", 10)
         try:
             size_mb = os.path.getsize(path) / (1024 * 1024)
             if size_mb > max_mb:
-                block_reason = (
-                    f"File size {size_mb:.1f} MB exceeds the policy limit "
-                    f"of {max_mb} MB (allowed.max_file_size_mb)"
+                result = PolicyResult(
+                    allowed=False,
+                    reason=(
+                        f"File size {size_mb:.1f} MB exceeds the policy limit "
+                        f"of {max_mb} MB (allowed.max_file_size_mb)"
+                    ),
+                    decision_tier="blocked",
+                    matched_rule="allowed.max_file_size_mb",
                 )
-                matched_rule = "allowed.max_file_size_mb"
-        except FileNotFoundError:
-            pass  # Let the read below produce a clear "not found" error.
-        except OSError:
-            pass  # Same — surface the error during the read.
+        except (FileNotFoundError, OSError):
+            pass  # Surface the error during the read in step 6.
 
-    # --- 3. Build the log entry with the final policy decision ---
-    log_entry = {
-        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-        "source":          "ai-agent",
-        "tool":            "read_file",
-        "path":            path,
-        "policy_decision": "blocked" if block_reason else "allowed",
-        "decision_tier":   "blocked" if block_reason else "allowed",
-    }
-    if block_reason:
-        log_entry["block_reason"] = block_reason
-    if matched_rule is not None:
-        log_entry["matched_rule"] = matched_rule
+    # --- 3. Build the log entry ---
+    log_entry = build_log_entry("read_file", result, path=path)
 
     # --- 4. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
     # --- 5. Reject blocked requests without touching the file ---
-    if block_reason:
-        return f"[POLICY BLOCK] {block_reason}"
+    if not result.allowed:
+        return f"[POLICY BLOCK] {result.reason}"
 
     # --- 6. Read and return the file contents ---
     try:
@@ -688,31 +748,24 @@ def write_file(path: str, content: str) -> str:
     """
 
     # --- 1. Check path against policy ---
-    path_check   = _check_path_policy(path)
-    block_reason = path_check[0] if path_check else None
-    matched_rule = path_check[1] if path_check else None
+    path_check = _check_path_policy(path)
+    if path_check:
+        result = PolicyResult(allowed=False, reason=path_check[0],
+                              decision_tier="blocked", matched_rule=path_check[1])
+    else:
+        result = PolicyResult(allowed=True, reason="allowed",
+                              decision_tier="allowed", matched_rule=None)
 
-    # --- 2. Build the log entry with the final policy decision ---
-    log_entry = {
-        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-        "source":          "ai-agent",
-        "tool":            "write_file",
-        "path":            path,
-        "policy_decision": "blocked" if block_reason else "allowed",
-        "decision_tier":   "blocked" if block_reason else "allowed",
-    }
-    if block_reason:
-        log_entry["block_reason"] = block_reason
-    if matched_rule is not None:
-        log_entry["matched_rule"] = matched_rule
+    # --- 2. Build the log entry ---
+    log_entry = build_log_entry("write_file", result, path=path)
 
     # --- 3. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
     # --- 4. Reject blocked requests without touching the file ---
-    if block_reason:
-        return f"[POLICY BLOCK] {block_reason}"
+    if not result.allowed:
+        return f"[POLICY BLOCK] {result.reason}"
 
     # --- 5. Back up the existing file before overwriting it ---
     backup_location = None
@@ -746,7 +799,7 @@ def delete_file(path: str) -> str:
     Delete a single file after creating a backup, subject to policy checks.
 
     Sequence:
-      1. Path is checked against policy (blocked paths, extensions, whitelist).
+      1. Path is checked against policy (blocked paths, extensions).
       2. If the path does not exist, a clear error is returned — this is not
          a policy block, the operation simply cannot proceed.
       3. If the path is a directory, the request is blocked — use
@@ -768,24 +821,21 @@ def delete_file(path: str) -> str:
     """
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
-    path_check   = _check_path_policy(path)
-    block_reason = path_check[0] if path_check else None
-    matched_rule = path_check[1] if path_check else None
+    path_check = _check_path_policy(path)
+    if path_check:
+        result = PolicyResult(allowed=False, reason=path_check[0],
+                              decision_tier="blocked", matched_rule=path_check[1])
+    else:
+        result = PolicyResult(allowed=True, reason="allowed",
+                              decision_tier="allowed", matched_rule=None)
 
     # --- 2. Pre-flight checks on the target (only when policy allows) ---
-    if not block_reason:
+    if result.allowed:
         if not os.path.exists(path):
             # Not a policy block — the file simply isn't there.
             # Log the attempt and return a clear error without blocking.
-            log_entry = {
-                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-                "source":          "ai-agent",
-                "tool":            "delete_file",
-                "path":            path,
-                "policy_decision": "allowed",
-                "decision_tier":   "allowed",
-                "error":           "file not found",
-            }
+            log_entry = build_log_entry("delete_file", result,
+                                        path=path, error="file not found")
             with open(LOG_PATH, "a") as log_file:
                 log_file.write(json.dumps(log_entry) + "\n")
             return f"Error: file not found: {path}"
@@ -793,33 +843,26 @@ def delete_file(path: str) -> str:
         if os.path.isdir(path):
             # Directories need recursive operations that carry higher risk.
             # Direct the agent to execute_command for those cases.
-            block_reason = (
-                f"'{path}' is a directory — delete_file only removes individual "
-                "files. Use execute_command for directory operations "
-                "(note: bulk/recursive deletions are also subject to policy)."
-            )
             # This is a type-safety block, not a policy-rule match.
-            matched_rule = None
+            result = PolicyResult(
+                allowed=False,
+                reason=(
+                    f"'{path}' is a directory — delete_file only removes individual "
+                    "files. Use execute_command for directory operations "
+                    "(note: bulk/recursive deletions are also subject to policy)."
+                ),
+                decision_tier="blocked",
+                matched_rule=None,
+            )
 
     # --- 3. Build the log entry with the final policy decision ---
-    log_entry = {
-        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-        "source":          "ai-agent",
-        "tool":            "delete_file",
-        "path":            path,
-        "policy_decision": "blocked" if block_reason else "allowed",
-        "decision_tier":   "blocked" if block_reason else "allowed",
-    }
-    if block_reason:
-        log_entry["block_reason"] = block_reason
-    if matched_rule is not None:
-        log_entry["matched_rule"] = matched_rule
+    log_entry = build_log_entry("delete_file", result, path=path)
 
     # --- 4. If blocked, write log and return without touching the filesystem ---
-    if block_reason:
+    if not result.allowed:
         with open(LOG_PATH, "a") as log_file:
             log_file.write(json.dumps(log_entry) + "\n")
-        return f"[POLICY BLOCK] {block_reason}"
+        return f"[POLICY BLOCK] {result.reason}"
 
     # --- 5. Create a backup before any destructive action ---
     # backup_paths() is called unconditionally here — existence was confirmed
@@ -850,7 +893,7 @@ def list_directory(path: str) -> str:
     List the contents of a directory and return a formatted summary.
 
     Checks (in order before any I/O):
-      1. Path is validated against policy (blocked paths, extensions, whitelist).
+      1. Path is validated against policy (blocked paths, extensions).
       2. The path must exist and be a directory — a clear error is returned
          for missing paths or plain files.
       3. Directory depth (number of segments from the filesystem root) is
@@ -871,39 +914,28 @@ def list_directory(path: str) -> str:
     """
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
-    path_check   = _check_path_policy(path)
-    block_reason = path_check[0] if path_check else None
-    matched_rule = path_check[1] if path_check else None
+    path_check = _check_path_policy(path)
+    if path_check:
+        result = PolicyResult(allowed=False, reason=path_check[0],
+                              decision_tier="blocked", matched_rule=path_check[1])
+    else:
+        result = PolicyResult(allowed=True, reason="allowed",
+                              decision_tier="allowed", matched_rule=None)
 
     # --- 2. Existence and type checks (only when policy allows) ---
-    if not block_reason:
+    if result.allowed:
         if not os.path.exists(path):
             # Not a policy block — the path simply doesn't exist.
-            # Log the attempt and return a clear error.
-            log_entry = {
-                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-                "source":          "ai-agent",
-                "tool":            "list_directory",
-                "path":            path,
-                "policy_decision": "allowed",
-                "decision_tier":   "allowed",
-                "error":           "path not found",
-            }
+            log_entry = build_log_entry("list_directory", result,
+                                        path=path, error="path not found")
             with open(LOG_PATH, "a") as log_file:
                 log_file.write(json.dumps(log_entry) + "\n")
             return f"Error: path not found: {path}"
 
         if not os.path.isdir(path):
             # The path exists but is a file — log and return a clear error.
-            log_entry = {
-                "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-                "source":          "ai-agent",
-                "tool":            "list_directory",
-                "path":            path,
-                "policy_decision": "allowed",
-                "decision_tier":   "allowed",
-                "error":           "not a directory",
-            }
+            log_entry = build_log_entry("list_directory", result,
+                                        path=path, error="not a directory")
             with open(LOG_PATH, "a") as log_file:
                 log_file.write(json.dumps(log_entry) + "\n")
             return f"Error: '{path}' is a file, not a directory"
@@ -917,33 +949,26 @@ def list_directory(path: str) -> str:
         depth     = len(resolved.parts)
         max_depth = POLICY.get("allowed", {}).get("max_directory_depth", 5)
         if depth > max_depth:
-            block_reason = (
-                f"Directory depth {depth} exceeds the policy limit of "
-                f"{max_depth} (allowed.max_directory_depth): '{path}'"
+            result = PolicyResult(
+                allowed=False,
+                reason=(
+                    f"Directory depth {depth} exceeds the policy limit of "
+                    f"{max_depth} (allowed.max_directory_depth): '{path}'"
+                ),
+                decision_tier="blocked",
+                matched_rule="allowed.max_directory_depth",
             )
-            matched_rule = "allowed.max_directory_depth"
 
     # --- 4. Build the log entry with the final policy decision ---
-    log_entry = {
-        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
-        "source":          "ai-agent",
-        "tool":            "list_directory",
-        "path":            path,
-        "policy_decision": "blocked" if block_reason else "allowed",
-        "decision_tier":   "blocked" if block_reason else "allowed",
-    }
-    if block_reason:
-        log_entry["block_reason"] = block_reason
-    if matched_rule is not None:
-        log_entry["matched_rule"] = matched_rule
+    log_entry = build_log_entry("list_directory", result, path=path)
 
     # --- 5. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
     # --- 6. Return block message without touching the filesystem ---
-    if block_reason:
-        return f"[POLICY BLOCK] {block_reason}"
+    if not result.allowed:
+        return f"[POLICY BLOCK] {result.reason}"
 
     # --- 7. Scan the directory and build the listing ---
     lines = [f"Contents of {path}:"]
