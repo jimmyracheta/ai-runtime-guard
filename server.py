@@ -1,11 +1,11 @@
 """
-MCP server that exposes a single tool: execute_command.
+MCP server that exposes three tools: execute_command, read_file, write_file.
 
-Policy rules are loaded from policy.json at startup. Every command passes
-through a tiered policy engine (blocked → requires_confirmation →
-requires_simulation → allowed) before execution. Blocked commands are logged
-and rejected. Allowed commands are optionally backed up when they modify files,
-then executed via subprocess.
+Policy rules are loaded from policy.json at startup. Every tool call passes
+through the policy engine (blocked → requires_confirmation →
+requires_simulation → allowed) before any I/O is performed. Blocked calls
+are logged and rejected. Allowed file writes are backed up first; allowed
+commands are optionally backed up and then executed via subprocess.
 """
 
 import json
@@ -247,6 +247,58 @@ def check_policy(command: str):
     return False, reason
 
 
+def _check_path_policy(path: str) -> str | None:
+    """
+    Check a file path against the relevant blocked and allowed policy rules.
+
+    Called by read_file and write_file before any I/O, using the same
+    policy.json rules as the command-level checks.
+
+    Checks (in order):
+      1. blocked.paths      — sensitive substrings (e.g. ".env", ".ssh")
+      2. blocked.extensions — sensitive extensions (e.g. ".pem", ".key")
+      3. allowed.paths_whitelist — if the list is non-empty, any path that
+                                   does not start with a whitelisted prefix
+                                   is blocked
+
+    Returns a human-readable reason string if the path is blocked, or None
+    if it passes every check.
+    """
+    blocked     = POLICY.get("blocked", {})
+    allowed_cfg = POLICY.get("allowed", {})
+    lower       = path.lower()
+
+    # 1. Blocked path substrings — same substring logic as _check_blocked_tier
+    for blocked_path in blocked.get("paths", []):
+        if blocked_path.lower() in lower:
+            return (
+                f"Sensitive path access not permitted: '{blocked_path}' "
+                "may contain secrets or critical system configuration"
+            )
+
+    # 2. Blocked file extensions
+    for ext in blocked.get("extensions", []):
+        if re.search(rf"{re.escape(ext)}\b", lower):
+            return (
+                f"Sensitive file extension not permitted: '{ext}' files "
+                "may contain private keys or certificates"
+            )
+
+    # 3. Paths whitelist — only enforced when the list is non-empty.
+    # Paths are resolved to absolute form before comparison so that
+    # "./foo" and "/abs/path/foo" are treated consistently.
+    whitelist = allowed_cfg.get("paths_whitelist", [])
+    if whitelist:
+        resolved = str(pathlib.Path(path).resolve())
+        if not any(
+            resolved.startswith(str(pathlib.Path(w).resolve()))
+            for w in whitelist
+        ):
+            return f"Path '{path}' is not in the allowed paths whitelist"
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Backup layer
 # ---------------------------------------------------------------------------
@@ -430,6 +482,136 @@ def execute_command(command: str, retry_count: int = 0) -> str:
 
     # Success: return standard output (may be an empty string).
     return result.stdout
+
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    """
+    Read a file from the filesystem and return its contents as a string.
+
+    The path is checked against policy before any data is read:
+      - blocked.paths and blocked.extensions are rejected outright
+      - If allowed.paths_whitelist is non-empty, only whitelisted paths pass
+      - Files larger than allowed.max_file_size_mb are rejected
+
+    Args:
+        path: Absolute or relative path to the file to read.
+
+    Returns:
+        The file contents as a string, or a [POLICY BLOCK] / error message.
+    """
+
+    # --- 1. Check path against policy ---
+    block_reason = _check_path_policy(path)
+
+    # --- 2. If path is allowed, also check file size before committing ---
+    if not block_reason:
+        max_mb = POLICY.get("allowed", {}).get("max_file_size_mb", 10)
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            if size_mb > max_mb:
+                block_reason = (
+                    f"File size {size_mb:.1f} MB exceeds the policy limit "
+                    f"of {max_mb} MB (allowed.max_file_size_mb)"
+                )
+        except FileNotFoundError:
+            pass  # Let the read below produce a clear "not found" error.
+        except OSError:
+            pass  # Same — surface the error during the read.
+
+    # --- 3. Build the log entry with the final policy decision ---
+    log_entry = {
+        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+        "source":          "ai-agent",
+        "tool":            "read_file",
+        "path":            path,
+        "policy_decision": "blocked" if block_reason else "allowed",
+    }
+    if block_reason:
+        log_entry["block_reason"] = block_reason
+
+    # --- 4. Write the log entry (always, before any I/O) ---
+    with open(LOG_PATH, "a") as log_file:
+        log_file.write(json.dumps(log_entry) + "\n")
+
+    # --- 5. Reject blocked requests without touching the file ---
+    if block_reason:
+        return f"[POLICY BLOCK] {block_reason}"
+
+    # --- 6. Read and return the file contents ---
+    try:
+        with open(path, "r", errors="replace") as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"Error: file not found: {path}"
+    except OSError as e:
+        return f"Error reading file: {e}"
+
+
+@mcp.tool()
+def write_file(path: str, content: str) -> str:
+    """
+    Write content to a file, creating it if it does not exist.
+
+    The path is checked against policy before any data is written. If the
+    file already exists a timestamped backup is created first using the
+    same backup_paths() function as execute_command.
+
+    Args:
+        path:    Absolute or relative path to the file to write.
+        content: The string content to write.
+
+    Returns:
+        A success message with the byte count, a backup note if applicable,
+        or a [POLICY BLOCK] / error message.
+    """
+
+    # --- 1. Check path against policy ---
+    block_reason = _check_path_policy(path)
+
+    # --- 2. Build the log entry with the final policy decision ---
+    log_entry = {
+        "timestamp":       datetime.datetime.utcnow().isoformat() + "Z",
+        "source":          "ai-agent",
+        "tool":            "write_file",
+        "path":            path,
+        "policy_decision": "blocked" if block_reason else "allowed",
+    }
+    if block_reason:
+        log_entry["block_reason"] = block_reason
+
+    # --- 3. Write the log entry (always, before any I/O) ---
+    with open(LOG_PATH, "a") as log_file:
+        log_file.write(json.dumps(log_entry) + "\n")
+
+    # --- 4. Reject blocked requests without touching the file ---
+    if block_reason:
+        return f"[POLICY BLOCK] {block_reason}"
+
+    # --- 5. Back up the existing file before overwriting it ---
+    backup_location = None
+    if os.path.exists(path):
+        backup_location = backup_paths([path])
+        # Record the backup location in a second log line so the audit trail
+        # shows where the pre-write snapshot is stored.
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(
+                json.dumps({**log_entry, "backup_location": backup_location,
+                            "event": "backup_created"}) + "\n"
+            )
+
+    # --- 6. Write the file ---
+    try:
+        with open(path, "w") as f:
+            f.write(content)
+    except OSError as e:
+        return f"Error writing file: {e}"
+
+    # --- 7. Return a success message ---
+    msg = f"Successfully wrote {len(content)} characters to {path}"
+    if backup_location:
+        msg += f" (previous version backed up to {backup_location})"
+    return msg
 
 
 if __name__ == "__main__":
