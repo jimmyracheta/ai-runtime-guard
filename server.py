@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import datetime
+from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
 
@@ -100,6 +101,31 @@ def command_hash(command: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Policy result type
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PolicyResult:
+    """
+    Immutable result returned by check_policy().
+
+    Fields:
+        allowed       — True if the command may proceed, False if it was blocked.
+        reason        — Human-readable explanation of the decision.
+        decision_tier — Which policy tier made the decision:
+                          "blocked" | "requires_confirmation" |
+                          "requires_simulation" | "allowed"
+        matched_rule  — The specific pattern, path, or extension that triggered
+                        the match (e.g. "rm -rf", ".env", ".pem"), or None when
+                        the command is allowed and no rule fired.
+    """
+    allowed:       bool
+    reason:        str
+    decision_tier: str
+    matched_rule:  str | None
+
+
+# ---------------------------------------------------------------------------
 # Policy engine — tier helpers
 # ---------------------------------------------------------------------------
 
@@ -126,17 +152,18 @@ def _build_command_matcher(pattern: str):
         return lambda cmd: lower_pat in cmd.lower()
 
 
-def _check_blocked_tier(command: str) -> str | None:
+def _check_blocked_tier(command: str) -> tuple[str, str] | None:
     """
     Check *command* against every rule in the 'blocked' policy tier.
 
     Checks (in order):
-      1. blocked.commands  — dangerous commands (word-boundary safe)
-      2. blocked.paths     — sensitive file/directory paths
+      1. blocked.commands   — dangerous commands (word-boundary safe)
+      2. blocked.paths      — sensitive file/directory paths
       3. blocked.extensions — sensitive file extensions (.pem, .key, …)
 
-    Returns a human-readable reason string if blocked, or None if the
-    command passes all checks in this tier.
+    Returns (reason, matched_rule) if blocked, or None if the command
+    passes all checks in this tier. matched_rule is the specific pattern,
+    path, or extension string that triggered the match.
     """
     blocked = POLICY.get("blocked", {})
     lower   = command.lower()
@@ -146,7 +173,8 @@ def _check_blocked_tier(command: str) -> str | None:
         if _build_command_matcher(pattern)(command):
             return (
                 f"Blocked destructive command '{pattern}': "
-                "this operation is prohibited by policy"
+                "this operation is prohibited by policy",
+                pattern,
             )
 
     # 2. Blocked file/directory paths (substring match on lowercased command)
@@ -154,7 +182,8 @@ def _check_blocked_tier(command: str) -> str | None:
         if path.lower() in lower:
             return (
                 f"Sensitive path access not permitted: '{path}' "
-                "may contain secrets or critical system configuration"
+                "may contain secrets or critical system configuration",
+                path,
             )
 
     # 3. Blocked file extensions
@@ -164,13 +193,14 @@ def _check_blocked_tier(command: str) -> str | None:
         if re.search(rf"{re.escape(ext)}\b", lower):
             return (
                 f"Sensitive file extension not permitted: '{ext}' files "
-                "may contain private keys or certificates"
+                "may contain private keys or certificates",
+                ext,
             )
 
     return None
 
 
-def _check_confirmation_tier(command: str) -> str | None:
+def _check_confirmation_tier(command: str) -> tuple[str, str] | None:
     """
     Check *command* against the 'requires_confirmation' policy tier.
 
@@ -178,8 +208,9 @@ def _check_confirmation_tier(command: str) -> str | None:
     already in SESSION_WHITELIST, the check is skipped — the user already
     approved it earlier this session.
 
-    Returns a reason string if confirmation is required, or None if the
-    command passes (or is whitelisted).
+    Returns (reason, matched_rule) if confirmation is required, or None if
+    the command passes (or is whitelisted). matched_rule is the specific
+    command pattern or path that triggered the match.
     """
     conf  = POLICY.get("requires_confirmation", {})
     lower = command.lower()
@@ -193,16 +224,22 @@ def _check_confirmation_tier(command: str) -> str | None:
 
     for pattern in conf.get("commands", []):
         if _build_command_matcher(pattern)(command):
-            return f"Command '{pattern}' requires explicit confirmation before execution"
+            return (
+                f"Command '{pattern}' requires explicit confirmation before execution",
+                pattern,
+            )
 
     for path in conf.get("paths", []):
         if path.lower() in lower:
-            return f"Access to path '{path}' requires explicit confirmation"
+            return (
+                f"Access to path '{path}' requires explicit confirmation",
+                path,
+            )
 
     return None
 
 
-def _check_simulation_tier(command: str) -> str | None:
+def _check_simulation_tier(command: str) -> tuple[str, str] | None:
     """
     Check *command* against the 'requires_simulation' policy tier.
 
@@ -216,7 +253,9 @@ def _check_simulation_tier(command: str) -> str | None:
       "mv *.bak /" → blocked  (mv + wildcard)
       "rm file.log"→ allowed  (rm, no wildcard)
 
-    Returns a reason string if simulation is required, or None otherwise.
+    Returns (reason, matched_rule) if simulation is required, or None
+    otherwise. matched_rule is the slash-joined display of the commands that
+    triggered the wildcard detection (e.g. "rm/mv").
     """
     sim          = POLICY.get("requires_simulation", {})
     sim_commands = sim.get("commands", [])
@@ -232,7 +271,8 @@ def _check_simulation_tier(command: str) -> str | None:
             return (
                 f"Bulk file operation blocked: using wildcards (* or ?) with "
                 f"'{ops_display}' can affect unintended files — "
-                "please specify exact filenames instead"
+                "please specify exact filenames instead",
+                ops_display,
             )
 
     return None
@@ -244,23 +284,28 @@ def _log_policy_conflict(command: str, normalized: str, matching_tiers: list) ->
     one policy tier. Records which tiers matched and which one won so the
     audit trail explains the resolution.
 
-    Both the original command string and the normalized form used for matching
-    are included so the log is unambiguous.
+    matching_tiers is a list of (tier_name, reason, matched_rule) 3-tuples
+    in priority order. Both the original command string and the normalized
+    form used for matching are included so the log is unambiguous.
     """
-    tier_names = [tier for tier, _ in matching_tiers]
+    tier_names = [tier for tier, _, _ in matching_tiers]
+    winning_tier, _winning_reason, winning_matched_rule = matching_tiers[0]
     warning = {
         "timestamp":          datetime.datetime.utcnow().isoformat() + "Z",
         "event":              "policy_conflict_warning",
         "command":            command,
         "normalized_command": normalized,
         "matching_tiers":     tier_names,
-        "resolved_to":        tier_names[0],  # highest-priority tier always wins
+        "resolved_to":        winning_tier,   # highest-priority tier always wins
+        "decision_tier":      winning_tier,
     }
+    if winning_matched_rule is not None:
+        warning["matched_rule"] = winning_matched_rule
     with open(LOG_PATH, "a") as f:
         f.write(json.dumps(warning) + "\n")
 
 
-def check_policy(command: str):
+def check_policy(command: str) -> PolicyResult:
     """
     Evaluate *command* against all policy tiers in priority order:
 
@@ -276,28 +321,33 @@ def check_policy(command: str):
     a warning is silently logged to activity.log.
 
     Returns:
-        (allowed: bool, reason: str)
-        - allowed=True,  reason="allowed"   — command may proceed
-        - allowed=False, reason=<str>       — command is blocked with
-                                              an explanation of why
+        PolicyResult with fields:
+          allowed       — True if the command may proceed
+          reason        — human-readable explanation of the decision
+          decision_tier — which tier made the decision
+          matched_rule  — the specific rule that fired, or None
     """
     # Normalize once here; all tier helpers receive the already-normalized
     # string so their internal .lower() calls become harmless no-ops.
     norm = normalize_command(command)
 
-    matching_tiers = []
+    # Each entry is a (tier_name, reason, matched_rule) 3-tuple.
+    matching_tiers: list[tuple[str, str, str]] = []
 
-    blocked_reason = _check_blocked_tier(norm)
-    if blocked_reason:
-        matching_tiers.append(("blocked", blocked_reason))
+    blocked_result = _check_blocked_tier(norm)
+    if blocked_result:
+        reason, matched_rule = blocked_result
+        matching_tiers.append(("blocked", reason, matched_rule))
 
-    confirmation_reason = _check_confirmation_tier(norm)
-    if confirmation_reason:
-        matching_tiers.append(("requires_confirmation", confirmation_reason))
+    confirmation_result = _check_confirmation_tier(norm)
+    if confirmation_result:
+        reason, matched_rule = confirmation_result
+        matching_tiers.append(("requires_confirmation", reason, matched_rule))
 
-    simulation_reason = _check_simulation_tier(norm)
-    if simulation_reason:
-        matching_tiers.append(("requires_simulation", simulation_reason))
+    simulation_result = _check_simulation_tier(norm)
+    if simulation_result:
+        reason, matched_rule = simulation_result
+        matching_tiers.append(("requires_simulation", reason, matched_rule))
 
     # Log a warning whenever a command lands in more than one tier.
     # Pass both forms so the conflict entry shows what was matched against.
@@ -305,14 +355,20 @@ def check_policy(command: str):
         _log_policy_conflict(command, norm, matching_tiers)
 
     if not matching_tiers:
-        return True, "allowed"
+        return PolicyResult(
+            allowed=True, reason="allowed",
+            decision_tier="allowed", matched_rule=None,
+        )
 
-    # Return the decision of the highest-priority (first) matching tier.
-    _top_tier, reason = matching_tiers[0]
-    return False, reason
+    # Return a PolicyResult for the highest-priority (first) matching tier.
+    top_tier, reason, matched_rule = matching_tiers[0]
+    return PolicyResult(
+        allowed=False, reason=reason,
+        decision_tier=top_tier, matched_rule=matched_rule,
+    )
 
 
-def _check_path_policy(path: str) -> str | None:
+def _check_path_policy(path: str) -> tuple[str, str] | None:
     """
     Check a file path against the blocked path and extension rules in policy.json.
 
@@ -323,8 +379,9 @@ def _check_path_policy(path: str) -> str | None:
       1. blocked.paths      — block if any entry appears as a substring of path
       2. blocked.extensions — block if the path ends with a blocked extension
 
-    Returns a human-readable reason string if the path is blocked, or None
-    if it passes every check.
+    Returns (reason, matched_rule) if the path is blocked, or None if it
+    passes every check. matched_rule is the specific blocked path substring
+    or extension string that triggered the match.
     """
     blocked = POLICY.get("blocked", {})
     lower   = path.lower()
@@ -334,7 +391,8 @@ def _check_path_policy(path: str) -> str | None:
         if blocked_path.lower() in lower:
             return (
                 f"Sensitive path access not permitted: '{blocked_path}' "
-                "may contain secrets or critical system configuration"
+                "may contain secrets or critical system configuration",
+                blocked_path,
             )
 
     # 2. Blocked file extensions
@@ -342,7 +400,8 @@ def _check_path_policy(path: str) -> str | None:
         if re.search(rf"{re.escape(ext)}\b", lower):
             return (
                 f"Sensitive file extension not permitted: '{ext}' files "
-                "may contain private keys or certificates"
+                "may contain private keys or certificates",
+                ext,
             )
 
     return None
@@ -457,7 +516,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
     """
 
     # --- 1. Run the policy check ---
-    allowed, reason = check_policy(command)
+    result = check_policy(command)
 
     # --- 2. Build the log entry (common fields for all outcomes) ---
     log_entry = {
@@ -468,14 +527,18 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         # normalized_command shows the whitespace-collapsed, case-preserved form
         # that was used as the base for policy matching (lowercased internally).
         "normalized_command": normalize_for_audit(command),
-        "policy_decision":    "allowed" if allowed else "blocked",
+        "policy_decision":    "allowed" if result.allowed else "blocked",
+        "decision_tier":      result.decision_tier,
         # Always record retry_count so the log shows the full retry history.
         "retry_count":        retry_count,
     }
+    # Include matched_rule only when a rule actually fired (omit when None).
+    if result.matched_rule is not None:
+        log_entry["matched_rule"] = result.matched_rule
 
-    if not allowed:
+    if not result.allowed:
         # Record why the command was blocked.
-        log_entry["block_reason"] = reason
+        log_entry["block_reason"] = result.reason
         # Flag the entry when no further retries will be accepted.
         if retry_count >= MAX_RETRIES:
             log_entry["final_block"] = True
@@ -485,11 +548,11 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         log_file.write(json.dumps(log_entry) + "\n")
 
     # --- 4. If blocked, return a structured message without executing anything ---
-    if not allowed:
+    if not result.allowed:
         if retry_count >= MAX_RETRIES:
             # The agent has used all of its attempts — refuse permanently.
             return (
-                f"[POLICY BLOCK] {reason}\n\n"
+                f"[POLICY BLOCK] {result.reason}\n\n"
                 f"Maximum retries reached ({MAX_RETRIES}/{MAX_RETRIES}). "
                 "This action is permanently blocked for the current request. "
                 "No further attempts will be accepted."
@@ -499,7 +562,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         # it to call execute_command again with a safer command.
         attempts_remaining = MAX_RETRIES - retry_count
         return (
-            f"[POLICY BLOCK] {reason}\n\n"
+            f"[POLICY BLOCK] {result.reason}\n\n"
             f"You have {attempts_remaining} attempt(s) remaining. "
             "Please retry execute_command with a safer alternative command "
             f"and set retry_count={retry_count + 1}."
@@ -554,7 +617,9 @@ def read_file(path: str) -> str:
     """
 
     # --- 1. Check path against policy ---
-    block_reason = _check_path_policy(path)
+    path_check   = _check_path_policy(path)
+    block_reason = path_check[0] if path_check else None
+    matched_rule = path_check[1] if path_check else None
 
     # --- 2. If path is allowed, also check file size before committing ---
     if not block_reason:
@@ -566,6 +631,7 @@ def read_file(path: str) -> str:
                     f"File size {size_mb:.1f} MB exceeds the policy limit "
                     f"of {max_mb} MB (allowed.max_file_size_mb)"
                 )
+                matched_rule = "allowed.max_file_size_mb"
         except FileNotFoundError:
             pass  # Let the read below produce a clear "not found" error.
         except OSError:
@@ -578,9 +644,12 @@ def read_file(path: str) -> str:
         "tool":            "read_file",
         "path":            path,
         "policy_decision": "blocked" if block_reason else "allowed",
+        "decision_tier":   "blocked" if block_reason else "allowed",
     }
     if block_reason:
         log_entry["block_reason"] = block_reason
+    if matched_rule is not None:
+        log_entry["matched_rule"] = matched_rule
 
     # --- 4. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
@@ -619,7 +688,9 @@ def write_file(path: str, content: str) -> str:
     """
 
     # --- 1. Check path against policy ---
-    block_reason = _check_path_policy(path)
+    path_check   = _check_path_policy(path)
+    block_reason = path_check[0] if path_check else None
+    matched_rule = path_check[1] if path_check else None
 
     # --- 2. Build the log entry with the final policy decision ---
     log_entry = {
@@ -628,9 +699,12 @@ def write_file(path: str, content: str) -> str:
         "tool":            "write_file",
         "path":            path,
         "policy_decision": "blocked" if block_reason else "allowed",
+        "decision_tier":   "blocked" if block_reason else "allowed",
     }
     if block_reason:
         log_entry["block_reason"] = block_reason
+    if matched_rule is not None:
+        log_entry["matched_rule"] = matched_rule
 
     # --- 3. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
@@ -693,8 +767,10 @@ def delete_file(path: str) -> str:
         error message.
     """
 
-    # --- 1. Check path against policy (blocked paths, extensions, whitelist) ---
-    block_reason = _check_path_policy(path)
+    # --- 1. Check path against policy (blocked paths, extensions) ---
+    path_check   = _check_path_policy(path)
+    block_reason = path_check[0] if path_check else None
+    matched_rule = path_check[1] if path_check else None
 
     # --- 2. Pre-flight checks on the target (only when policy allows) ---
     if not block_reason:
@@ -707,6 +783,7 @@ def delete_file(path: str) -> str:
                 "tool":            "delete_file",
                 "path":            path,
                 "policy_decision": "allowed",
+                "decision_tier":   "allowed",
                 "error":           "file not found",
             }
             with open(LOG_PATH, "a") as log_file:
@@ -721,6 +798,8 @@ def delete_file(path: str) -> str:
                 "files. Use execute_command for directory operations "
                 "(note: bulk/recursive deletions are also subject to policy)."
             )
+            # This is a type-safety block, not a policy-rule match.
+            matched_rule = None
 
     # --- 3. Build the log entry with the final policy decision ---
     log_entry = {
@@ -729,9 +808,12 @@ def delete_file(path: str) -> str:
         "tool":            "delete_file",
         "path":            path,
         "policy_decision": "blocked" if block_reason else "allowed",
+        "decision_tier":   "blocked" if block_reason else "allowed",
     }
     if block_reason:
         log_entry["block_reason"] = block_reason
+    if matched_rule is not None:
+        log_entry["matched_rule"] = matched_rule
 
     # --- 4. If blocked, write log and return without touching the filesystem ---
     if block_reason:
@@ -788,8 +870,10 @@ def list_directory(path: str) -> str:
         [POLICY BLOCK] / error message.
     """
 
-    # --- 1. Check path against policy (blocked paths, extensions, whitelist) ---
-    block_reason = _check_path_policy(path)
+    # --- 1. Check path against policy (blocked paths, extensions) ---
+    path_check   = _check_path_policy(path)
+    block_reason = path_check[0] if path_check else None
+    matched_rule = path_check[1] if path_check else None
 
     # --- 2. Existence and type checks (only when policy allows) ---
     if not block_reason:
@@ -802,6 +886,7 @@ def list_directory(path: str) -> str:
                 "tool":            "list_directory",
                 "path":            path,
                 "policy_decision": "allowed",
+                "decision_tier":   "allowed",
                 "error":           "path not found",
             }
             with open(LOG_PATH, "a") as log_file:
@@ -816,6 +901,7 @@ def list_directory(path: str) -> str:
                 "tool":            "list_directory",
                 "path":            path,
                 "policy_decision": "allowed",
+                "decision_tier":   "allowed",
                 "error":           "not a directory",
             }
             with open(LOG_PATH, "a") as log_file:
@@ -835,6 +921,7 @@ def list_directory(path: str) -> str:
                 f"Directory depth {depth} exceeds the policy limit of "
                 f"{max_depth} (allowed.max_directory_depth): '{path}'"
             )
+            matched_rule = "allowed.max_directory_depth"
 
     # --- 4. Build the log entry with the final policy decision ---
     log_entry = {
@@ -843,9 +930,12 @@ def list_directory(path: str) -> str:
         "tool":            "list_directory",
         "path":            path,
         "policy_decision": "blocked" if block_reason else "allowed",
+        "decision_tier":   "blocked" if block_reason else "allowed",
     }
     if block_reason:
         log_entry["block_reason"] = block_reason
+    if matched_rule is not None:
+        log_entry["matched_rule"] = matched_rule
 
     # --- 5. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
