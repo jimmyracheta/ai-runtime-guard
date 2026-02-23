@@ -1,11 +1,13 @@
 """
 MCP server that exposes a single tool: execute_command.
 
-The tool logs every call to activity.log, runs the shell command, and
-returns its stdout (or stderr on failure).
+The tool runs every command through a policy engine first. Blocked commands
+are logged and rejected without execution. Allowed commands are logged and
+then executed via subprocess, returning stdout or stderr.
 """
 
 import json
+import re
 import subprocess
 import datetime
 
@@ -14,41 +16,137 @@ from mcp.server.fastmcp import FastMCP
 # Create the MCP server with a descriptive name
 mcp = FastMCP("ai-runtime-guard")
 
+# ---------------------------------------------------------------------------
+# Policy engine
+# ---------------------------------------------------------------------------
+
+# Rule 1 — Destructive commands that should never run.
+# Each entry is (pattern_to_search_for, human_readable_reason).
+# Note: "dd" is intentionally absent here — it requires a regex check (see below)
+# because "dd" as a substring would incorrectly match words like "pwd" or "add".
+BLOCKED_COMMANDS = [
+    ("rm -rf",   "rm -rf recursively deletes files with no confirmation and cannot be undone"),
+    ("mkfs",     "mkfs formats a filesystem, erasing all data on the target device"),
+    ("shutdown", "shutdown powers off or reboots the system, disrupting all running services"),
+    ("reboot",   "reboot restarts the system, disrupting all running services"),
+    ("format",   "format erases a disk or partition and cannot be undone"),
+]
+
+# "dd" needs its own regex so it only matches as a standalone command at the
+# start of the string (e.g. "dd if=..." is blocked, but "pwd" or "add" are not).
+# ^\s*  — optional leading whitespace
+# dd    — the literal command name
+# \b    — word boundary, so "dd2" or "adduser" won't match
+DD_COMMAND_RE = re.compile(r"^\s*dd\b")
+
+# Rule 2 — Sensitive paths that must not be read or written.
+# Checked as substrings; the .pem / .key extensions are checked separately.
+SENSITIVE_PATHS = [".env", ".ssh", "/etc/passwd"]
+
+# Rule 3 — Wildcard pattern combined with destructive operations.
+# Matches commands that use * or ? alongside rm or mv.
+WILDCARD_DESTRUCTIVE_RE = re.compile(r"\b(rm|mv)\b[^|;&\n]*[*?]")
+
+
+def check_policy(command: str):
+    """
+    Evaluate *command* against all policy rules.
+
+    Returns:
+        (allowed: bool, reason: str)
+        - If allowed is True,  reason is "allowed".
+        - If allowed is False, reason explains why the command was blocked.
+    """
+
+    lower = command.lower()
+
+    # --- Rule 1: blocked destructive commands ---
+    for pattern, danger in BLOCKED_COMMANDS:
+        if pattern in lower:
+            return False, f"Blocked destructive command '{pattern}': {danger}"
+
+    # "dd" is checked separately with a regex to avoid false positives on
+    # commands like "pwd" or "add" that contain "dd" as part of a longer word.
+    if DD_COMMAND_RE.match(command):
+        return False, "Blocked destructive command 'dd': dd can overwrite entire disks or devices with no safeguards"
+
+    # --- Rule 2: sensitive path protection ---
+    for path in SENSITIVE_PATHS:
+        if path in lower:
+            return False, (
+                f"Sensitive path access not permitted: '{path}' "
+                "may contain secrets or critical system configuration"
+            )
+    # Also block any file ending in .pem or .key
+    if re.search(r"\.pem\b", lower) or re.search(r"\.key\b", lower):
+        return False, (
+            "Sensitive path access not permitted: "
+            ".pem and .key files may contain private keys or certificates"
+        )
+
+    # --- Rule 3: wildcard + destructive operation ---
+    if WILDCARD_DESTRUCTIVE_RE.search(command):
+        return False, (
+            "Bulk file operation blocked: using wildcards (* or ?) with 'rm' or 'mv' "
+            "can affect unintended files — please specify exact filenames instead"
+        )
+
+    return True, "allowed"
+
+
+# ---------------------------------------------------------------------------
+# MCP tool
+# ---------------------------------------------------------------------------
 
 @mcp.tool()
 def execute_command(command: str) -> str:
     """
     Execute a shell command and return its output.
 
+    The command is checked against the policy engine before execution.
+    Blocked commands are logged and rejected without running.
+
     Args:
         command: The shell command to run (e.g. "ls -la" or "echo hello").
 
     Returns:
-        stdout from the command, or stderr if the command fails.
+        stdout from the command, stderr/exit-code on failure, or a policy
+        error message if the command was blocked.
     """
 
-    # --- 1. Write a log entry before doing anything else ---
+    # --- 1. Run the policy check ---
+    allowed, reason = check_policy(command)
+
+    # --- 2. Build the log entry (common fields for both outcomes) ---
     log_entry = {
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "source": "ai-agent",
         "tool": "execute_command",
         "command": command,
+        "policy_decision": "allowed" if allowed else "blocked",
     }
 
-    # Open in append mode ("a") so previous entries are preserved
+    if not allowed:
+        # Add the block reason so the log explains exactly why
+        log_entry["block_reason"] = reason
+
+    # --- 3. Write the log entry (always, regardless of allow/block) ---
     with open("/Users/liviu/Documents/ai-runtime-guard/activity.log", "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
-    # --- 2. Run the command ---
+    # --- 4. If blocked, return an error message without executing anything ---
+    if not allowed:
+        return f"[POLICY BLOCK] {reason}"
+
+    # --- 5. Execute the command ---
     result = subprocess.run(
         command,
-        shell=True,        # Allows pipes, redirects, etc.
-        capture_output=True,  # Captures both stdout and stderr
-        text=True,         # Decodes bytes to str automatically
+        shell=True,          # Allows pipes, redirects, etc.
+        capture_output=True, # Captures both stdout and stderr
+        text=True,           # Decodes bytes to str automatically
     )
 
-    # --- 3. Return output or error ---
-    # If there is any stderr output (even alongside stdout), include it.
+    # --- 6. Return output or error ---
     if result.returncode != 0:
         # Non-zero exit code means the command failed
         return result.stderr or f"Command exited with code {result.returncode}"
