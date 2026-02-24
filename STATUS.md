@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-02-24 (implementation pass: cumulative budgets + reliability + recovery)
+Last updated: 2026-02-24 (confirmation policy rollout + backlog reconciliation)
 
 ## Current branch
 - `dev` (tracking `origin/dev`)
@@ -17,6 +17,7 @@ Last updated: 2026-02-24 (implementation pass: cumulative budgets + reliability 
 - Fixed `list_directory` depth checks to use depth relative to allowed roots.
 - Added/expanded tests for cumulative bypass prevention, network enforcement, workspace-relative depth, and restore flow.
 - Expanded repo ignore rules for runtime/test artifacts and pinned `mcp` dependency range.
+- Activated `requires_confirmation` policy with production command/path coverage and explicitly included `rm`/`mv` to intentionally enable approval-based cumulative-budget override paths.
 
 ## Current known issues
 - `execute_command` still uses `shell=True` for compatibility; this remains the largest residual command-parsing risk surface.
@@ -30,14 +31,21 @@ Last updated: 2026-02-24 (implementation pass: cumulative budgets + reliability 
 3. Require explicit confirmation handshake for configured risky commands.
 4. Create backups before destructive/overwrite actions and validate recovery.
 
-## Recommended next steps and TODO backlog (aligned to core use cases)
-1. Replace `shell=True` with structured execution modes where possible, and isolate an explicit legacy-shell compatibility mode.
-2. Harden network enforcement beyond domain matching (payload-size enforcement, protocol constraints, and richer URL/token extraction).
-3. Improve backup target discovery for complex shell expansions so backup coverage matches real mutation sets more closely.
-4. Add integration tests for blocked destructive patterns (`rm -rf`, `dd`, sensitive paths/extensions) across obfuscated shell forms.
-5. Add confirmation-handshake tests for replay, lockout-window reset behavior, and override-consumption behavior under cumulative budgets.
-6. Add `pytest` (or migrate remaining pytest-style checks to unittest) so retry-clamp tests run in standard local CI.
-7. Add restore conflict strategy options (overwrite/skip/fail) and per-file restore reporting.
-8. Add timezone-aware UTC timestamps (`datetime.now(datetime.UTC)`) to remove deprecation warnings.
-9. Add dependency vulnerability checks in CI (for example `pip-audit`) and lock dependencies with a reproducible constraints file.
-10. Add branch protection/PR gate workflow (`dev` -> `main`) with required checks.
+## Recommended next steps and TODO backlog (merged, deduplicated)
+
+### Policy/code audit follow-ups
+1. Complete policy-to-code parity: implement or remove currently unused/partially-used policy keys (`allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, override metadata fields).
+2. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file` (not only `execute_command`), and keep backup access controls consistent between file tools and `execute_command`.
+3. Harden command execution model: reduce dependence on `shell=True` with structured execution where feasible, and isolate a tightly-scoped legacy shell mode for cases that need pipes/redirection.
+4. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
+5. Improve backup mutation detection: replace or augment regex path extraction with parser-aware target resolution for shell expansions (`find -exec`, `xargs`, loops, substitutions).
+6. Improve restore ergonomics and safety: add restore conflict strategies (`overwrite/skip/fail`) and clearer per-file restore result reporting.
+7. Replace deprecated UTC datetime calls with timezone-aware UTC (`datetime.now(datetime.UTC)` / `datetime.fromtimestamp(..., datetime.UTC)`).
+8. Consolidate test/runtime tooling: add `pytest` to dev/CI (or migrate remaining pytest tests to unittest), and add CI checks for policy parity regressions.
+9. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection (`dev` -> `main` with required checks).
+
+### Command policy rollout items (Unix/macOS now, Linux-ready)
+10. Expand `blocked.commands` with hard-deny destructive/system commands: `rm -rf /`, `rm -rf ~`, `dd if=`, `mkfs*`, `fdisk`, `parted`, `shutdown`, `reboot`, `halt`, `poweroff`, and equivalent macOS disk/system destructive commands.
+11. Expand `requires_simulation.commands` for bulk-impact operations beyond `rm`/`mv`: `cp`, `rsync --delete`, `find ... -delete`, `find ... -exec rm`, `xargs rm`, `xargs mv`, in-place multi-file rewrites.
+12. Expand `network.commands` for Linux/macOS parity: `curl`, `wget`, `scp`, `sftp`, `rsync`, `ssh`, `nc`/`netcat`, and CLI wrappers using `http/https`.
+13. Add shell-obfuscation-aware command fixtures and tests for command policy coverage (quotes, escapes, chained segments, substitutions, mixed-case/whitespace variants) to validate normalization and matcher behavior.
