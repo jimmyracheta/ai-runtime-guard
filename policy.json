@@ -8,13 +8,62 @@
   "requires_confirmation": {
     "commands": [],
     "paths": [],
-    "session_whitelist_enabled": true
+    "session_whitelist_enabled": true,
+    "approval_security": {
+      "max_failed_attempts_per_token": 5,
+      "failed_attempt_window_seconds": 600
+    }
   },
 
   "requires_simulation": {
     "commands": ["rm", "mv"],
     "bulk_file_threshold": 10,
-    "max_retries": 3
+    "max_retries": 3,
+    "cumulative_budget": {
+      "enabled": true,
+      "scope": "session",
+      "limits": {
+        "max_unique_paths": 50,
+        "max_total_operations": 100,
+        "max_total_bytes_estimate": 104857600
+      },
+      "counting": {
+        "mode": "affected_paths",
+        "dedupe_paths": true,
+        "include_noop_attempts": false,
+        "commands_included": ["rm", "mv", "write_file", "delete_file"]
+      },
+      "reset": {
+        "mode": "sliding_window",
+        "window_seconds": 3600,
+        "idle_reset_seconds": 900,
+        "reset_on_server_restart": true
+      },
+      "on_exceed": {
+        "decision_tier": "blocked",
+        "matched_rule": "requires_simulation.cumulative_budget_exceeded",
+        "message": "Cumulative blast-radius budget exceeded for current scope."
+      },
+      "overrides": {
+        "enabled": true,
+        "require_confirmation_tool": "approve_command",
+        "token_ttl_seconds": 300,
+        "max_override_actions": 1,
+        "audit_reason_required": true,
+        "allowed_roles": ["human-operator"]
+      },
+      "audit": {
+        "log_budget_state": true,
+        "fields": [
+          "budget_scope",
+          "budget_key",
+          "cumulative_unique_paths",
+          "cumulative_total_operations",
+          "cumulative_total_bytes_estimate",
+          "budget_remaining"
+        ]
+      }
+    }
   },
 
   "allowed": {
@@ -25,16 +74,29 @@
   },
 
   "network": {
-    "_comment": "Network policy placeholder — not yet enforced by the policy engine",
+    "_comment": "Network policy for command execution. enforcement_mode supports: off, monitor, enforce",
+    "enforcement_mode": "enforce",
+    "commands": ["curl", "wget", "http", "https"],
     "allowed_domains": [],
     "blocked_domains": [],
     "max_payload_size_kb": 1024
+  },
+
+  "execution": {
+    "max_command_timeout_seconds": 30,
+    "max_output_chars": 200000
   },
 
   "audit": {
     "_comment": "Audit and backup settings — backup_enabled is read by the server at startup",
     "backup_enabled": true,
     "backup_retention_days": 30,
-    "log_level": "verbose"
+    "log_level": "verbose",
+    "redact_patterns": [
+      "(?i)(api[_-]?key\\s*[=:]\\s*)([^\\s]+)",
+      "(?i)(token\\s*[=:]\\s*)([^\\s]+)",
+      "(?i)(password\\s*[=:]\\s*)([^\\s]+)",
+      "(?i)(secret\\s*[=:]\\s*)([^\\s]+)"
+    ]
   }
 }
