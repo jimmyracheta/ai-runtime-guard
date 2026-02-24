@@ -1,1 +1,0 @@
-{"timestamp": "2026-02-23T15:52:58.439194Z", "source": "ai-agent", "tool": "execute_command", "command": "echo hello from ai-runtime-guard"}
