@@ -1,0 +1,129 @@
+import json
+import os
+import pathlib
+import re
+import tempfile
+import unittest
+
+import backup
+import policy_engine
+from tools.command_tools import approve_command, execute_command
+from tools.file_tools import delete_file, list_directory, read_file, write_file
+
+from tests.test_helpers import apply_test_environment, install_test_policy, reset_runtime_state, restore_policy
+
+
+class AttackerTestSuite(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workspace = pathlib.Path(self.tmp.name)
+        self.env_stack = apply_test_environment(self.workspace, max_retries=2)
+        self.env_stack.__enter__()
+        self.original_policy = install_test_policy()
+        reset_runtime_state()
+
+    def tearDown(self):
+        restore_policy(self.original_policy)
+        reset_runtime_state()
+        self.env_stack.close()
+        self.tmp.cleanup()
+
+    def _write(self, relative: str, content: str = "x") -> pathlib.Path:
+        target = self.workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+        return target
+
+    def test_simulation_blocks_when_blast_radius_exceeds_threshold(self):
+        self._write("a.log")
+        self._write("b.log")
+        self._write("c.log")
+
+        result = policy_engine.check_policy("rm *.log")
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.decision_tier, "requires_simulation")
+        self.assertIn("blast radius is 3", result.reason)
+
+    def test_simulation_allows_when_within_threshold(self):
+        self._write("a.log")
+        result = policy_engine.check_policy("rm *.log")
+        self.assertTrue(result.allowed)
+
+    def test_simulation_blocks_when_wildcard_unresolved(self):
+        result = policy_engine.check_policy("rm *.somethingrandom")
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.decision_tier, "requires_simulation")
+        self.assertIn("could not be safely simulated", result.reason)
+
+    def test_confirmation_handshake_and_approve_command(self):
+        self._write("safe.txt", "hello")
+        policy_engine.POLICY["requires_confirmation"]["commands"] = ["cat"]
+
+        blocked = execute_command("cat safe.txt")
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn("approval_token=", blocked)
+
+        token_match = re.search(r"approval_token=([a-f0-9]+)", blocked)
+        self.assertIsNotNone(token_match)
+        token = token_match.group(1)
+
+        approved = approve_command("cat safe.txt", token)
+        self.assertIn("approved", approved.lower())
+
+        output = execute_command("cat safe.txt")
+        self.assertEqual(output, "hello")
+
+    def test_server_side_retry_enforcement_ignores_client_retry_count(self):
+        policy_engine.POLICY["blocked"]["commands"] = ["dd"]
+
+        first = execute_command("dd if=src of=dst", retry_count=0)
+        second = execute_command("dd if=src of=dst", retry_count=0)
+
+        self.assertIn("[POLICY BLOCK]", first)
+        self.assertIn("Maximum retries reached (2/2)", second)
+
+    def test_shell_control_characters_are_blocked(self):
+        blocked = execute_command("echo ok\nuname")
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn("control characters", blocked)
+
+    def test_backup_preserves_relative_paths_and_manifest(self):
+        first = self._write("dir1/a.txt", "one")
+        second = self._write("dir2/a.txt", "two")
+
+        backup_location = pathlib.Path(backup.backup_paths([str(first), str(second)]))
+        self.assertTrue((backup_location / "dir1" / "a.txt").exists())
+        self.assertTrue((backup_location / "dir2" / "a.txt").exists())
+
+        manifest_path = backup_location / "manifest.json"
+        self.assertTrue(manifest_path.exists())
+        manifest = json.loads(manifest_path.read_text())
+        self.assertEqual(len(manifest), 2)
+
+    def test_backup_retention_cleanup_removes_old_backups(self):
+        policy_engine.POLICY["audit"]["backup_retention_days"] = 1
+        old_backup = pathlib.Path(backup.BACKUP_DIR) / "old"
+        old_backup.mkdir(parents=True, exist_ok=True)
+        old_ts = (os.path.getmtime(old_backup) - (3 * 24 * 60 * 60))
+        os.utime(old_backup, (old_ts, old_ts))
+
+        backup.backup_paths([])
+        self.assertFalse(old_backup.exists())
+
+    def test_file_tools_read_write_list_delete_flow(self):
+        (self.workspace / "nested").mkdir(parents=True, exist_ok=True)
+        write_result = write_file("nested/demo.txt", "hello world")
+        self.assertIn("Successfully wrote", write_result)
+
+        read_result = read_file("nested/demo.txt")
+        self.assertEqual(read_result, "hello world")
+
+        listing = list_directory("nested")
+        self.assertIn("demo.txt", listing)
+
+        delete_result = delete_file("nested/demo.txt")
+        self.assertIn("Successfully deleted", delete_result)
+
+
+if __name__ == "__main__":
+    unittest.main()
