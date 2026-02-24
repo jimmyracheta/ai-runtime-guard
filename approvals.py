@@ -27,7 +27,7 @@ def _command_hash(command: str) -> str:
 def prune_approval_failures() -> None:
     sec = POLICY.get("requires_confirmation", {}).get("approval_security", {})
     window = int(sec.get("failed_attempt_window_seconds", 600))
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=window)
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=window)
     for key in list(APPROVAL_FAILURES.keys()):
         recent = [ts for ts in APPROVAL_FAILURES[key] if ts >= cutoff]
         if recent:
@@ -45,11 +45,11 @@ def approval_failures_exceeded(key: str) -> bool:
 
 def record_approval_failure(key: str) -> None:
     prune_approval_failures()
-    APPROVAL_FAILURES.setdefault(key, []).append(datetime.datetime.utcnow())
+    APPROVAL_FAILURES.setdefault(key, []).append(datetime.datetime.now(datetime.UTC))
 
 
 def prune_expired_approvals() -> None:
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
     expired = [token for token, rec in PENDING_APPROVALS.items() if rec["expires_at"] <= now]
     for token in expired:
         PENDING_APPROVALS.pop(token, None)
@@ -58,7 +58,7 @@ def prune_expired_approvals() -> None:
 def issue_or_reuse_approval_token(command: str) -> tuple[str, datetime.datetime]:
     prune_expired_approvals()
     cmd_hash = _command_hash(command)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
 
     for token, rec in PENDING_APPROVALS.items():
         if rec["command_hash"] == cmd_hash and rec["expires_at"] > now:
@@ -97,7 +97,7 @@ def consume_command_approval(command: str, approval_token: str) -> tuple[bool, s
 
 
 def prune_expired_restore_confirmations() -> None:
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
     expired = [
         token
         for token, rec in PENDING_RESTORE_CONFIRMATIONS.items()
@@ -110,7 +110,7 @@ def prune_expired_restore_confirmations() -> None:
 def issue_restore_confirmation_token(backup_path: pathlib.Path, planned: int) -> tuple[str, datetime.datetime]:
     prune_expired_restore_confirmations()
     token = uuid.uuid4().hex
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=RESTORE_CONFIRMATION_TTL_SECONDS)
+    expires_at = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=RESTORE_CONFIRMATION_TTL_SECONDS)
     PENDING_RESTORE_CONFIRMATIONS[token] = {
         "backup_path": str(backup_path.resolve()),
         "planned": int(planned),

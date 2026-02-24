@@ -31,3 +31,22 @@ Primary workflow (recommended for destructive-behavior testing):
 
 Optional local unit tests in this repo:
 - `python3 -m unittest discover -s tests -p 'test_*.py'`
+
+## Merge and branch policy (MVP lock-down)
+1. Development happens on feature branches (currently `refactor`), not `main`.
+2. Merge path is `refactor` -> `main` only after the pre-merge gate is satisfied.
+3. `main` should be protected in GitHub settings: no direct pushes, at least one review, and required checks before merge.
+
+## Minimum pre-merge gate
+1. Unit security regressions pass:
+   - `python3 -m unittest discover -s tests -p 'test_*.py'`
+2. Manual MCP integration validation passes for at least 12 prompts from `tests.md`, including:
+   - 3 blocked destructive command scenarios
+   - 2 confirmation-handshake scenarios
+   - 2 simulation scenarios (threshold + unresolved wildcard)
+   - 2 cumulative-budget anti-bypass scenarios
+   - 1 restore flow scenario (dry-run token + apply)
+   - 2 network-policy scenarios
+3. Linux checkpoint before MVP release:
+   - run the same unit suite on Linux
+   - execute a reduced manual prompt set on Linux and record outcomes in `STATUS.md`

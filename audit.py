@@ -27,8 +27,9 @@ def redact_for_audit(value):
 
 
 def build_log_entry(tool: str, result: PolicyResult, **kwargs) -> dict:
+    timestamp = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
     entry: dict = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": timestamp,
         "source": "ai-agent",
         "session_id": SESSION_ID,
         "tool": tool,

@@ -54,7 +54,7 @@ def cleanup_old_backups() -> None:
     retention_days = POLICY.get("audit", {}).get("backup_retention_days", 30)
     if retention_days <= 0:
         return
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=retention_days)
     backup_root = pathlib.Path(BACKUP_DIR)
     if not backup_root.exists():
         return
@@ -62,7 +62,7 @@ def cleanup_old_backups() -> None:
         if not child.is_dir():
             continue
         try:
-            mtime = datetime.datetime.utcfromtimestamp(child.stat().st_mtime)
+            mtime = datetime.datetime.fromtimestamp(child.stat().st_mtime, datetime.UTC)
         except OSError:
             continue
         if mtime < cutoff:
@@ -219,7 +219,7 @@ def enforce_max_versions_per_file() -> None:
 
 def backup_paths(paths: list[str]) -> str:
     cleanup_old_backups()
-    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S.%f")
+    timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%S.%f")
     suffix = uuid.uuid4().hex[:8]
     backup_location = os.path.join(BACKUP_DIR, f"{timestamp}_{suffix}")
 

@@ -145,6 +145,21 @@ Backup behavior:
 
 ## Trust boundaries and notable gaps
 Observed current gaps/risk areas:
-- `network` policy exists in config but is explicitly not enforced in code.
+- network policy is enforced at command gate level (domain intent + domain allow/block), but deep payload/protocol controls remain limited.
 - command execution uses `shell=True`; mitigations exist but parser/shell complexity remains a core risk surface.
 - backup path extraction for command execution relies on token regex + existence checks and can miss some shell-expanded path forms.
+
+## MVP command coverage lock-down
+Policy-only lock-down was expanded to cover common agent command families without adding new runtime features:
+- Version control:
+  - `requires_confirmation`: `git clone`, `git fetch`, `git push`, `git reset --hard`, `git clean -fd`
+- Email/notification:
+  - `requires_confirmation`: `mail`, `mailx`, `sendmail`
+- Package management:
+  - `requires_confirmation`: `pip install`, `pip3 install`, `npm install`, `brew install`, `apt install`, `yum install`, `dnf install`
+- Process management/persistence:
+  - `requires_confirmation`: `kill`, `pkill`, `nohup`, `crontab`, `launchctl`, `systemctl`
+- Data exfiltration primitives:
+  - `requires_confirmation`: `base64`, `xxd`, `nc`, `netcat`, `curl`, `wget`, `scp`, `rsync`
+- Privilege escalation:
+  - `blocked`: `sudo`, `su`, `doas`

@@ -1,5 +1,14 @@
 # CHANGELOG_DEV
 
+## 2026-02-24 (MVP lock-down prep)
+- Added explicit merge/branch policy and pre-merge gate to `README.md` (unit tests + minimum manual integration prompts + Linux checkpoint).
+- Replaced deprecated UTC datetime helpers with timezone-aware UTC usage across runtime modules.
+- Expanded `policy.json` command-family coverage for lock-down without adding new runtime features:
+  - blocked privilege-escalation commands (`sudo`, `su`, `doas`)
+  - requires-confirmation coverage for version control, email, package-management, process-management, and exfiltration-oriented command families.
+- Updated `ARCHITECTURE.md` with MVP command-coverage rationale and corrected network enforcement status.
+- Reorganized `STATUS.md` into approved lock-down sequence (done vs pending), explicit minimum merge gate, and grouped post-MVP workstreams.
+
 ## 2026-02-24 (module split + test rewrite)
 - Refactored runtime from monolithic `server.py` into focused modules (`config`, `policy_engine`, `approvals`, `budget`, `backup`, `audit`, `executor`, `tools/*`) with a thin `server.py` entrypoint.
 - Preserved existing tool behavior and policy semantics while improving code isolation for future changes.

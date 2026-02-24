@@ -206,7 +206,7 @@ def list_directory(path: str) -> str:
     for entry in entries:
         try:
             stat = entry.stat(follow_symlinks=False)
-            mtime = datetime.datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"
+            mtime = datetime.datetime.fromtimestamp(stat.st_mtime, datetime.UTC).isoformat().replace("+00:00", "Z")
             kind = "file" if entry.is_file(follow_symlinks=False) else "directory"
             size = f"{stat.st_size} bytes" if kind == "file" else "-"
             lines.append(f"  {entry.name}  [{kind}]  size={size}  modified={mtime}")

@@ -120,7 +120,7 @@ def check_and_record_cumulative_budget(
             return True, None, None, {}
 
     scope, scope_key = budget_scope_key(tool)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(datetime.UTC)
     state = prune_budget_state(scope_key, now)
     existing_paths = set(state.get("unique_paths", {}).keys())
     new_paths = {str(pathlib.Path(p).resolve()) for p in affected_paths if is_within_workspace(p)}
