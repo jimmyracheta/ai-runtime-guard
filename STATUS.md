@@ -1,28 +1,54 @@
 # STATUS
 
-Last updated: 2026-02-24 (local workspace scan)
+Last updated: 2026-02-24 (command policy rollout items 10-13 implemented)
 
 ## Current branch
-- `main`
+- `dev` (tracking `origin/dev`)
 
 ## What was just changed
-- In this session (docs only): added `README.md`, `ARCHITECTURE.md`, `STATUS.md`, `CHANGELOG_DEV.md`.
-- Existing local working tree already had uncommitted changes before this pass:
-  - modified: `server.py`, `activity.log`
-  - untracked: `backups/`, `simtest/`, `test_attacker_suite.py`, `test_retry_clamp_pytest.py`, `tmp_test.txt`, `.DS_Store`
-- Most recent commits on branch show security-hardening progression:
-  - workspace boundary + whitelist enforcement
-  - session/workspace attribution in logs
-  - typed `PolicyResult` with tier/rule metadata
-  - command normalization + hash-based session whitelist
+- Added policy schema extensions for cumulative budgets, network enforcement mode, execution limits, approval security, and audit redaction patterns.
+- Added startup policy validation/normalization with fail-fast checks for malformed policy structures.
+- Added shell-aware command segmentation/tokenization helpers and upgraded command matching/simulation parsing.
+- Added cumulative blast-radius budget enforcement (session/request/workspace/tool scope support) and budget telemetry fields in logs.
+- Added network policy enforcement hook for command execution (`off`/`monitor`/`enforce` modes).
+- Added approval token failure throttling/rate limiting.
+- Added output truncation + configurable command timeout handling.
+- Added backup manifest file hashing and new `restore_backup` MCP tool with dry-run and hash verification.
+- Fixed `list_directory` depth checks to use depth relative to allowed roots.
+- Added/expanded tests for cumulative bypass prevention, network enforcement, workspace-relative depth, and restore flow.
+- Expanded repo ignore rules for runtime/test artifacts and pinned `mcp` dependency range.
+- Activated `requires_confirmation` policy with production command/path coverage and explicitly included `rm`/`mv` to intentionally enable approval-based cumulative-budget override paths.
+- Implemented command policy rollout together:
+  - Expanded `blocked.commands` hard-deny set (including system/disk-destructive patterns).
+  - Expanded `requires_simulation.commands` to cover additional bulk-impact command families.
+  - Expanded `network.commands` to Linux/macOS parity command set.
+  - Added shell-obfuscation-aware unit tests for chaining, quoting, escaping, and normalization edge cases.
 
 ## Current known issues
-- `network` policy section is a placeholder in `policy.json` and is not enforced in `server.py`.
-- `execute_command` still runs via `shell=True`; policy checks reduce risk but shell parsing remains a high-risk surface.
-- Backup detection for shell commands is heuristic (`PATH_TOKEN_RE` + pre-existence checks) and may miss some shell-expanded destructive targets.
-- Repository currently contains generated/runtime artifacts (`.DS_Store`, `backups/`, `simtest/`, `tmp_test.txt`) that can create noise in status and reviews.
+- `execute_command` still uses `shell=True` for compatibility; this remains the largest residual command-parsing risk surface.
+- Network policy currently focuses on domain-level command checks; payload-size and protocol-depth enforcement are not yet comprehensive.
+- Backup target detection for shell commands remains heuristic (`PATH_TOKEN_RE` + existing-path checks) and can miss some shell expansion edge cases.
+- `test_retry_clamp_pytest.py` requires `pytest`; this environment currently lacks the `pytest` executable.
 
-## Next 3 tasks
-1. Add explicit network/egress enforcement hooks (or remove placeholder) so policy and implementation are aligned.
-2. Expand adversarial tests for shell edge cases (quoting, escaped separators, glob edge cases, symlink traversal attempts).
-3. Separate fixture/runtime artifacts from repo state (`tests/fixtures`, tighter ignore rules, cleanup script) to keep dev diffs clean.
+## Core use cases (from README; do not edit without explicit product decision)
+1. Block destructive commands and sensitive path/extension access.
+2. Simulation-gate wildcard destructive operations and enforce blast-radius thresholds.
+3. Require explicit confirmation handshake for configured risky commands.
+4. Create backups before destructive/overwrite actions and validate recovery.
+
+## Recommended next steps and TODO backlog (merged, deduplicated)
+
+### Policy/code audit follow-ups
+1. Complete policy-to-code parity: implement or remove currently unused/partially-used policy keys (`allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, override metadata fields).
+2. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file` (not only `execute_command`), and keep backup access controls consistent between file tools and `execute_command`.
+3. Harden command execution model: reduce dependence on `shell=True` with structured execution where feasible, and isolate a tightly-scoped legacy shell mode for cases that need pipes/redirection.
+4. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
+5. Improve backup mutation detection: replace or augment regex path extraction with parser-aware target resolution for shell expansions (`find -exec`, `xargs`, loops, substitutions).
+6. Improve restore ergonomics and safety: add restore conflict strategies (`overwrite/skip/fail`) and clearer per-file restore result reporting.
+7. Replace deprecated UTC datetime calls with timezone-aware UTC (`datetime.now(datetime.UTC)` / `datetime.fromtimestamp(..., datetime.UTC)`).
+8. Consolidate test/runtime tooling: add `pytest` to dev/CI (or migrate remaining pytest tests to unittest), and add CI checks for policy parity regressions.
+9. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection (`dev` -> `main` with required checks).
+
+### Command policy rollout items (Unix/macOS now, Linux-ready)
+10. Validate expanded command sets against real agent workflows to tune false-positive rate (especially for `find`, `xargs`, `sed`, `perl` in simulation tier).
+11. Add focused integration tests for multi-command shell constructs (`find -exec`, `xargs`, loops, substitutions) that are now represented in policy but only partially modeled by current simulation logic.

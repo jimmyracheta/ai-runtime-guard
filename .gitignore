@@ -10,3 +10,14 @@ activity.log
 
 # Environment variables / secrets
 .env
+
+# OS/editor noise
+.DS_Store
+
+# Runtime scratch and backup artifacts
+backups/
+simtest/
+tmp_test.txt
+
+# Test caches
+.pytest_cache/

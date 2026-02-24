@@ -1,6 +1,6 @@
 """
-MCP server that exposes six tools: execute_command, approve_command, read_file,
-write_file, delete_file, and list_directory.
+MCP server that exposes tools: server_info, execute_command, approve_command,
+read_file, write_file, delete_file, list_directory, and restore_backup.
 
 Policy rules are loaded from policy.json at startup. Every tool call passes
 through the policy engine (blocked → requires_confirmation →
@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import uuid
 import datetime
+from urllib.parse import urlparse
 from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
@@ -46,8 +47,176 @@ def _load_policy() -> dict:
         return json.load(f)
 
 
+def _validate_and_normalize_policy(policy: dict) -> dict:
+    """
+    Validate and normalize policy structure at startup.
+
+    Fail-fast validation protects the server from silently running with
+    malformed safety settings.
+    """
+    if not isinstance(policy, dict):
+        raise ValueError("policy.json root must be an object")
+
+    def _ensure_dict(key: str) -> dict:
+        value = policy.get(key, {})
+        if not isinstance(value, dict):
+            raise ValueError(f"policy.{key} must be an object")
+        policy[key] = value
+        return value
+
+    def _ensure_list(section: dict, key: str) -> list:
+        value = section.get(key, [])
+        if not isinstance(value, list):
+            raise ValueError(f"policy list '{key}' must be an array")
+        section[key] = value
+        return value
+
+    blocked = _ensure_dict("blocked")
+    _ensure_list(blocked, "commands")
+    _ensure_list(blocked, "paths")
+    _ensure_list(blocked, "extensions")
+
+    conf = _ensure_dict("requires_confirmation")
+    _ensure_list(conf, "commands")
+    _ensure_list(conf, "paths")
+    conf.setdefault("session_whitelist_enabled", True)
+    if not isinstance(conf["session_whitelist_enabled"], bool):
+        raise ValueError("requires_confirmation.session_whitelist_enabled must be boolean")
+    sec = conf.setdefault("approval_security", {})
+    if not isinstance(sec, dict):
+        raise ValueError("requires_confirmation.approval_security must be an object")
+    sec.setdefault("max_failed_attempts_per_token", 5)
+    sec.setdefault("failed_attempt_window_seconds", 600)
+    sec.setdefault("token_ttl_seconds", 600)
+
+    sim = _ensure_dict("requires_simulation")
+    _ensure_list(sim, "commands")
+    sim.setdefault("bulk_file_threshold", 10)
+    sim.setdefault("max_retries", 3)
+    if int(sim["bulk_file_threshold"]) < 0:
+        raise ValueError("requires_simulation.bulk_file_threshold must be >= 0")
+    if int(sim["max_retries"]) < 1:
+        raise ValueError("requires_simulation.max_retries must be >= 1")
+    budget = sim.setdefault("cumulative_budget", {})
+    if not isinstance(budget, dict):
+        raise ValueError("requires_simulation.cumulative_budget must be an object")
+    budget.setdefault("enabled", False)
+    budget.setdefault("scope", "session")
+    budget.setdefault("limits", {})
+    budget.setdefault("counting", {})
+    budget.setdefault("reset", {})
+    budget.setdefault("on_exceed", {})
+    budget.setdefault("overrides", {})
+    budget.setdefault("audit", {})
+    limits = budget["limits"]
+    if not isinstance(limits, dict):
+        raise ValueError("requires_simulation.cumulative_budget.limits must be an object")
+    limits.setdefault("max_unique_paths", 50)
+    limits.setdefault("max_total_operations", 100)
+    limits.setdefault("max_total_bytes_estimate", 104857600)
+    counting = budget["counting"]
+    if not isinstance(counting, dict):
+        raise ValueError("requires_simulation.cumulative_budget.counting must be an object")
+    counting.setdefault("mode", "affected_paths")
+    counting.setdefault("dedupe_paths", True)
+    counting.setdefault("include_noop_attempts", False)
+    counting.setdefault("commands_included", ["rm", "mv", "write_file", "delete_file"])
+    if not isinstance(counting["commands_included"], list):
+        raise ValueError("requires_simulation.cumulative_budget.counting.commands_included must be an array")
+    reset = budget["reset"]
+    if not isinstance(reset, dict):
+        raise ValueError("requires_simulation.cumulative_budget.reset must be an object")
+    reset.setdefault("mode", "sliding_window")
+    reset.setdefault("window_seconds", 3600)
+    reset.setdefault("idle_reset_seconds", 900)
+    reset.setdefault("reset_on_server_restart", True)
+    on_exceed = budget["on_exceed"]
+    if not isinstance(on_exceed, dict):
+        raise ValueError("requires_simulation.cumulative_budget.on_exceed must be an object")
+    on_exceed.setdefault("decision_tier", "blocked")
+    on_exceed.setdefault("matched_rule", "requires_simulation.cumulative_budget_exceeded")
+    on_exceed.setdefault("message", "Cumulative blast-radius budget exceeded for current scope.")
+    overrides = budget["overrides"]
+    if not isinstance(overrides, dict):
+        raise ValueError("requires_simulation.cumulative_budget.overrides must be an object")
+    overrides.setdefault("enabled", True)
+    overrides.setdefault("require_confirmation_tool", "approve_command")
+    overrides.setdefault("token_ttl_seconds", 300)
+    overrides.setdefault("max_override_actions", 1)
+    overrides.setdefault("audit_reason_required", True)
+    overrides.setdefault("allowed_roles", ["human-operator"])
+    audit_cfg = budget["audit"]
+    if not isinstance(audit_cfg, dict):
+        raise ValueError("requires_simulation.cumulative_budget.audit must be an object")
+    audit_cfg.setdefault("log_budget_state", True)
+    audit_cfg.setdefault(
+        "fields",
+        [
+            "budget_scope",
+            "budget_key",
+            "cumulative_unique_paths",
+            "cumulative_total_operations",
+            "cumulative_total_bytes_estimate",
+            "budget_remaining",
+        ],
+    )
+
+    allowed = _ensure_dict("allowed")
+    _ensure_list(allowed, "paths_whitelist")
+    allowed.setdefault("max_files_per_operation", 10)
+    allowed.setdefault("max_file_size_mb", 10)
+    allowed.setdefault("max_directory_depth", 5)
+
+    network = _ensure_dict("network")
+    network.setdefault("enforcement_mode", "off")
+    _ensure_list(network, "commands")
+    _ensure_list(network, "allowed_domains")
+    _ensure_list(network, "blocked_domains")
+    network.setdefault("max_payload_size_kb", 1024)
+    if network["enforcement_mode"] not in {"off", "monitor", "enforce"}:
+        raise ValueError("network.enforcement_mode must be one of: off, monitor, enforce")
+
+    execution = _ensure_dict("execution")
+    execution.setdefault("max_command_timeout_seconds", 30)
+    execution.setdefault("max_output_chars", 200000)
+    if int(execution["max_command_timeout_seconds"]) < 1:
+        raise ValueError("execution.max_command_timeout_seconds must be >= 1")
+    if int(execution["max_output_chars"]) < 1024:
+        raise ValueError("execution.max_output_chars must be >= 1024")
+
+    backup_access = _ensure_dict("backup_access")
+    backup_access.setdefault("block_agent_tools", True)
+    _ensure_list(backup_access, "allowed_tools")
+    if not isinstance(backup_access["block_agent_tools"], bool):
+        raise ValueError("backup_access.block_agent_tools must be boolean")
+
+    restore = _ensure_dict("restore")
+    restore.setdefault("require_dry_run_before_apply", True)
+    restore.setdefault("confirmation_ttl_seconds", 300)
+    if not isinstance(restore["require_dry_run_before_apply"], bool):
+        raise ValueError("restore.require_dry_run_before_apply must be boolean")
+    if int(restore["confirmation_ttl_seconds"]) < 30:
+        raise ValueError("restore.confirmation_ttl_seconds must be >= 30")
+
+    audit = _ensure_dict("audit")
+    audit.setdefault("backup_enabled", True)
+    audit.setdefault("backup_on_content_change_only", True)
+    audit.setdefault("max_versions_per_file", 5)
+    audit.setdefault("backup_root", str(BASE_DIR / "backups"))
+    audit.setdefault("backup_retention_days", 30)
+    audit.setdefault("log_level", "verbose")
+    if int(audit["max_versions_per_file"]) < 1:
+        raise ValueError("audit.max_versions_per_file must be >= 1")
+    _ensure_list(audit, "redact_patterns")
+
+    return policy
+
+
 # POLICY is loaded once when the server starts. Restart to pick up edits.
-POLICY: dict = _load_policy()
+POLICY: dict = _validate_and_normalize_policy(_load_policy())
+
+# Allow backup storage to live outside workspace if configured.
+BACKUP_DIR = str(pathlib.Path(POLICY.get("audit", {}).get("backup_root", BACKUP_DIR)).resolve())
 
 # MAX_RETRIES is read from policy so it can be tuned without touching code.
 MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
@@ -67,6 +236,15 @@ PENDING_APPROVALS: dict[str, dict] = {}
 # parameter is accepted for compatibility but is not authoritative.
 SERVER_RETRY_COUNTS: dict[str, int] = {}
 
+# Failed approval attempts tracked to throttle token guessing.
+APPROVAL_FAILURES: dict[str, list[datetime.datetime]] = {}
+
+# Cumulative blast-radius state keyed by configured scope.
+CUMULATIVE_BUDGET_STATE: dict[str, dict] = {}
+
+# Pending restore confirmations keyed by token.
+PENDING_RESTORE_CONFIRMATIONS: dict[str, dict] = {}
+
 # Generated once when the server process starts. Every log entry includes
 # this ID so related records across tools can be correlated by session.
 SESSION_ID: str = str(uuid.uuid4())
@@ -79,7 +257,13 @@ WORKSPACE_ROOT: str = os.environ.get("AIRG_WORKSPACE", str(BASE_DIR))
 SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
 
 # One-time approval token validity window.
-APPROVAL_TTL_SECONDS: int = 600
+APPROVAL_TTL_SECONDS: int = POLICY.get("requires_confirmation", {}).get(
+    "approval_security", {}
+).get("token_ttl_seconds", 600)
+
+RESTORE_CONFIRMATION_TTL_SECONDS: int = POLICY.get("restore", {}).get(
+    "confirmation_ttl_seconds", 300
+)
 
 # Create the MCP server with a descriptive name.
 mcp = FastMCP("ai-runtime-guard")
@@ -131,6 +315,219 @@ def command_hash(command: str) -> str:
     return hashlib.sha256(normalize_command(command).encode()).hexdigest()
 
 
+def _split_shell_segments(command: str) -> list[str]:
+    """
+    Split a shell command on separators while respecting quotes and escaping.
+
+    This avoids regex-based splitting that can mis-handle separators embedded
+    inside quoted literals.
+    """
+    segments: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    i = 0
+
+    while i < len(command):
+        ch = command[i]
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+
+        if ch == "\\":
+            escaped = True
+            buf.append(ch)
+            i += 1
+            continue
+
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+
+        if not in_single and not in_double and ch in {";", "|", "&"}:
+            segment = "".join(buf).strip()
+            if segment:
+                segments.append(segment)
+            buf = []
+            # Collapse repeated separators (||, &&, ;;, |&).
+            while i + 1 < len(command) and command[i + 1] in {";", "|", "&"}:
+                i += 1
+            i += 1
+            continue
+
+        buf.append(ch)
+        i += 1
+
+    final_segment = "".join(buf).strip()
+    if final_segment:
+        segments.append(final_segment)
+    return segments
+
+
+def _tokenize_shell_segment(segment: str) -> tuple[list[str], bool]:
+    """Tokenize a shell segment using shlex. Returns (tokens, parse_error)."""
+    try:
+        return shlex.split(segment), False
+    except ValueError:
+        return [], True
+
+
+def _tokenize_command(command: str) -> tuple[list[str], bool]:
+    """
+    Tokenize all segments of a shell command.
+
+    Returns (flattened_tokens_lower, parse_error_seen).
+    """
+    parse_error = False
+    all_tokens: list[str] = []
+    for segment in _split_shell_segments(command):
+        tokens, err = _tokenize_shell_segment(segment)
+        parse_error = parse_error or err
+        all_tokens.extend(t.lower() for t in tokens)
+    return all_tokens, parse_error
+
+
+def _redact_text_for_audit(value: str) -> str:
+    """Redact sensitive token-like values in loggable strings."""
+    text = value
+    for pattern in POLICY.get("audit", {}).get("redact_patterns", []):
+        try:
+            text = re.sub(pattern, r"\1<redacted>", text)
+        except re.error:
+            continue
+    return text
+
+
+def _redact_for_audit(value):
+    """Recursively redact log payload values."""
+    if isinstance(value, str):
+        return _redact_text_for_audit(value)
+    if isinstance(value, list):
+        return [_redact_for_audit(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _redact_for_audit(v) for k, v in value.items()}
+    return value
+
+
+def _execution_limits() -> tuple[int, int]:
+    """Return configured command timeout and max output chars."""
+    execution = POLICY.get("execution", {})
+    timeout = int(execution.get("max_command_timeout_seconds", 30))
+    max_chars = int(execution.get("max_output_chars", 200000))
+    return timeout, max_chars
+
+
+def _truncate_output(text: str, max_chars: int) -> str:
+    """Clamp output strings to configured bounds."""
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    return text[:max_chars] + f"\n...[truncated {omitted} chars]"
+
+
+def _network_policy_check(command: str) -> tuple[bool, str | None]:
+    """
+    Validate a command against network policy.
+
+    Returns (allowed, reason). In monitor mode this function always allows.
+    """
+    network = POLICY.get("network", {})
+    mode = str(network.get("enforcement_mode", "off")).lower()
+    if mode == "off":
+        return True, None
+
+    tokens, parse_error = _tokenize_command(command)
+    lower_cmd = command.lower()
+    network_markers = [m.lower() for m in network.get("commands", [])]
+    is_network_intent = any(marker in lower_cmd for marker in network_markers)
+    if not is_network_intent:
+        return True, None
+
+    blocked = [d.lower() for d in network.get("blocked_domains", [])]
+    allowed = [d.lower() for d in network.get("allowed_domains", [])]
+    domains: set[str] = set()
+    for raw in tokens:
+        if "://" in raw:
+            parsed = urlparse(raw)
+            if parsed.hostname:
+                domains.add(parsed.hostname.lower())
+        elif raw.startswith("http") and parse_error:
+            # Best-effort fallback for malformed quoting.
+            parsed = urlparse(raw)
+            if parsed.hostname:
+                domains.add(parsed.hostname.lower())
+
+    def _domain_matches(domain: str, patterns: list[str]) -> bool:
+        for p in patterns:
+            if domain == p or domain.endswith("." + p):
+                return True
+        return False
+
+    for domain in domains:
+        if blocked and _domain_matches(domain, blocked):
+            reason = f"Network domain '{domain}' is blocked by policy"
+            if mode == "monitor":
+                return True, reason
+            return False, reason
+
+    if allowed:
+        for domain in domains:
+            if not _domain_matches(domain, allowed):
+                reason = f"Network domain '{domain}' is not in allowed_domains policy"
+                if mode == "monitor":
+                    return True, reason
+                return False, reason
+
+    return True, None
+
+
+def _command_targets_backup_storage(command: str) -> bool:
+    """Best-effort check whether command references paths under BACKUP_DIR."""
+    if not POLICY.get("backup_access", {}).get("block_agent_tools", True):
+        return False
+
+    backup_root = pathlib.Path(BACKUP_DIR).resolve()
+    lower = command.lower()
+    if str(backup_root).lower() in lower:
+        return True
+
+    for segment in _split_shell_segments(command):
+        tokens, err = _tokenize_shell_segment(segment)
+        if err:
+            continue
+        for token in tokens:
+            candidate = token.strip("'\"")
+            if not candidate:
+                continue
+            if candidate.startswith("-"):
+                continue
+            if "/" not in candidate and "." not in candidate and "*" not in candidate:
+                continue
+            try:
+                abs_path = candidate if os.path.isabs(candidate) else os.path.join(WORKSPACE_ROOT, candidate)
+                resolved = pathlib.Path(abs_path).resolve()
+                if resolved.is_relative_to(backup_root):
+                    return True
+            except Exception:
+                continue
+    # Extra fallback for symlinked temp paths (/tmp vs /private/tmp).
+    tmp_backup_root = str(pathlib.Path(BACKUP_DIR))
+    if tmp_backup_root.lower() in lower:
+        return True
+    return False
+
+
 def _retry_key(command: str, tier: str, matched_rule: str | None) -> str:
     """
     Build a stable retry key for server-side retry enforcement.
@@ -158,6 +555,227 @@ def _register_retry(command: str, tier: str, matched_rule: str | None) -> int:
     stored_count += 1
     SERVER_RETRY_COUNTS[key] = stored_count
     return stored_count
+
+
+def _cumulative_cfg() -> dict:
+    """Return cumulative budget configuration."""
+    return POLICY.get("requires_simulation", {}).get("cumulative_budget", {})
+
+
+def _budget_scope_key(tool: str) -> tuple[str, str]:
+    """Return (scope, key) for cumulative budget tracking."""
+    cfg = _cumulative_cfg()
+    scope = str(cfg.get("scope", "session")).lower()
+    if scope == "workspace":
+        return scope, f"{WORKSPACE_ROOT}"
+    if scope == "tool":
+        return scope, f"{SESSION_ID}:{tool}"
+    if scope == "request":
+        # Request scope can be supplied by a client wrapper.
+        request_id = os.environ.get("AIRG_REQUEST_ID", SESSION_ID)
+        return scope, f"{request_id}:{tool}"
+    return "session", SESSION_ID
+
+
+def _prune_approval_failures() -> None:
+    """Drop stale approval-failure records."""
+    sec = POLICY.get("requires_confirmation", {}).get("approval_security", {})
+    window = int(sec.get("failed_attempt_window_seconds", 600))
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(seconds=window)
+    for key in list(APPROVAL_FAILURES.keys()):
+        recent = [ts for ts in APPROVAL_FAILURES[key] if ts >= cutoff]
+        if recent:
+            APPROVAL_FAILURES[key] = recent
+        else:
+            APPROVAL_FAILURES.pop(key, None)
+
+
+def _approval_failures_exceeded(key: str) -> bool:
+    """Return True if token/key has exceeded failure limit in active window."""
+    _prune_approval_failures()
+    sec = POLICY.get("requires_confirmation", {}).get("approval_security", {})
+    max_failed = int(sec.get("max_failed_attempts_per_token", 5))
+    return len(APPROVAL_FAILURES.get(key, [])) >= max_failed
+
+
+def _record_approval_failure(key: str) -> None:
+    """Record one failed approval attempt for a key."""
+    _prune_approval_failures()
+    APPROVAL_FAILURES.setdefault(key, []).append(datetime.datetime.utcnow())
+
+
+def _estimate_paths_bytes(paths: list[str]) -> int:
+    """Estimate byte impact for a list of file paths."""
+    total = 0
+    for p in paths:
+        try:
+            if os.path.isfile(p):
+                total += int(os.path.getsize(p))
+        except OSError:
+            continue
+    return total
+
+
+def _budget_allows_override(scope_key: str, command: str) -> bool:
+    """Return True if this action can consume an override slot."""
+    cfg = _cumulative_cfg()
+    overrides = cfg.get("overrides", {})
+    if not overrides.get("enabled", False):
+        return False
+    cmd_hash = command_hash(command)
+    if cmd_hash not in SESSION_WHITELIST:
+        return False
+    state = CUMULATIVE_BUDGET_STATE.setdefault(
+        scope_key,
+        {
+            "unique_paths": {},
+            "total_operations": 0,
+            "total_bytes_estimate": 0,
+            "last_activity": None,
+            "overrides_used": 0,
+        },
+    )
+    max_override = int(overrides.get("max_override_actions", 1))
+    if state.get("overrides_used", 0) >= max_override:
+        return False
+    state["overrides_used"] = state.get("overrides_used", 0) + 1
+    return True
+
+
+def _prune_budget_state(scope_key: str, now: datetime.datetime) -> dict:
+    """Prune/reset budget state according to configured policy."""
+    cfg = _cumulative_cfg()
+    reset_cfg = cfg.get("reset", {})
+    window = int(reset_cfg.get("window_seconds", 3600))
+    idle = int(reset_cfg.get("idle_reset_seconds", 900))
+    state = CUMULATIVE_BUDGET_STATE.setdefault(
+        scope_key,
+        {
+            "unique_paths": {},
+            "total_operations": 0,
+            "total_bytes_estimate": 0,
+            "last_activity": None,
+            "overrides_used": 0,
+        },
+    )
+    last = state.get("last_activity")
+    if last and idle > 0 and (now - last).total_seconds() > idle:
+        state.update(
+            {
+                "unique_paths": {},
+                "total_operations": 0,
+                "total_bytes_estimate": 0,
+                "last_activity": None,
+                "overrides_used": 0,
+            }
+        )
+        return state
+
+    if window > 0:
+        cutoff = now - datetime.timedelta(seconds=window)
+        state["unique_paths"] = {
+            p: seen_at
+            for p, seen_at in state.get("unique_paths", {}).items()
+            if seen_at >= cutoff
+        }
+    return state
+
+
+def _check_and_record_cumulative_budget(
+    *,
+    tool: str,
+    command: str | None,
+    affected_paths: list[str],
+    operation_count: int = 1,
+    bytes_estimate: int | None = None,
+) -> tuple[bool, str | None, str | None, dict]:
+    """
+    Check and record cumulative budget usage.
+
+    Returns:
+      (allowed, reason, matched_rule, budget_fields)
+    """
+    cfg = _cumulative_cfg()
+    if not cfg.get("enabled", False):
+        return True, None, None, {}
+
+    counting = cfg.get("counting", {})
+    included = {str(x).lower() for x in counting.get("commands_included", [])}
+    if tool.lower() not in included:
+        cmd_tokens, _ = _tokenize_command(command or "")
+        if not any(tok in included for tok in cmd_tokens):
+            return True, None, None, {}
+
+    scope, scope_key = _budget_scope_key(tool)
+    now = datetime.datetime.utcnow()
+    state = _prune_budget_state(scope_key, now)
+    existing_paths = set(state.get("unique_paths", {}).keys())
+    new_paths = {str(pathlib.Path(p).resolve()) for p in affected_paths if is_within_workspace(p)}
+    dedupe = bool(counting.get("dedupe_paths", True))
+    include_noop = bool(counting.get("include_noop_attempts", False))
+    if not new_paths and not include_noop:
+        return True, None, None, {}
+    prospective_unique = existing_paths | new_paths if dedupe else existing_paths.union(new_paths)
+    op_increment = max(int(operation_count), 0)
+    bytes_inc = int(bytes_estimate if bytes_estimate is not None else _estimate_paths_bytes(list(new_paths)))
+
+    limits = cfg.get("limits", {})
+    max_unique = int(limits.get("max_unique_paths", 50))
+    max_ops = int(limits.get("max_total_operations", 100))
+    max_bytes = int(limits.get("max_total_bytes_estimate", 104857600))
+    next_ops = int(state.get("total_operations", 0)) + op_increment
+    next_bytes = int(state.get("total_bytes_estimate", 0)) + bytes_inc
+
+    exceeds = (
+        len(prospective_unique) > max_unique
+        or next_ops > max_ops
+        or next_bytes > max_bytes
+    )
+
+    if exceeds and not (command and _budget_allows_override(scope_key, command)):
+        on_exceed = cfg.get("on_exceed", {})
+        reason = str(
+            on_exceed.get(
+                "message",
+                "Cumulative blast-radius budget exceeded for current scope.",
+            )
+        )
+        matched_rule = str(
+            on_exceed.get("matched_rule", "requires_simulation.cumulative_budget_exceeded")
+        )
+        budget_fields = {
+            "budget_scope": scope,
+            "budget_key": scope_key,
+            "cumulative_unique_paths": len(existing_paths),
+            "cumulative_total_operations": int(state.get("total_operations", 0)),
+            "cumulative_total_bytes_estimate": int(state.get("total_bytes_estimate", 0)),
+            "budget_remaining": {
+                "max_unique_paths": max(max_unique - len(existing_paths), 0),
+                "max_total_operations": max(max_ops - int(state.get("total_operations", 0)), 0),
+                "max_total_bytes_estimate": max(max_bytes - int(state.get("total_bytes_estimate", 0)), 0),
+            },
+        }
+        return False, reason, matched_rule, budget_fields
+
+    for p in new_paths:
+        state.setdefault("unique_paths", {})[p] = now
+    state["total_operations"] = next_ops
+    state["total_bytes_estimate"] = next_bytes
+    state["last_activity"] = now
+
+    budget_fields = {
+        "budget_scope": scope,
+        "budget_key": scope_key,
+        "cumulative_unique_paths": len(state.get("unique_paths", {})),
+        "cumulative_total_operations": int(state.get("total_operations", 0)),
+        "cumulative_total_bytes_estimate": int(state.get("total_bytes_estimate", 0)),
+        "budget_remaining": {
+            "max_unique_paths": max(max_unique - len(state.get("unique_paths", {})), 0),
+            "max_total_operations": max(max_ops - int(state.get("total_operations", 0)), 0),
+            "max_total_bytes_estimate": max(max_bytes - int(state.get("total_bytes_estimate", 0)), 0),
+        },
+    }
+    return True, None, None, budget_fields
 
 
 def _prune_expired_approvals() -> None:
@@ -192,6 +810,31 @@ def _issue_or_reuse_approval_token(command: str) -> tuple[str, datetime.datetime
     return token, expires_at
 
 
+def _prune_expired_restore_confirmations() -> None:
+    """Drop expired restore confirmation tokens."""
+    now = datetime.datetime.utcnow()
+    expired = [
+        token
+        for token, rec in PENDING_RESTORE_CONFIRMATIONS.items()
+        if rec["expires_at"] <= now
+    ]
+    for token in expired:
+        PENDING_RESTORE_CONFIRMATIONS.pop(token, None)
+
+
+def _issue_restore_confirmation_token(backup_path: pathlib.Path, planned: int) -> tuple[str, datetime.datetime]:
+    """Issue a one-time token authorizing restore apply for a specific backup."""
+    _prune_expired_restore_confirmations()
+    token = uuid.uuid4().hex
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=RESTORE_CONFIRMATION_TTL_SECONDS)
+    PENDING_RESTORE_CONFIRMATIONS[token] = {
+        "backup_path": str(backup_path.resolve()),
+        "planned": int(planned),
+        "expires_at": expires_at,
+    }
+    return token, expires_at
+
+
 def _has_shell_unsafe_control_chars(command: str) -> bool:
     """
     Return True when command includes control characters we do not allow.
@@ -206,15 +849,22 @@ def _safe_subprocess_env() -> dict:
     """
     Build a constrained environment for shell command execution.
 
-    Only a minimal set of variables is inherited to reduce accidental secret
-    exposure from the host process environment.
+    Start from the parent environment for runtime compatibility, then apply
+    targeted constraints and light secret stripping.
     """
-    safe = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
-        "LANG": os.environ.get("LANG", "C.UTF-8"),
-        "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
-        "HOME": WORKSPACE_ROOT,
-    }
+    safe = os.environ.copy()
+    safe["HOME"] = WORKSPACE_ROOT
+    if "LANG" not in safe:
+        safe["LANG"] = "C"
+    if "LC_ALL" not in safe:
+        safe["LC_ALL"] = safe["LANG"]
+
+    # Best-effort removal of obviously sensitive env values before spawning.
+    for key in list(safe.keys()):
+        lower = key.lower()
+        if any(marker in lower for marker in ("api_key", "token", "secret", "password")):
+            safe.pop(key, None)
+
     return safe
 
 
@@ -261,13 +911,26 @@ def _build_command_matcher(pattern: str):
       word boundaries are not needed.
     """
     words = pattern.strip().split()
+    lower_pattern = pattern.lower()
     if len(words) == 1:
-        # Compile once; search the lowercased command at call time.
-        regex = re.compile(rf"\b{re.escape(pattern.lower())}\b")
-        return lambda cmd: bool(regex.search(cmd.lower()))
-    else:
-        lower_pat = pattern.lower()
-        return lambda cmd: lower_pat in cmd.lower()
+        regex = re.compile(rf"\b{re.escape(lower_pattern)}\b")
+
+        def _matches(cmd: str) -> bool:
+            if regex.search(cmd.lower()):
+                return True
+            tokens, _ = _tokenize_command(cmd)
+            return lower_pattern in tokens
+
+        return _matches
+
+    def _matches(cmd: str) -> bool:
+        if lower_pattern in cmd.lower():
+            return True
+        tokens, _ = _tokenize_command(cmd)
+        rebuilt = " ".join(tokens)
+        return lower_pattern in rebuilt
+
+    return _matches
 
 
 def _check_blocked_tier(command: str) -> tuple[str, str] | None:
@@ -415,15 +1078,14 @@ def _simulate_blast_radius(command: str, sim_commands: list[str]) -> dict:
     saw_wildcard = False
     parse_error = False
 
-    # Split on shell command separators; each segment is evaluated independently.
-    segments = re.split(r"[|;&]+", command)
+    # Split command into shell-aware segments before simulation.
+    segments = _split_shell_segments(command)
     for segment in segments:
         segment = segment.strip()
         if not segment:
             continue
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
+        tokens, err = _tokenize_shell_segment(segment)
+        if err:
             # Tokenization failure makes simulation ambiguous; mark it so the
             # caller can conservatively block wildcard operations.
             parse_error = True
@@ -579,7 +1241,38 @@ def is_within_workspace(path: str) -> bool:
     return False
 
 
-def _check_path_policy(path: str) -> tuple[str, str] | None:
+def _deepest_allowed_root(path: str) -> pathlib.Path | None:
+    """Return the deepest allowed root containing path, or None."""
+    resolved = pathlib.Path(path).resolve()
+    roots = [pathlib.Path(WORKSPACE_ROOT).resolve()]
+    roots.extend(pathlib.Path(root).resolve() for root in POLICY.get("allowed", {}).get("paths_whitelist", []))
+    containing = [root for root in roots if resolved.is_relative_to(root)]
+    if not containing:
+        return None
+    return sorted(containing, key=lambda p: len(str(p)), reverse=True)[0]
+
+
+def _relative_depth(path: str) -> int:
+    """Return directory depth relative to the matched allowed root."""
+    resolved = pathlib.Path(path).resolve()
+    root = _deepest_allowed_root(path)
+    if root is None:
+        return len(resolved.parts)
+    rel = resolved.relative_to(root)
+    # root itself => depth 0, root/child => 1, etc.
+    return len(rel.parts)
+
+
+def _is_backup_path(path: str) -> bool:
+    """Return True when path resolves under BACKUP_DIR."""
+    try:
+        resolved = pathlib.Path(path).resolve()
+        return resolved.is_relative_to(pathlib.Path(BACKUP_DIR).resolve())
+    except Exception:
+        return False
+
+
+def _check_path_policy(path: str, tool: str | None = None) -> tuple[str, str] | None:
     """
     Check a file path against the blocked path and extension rules in policy.json.
 
@@ -628,6 +1321,19 @@ def _check_path_policy(path: str) -> tuple[str, str] | None:
             f"Path '{path}' is outside the allowed workspace",
             "workspace_boundary",
         )
+
+    # 4. Backup storage protection for regular file tools.
+    backup_access = POLICY.get("backup_access", {})
+    if backup_access.get("block_agent_tools", True) and _is_backup_path(path):
+        allowed_tools = {
+            str(t).lower() for t in backup_access.get("allowed_tools", ["restore_backup"])
+        }
+        tool_name = (tool or "").lower()
+        if tool_name not in allowed_tools:
+            return (
+                f"Path '{path}' is inside protected backup storage and is not accessible via {tool or 'this tool'}",
+                "backup_storage_protected",
+            )
 
     return None
 
@@ -685,10 +1391,10 @@ def build_log_entry(tool: str, result: PolicyResult, **kwargs) -> dict:
         entry["matched_rule"] = result.matched_rule
     # Omit block_reason for allowed decisions to keep the happy-path log terse.
     if not result.allowed:
-        entry["block_reason"] = result.reason
+        entry["block_reason"] = _redact_for_audit(result.reason)
     # Caller-supplied fields (command, path, retry_count, error, …) are appended
     # last so standard fields are always the first keys in every log line.
-    entry.update(kwargs)
+    entry.update(_redact_for_audit(kwargs))
     return entry
 
 
@@ -738,8 +1444,15 @@ def extract_paths(command: str) -> list:
     # Strip surrounding quotes that the shell would normally remove.
     candidates = [c.strip().strip("'\"") for c in candidates]
 
-    # Keep only paths that exist so we never attempt to back up a ghost target.
-    return [c for c in candidates if os.path.exists(c)]
+    resolved: list[str] = []
+    for candidate in candidates:
+        # Relative command paths are interpreted from WORKSPACE_ROOT, matching
+        # execute_command's subprocess cwd.
+        abs_path = candidate if os.path.isabs(candidate) else os.path.join(WORKSPACE_ROOT, candidate)
+        path = str(pathlib.Path(abs_path).resolve())
+        if os.path.exists(path):
+            resolved.append(path)
+    return resolved
 
 
 def _allowed_roots() -> list[pathlib.Path]:
@@ -784,6 +1497,167 @@ def _cleanup_old_backups() -> None:
             shutil.rmtree(child, ignore_errors=True)
 
 
+def _sha256_file(path: pathlib.Path) -> str:
+    """Return sha256 hex digest for a file path."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _backup_entries_for_source(source_path: pathlib.Path) -> list[dict]:
+    """
+    Return backup entries for a specific source file, newest first.
+    """
+    source = str(source_path.resolve())
+    root = pathlib.Path(BACKUP_DIR)
+    if not root.exists():
+        return []
+    entries: list[dict] = []
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        manifest_path = folder / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, list):
+            continue
+        for item in manifest:
+            if not isinstance(item, dict):
+                continue
+            if item.get("source") != source:
+                continue
+            backup_path = pathlib.Path(item.get("backup", ""))
+            if not backup_path.exists():
+                continue
+            try:
+                order_key = folder.stat().st_mtime
+            except OSError:
+                order_key = 0
+            entries.append(
+                {
+                    "folder": folder,
+                    "manifest_path": manifest_path,
+                    "item": item,
+                    "order_key": order_key,
+                }
+            )
+    return sorted(entries, key=lambda e: e["order_key"], reverse=True)
+
+
+def _latest_backup_hash_for_source(source_path: pathlib.Path) -> str | None:
+    """Return latest backed-up sha256 for a source file, if available."""
+    entries = _backup_entries_for_source(source_path)
+    if not entries:
+        return None
+    item = entries[0]["item"]
+    if item.get("type") != "file":
+        return None
+    return item.get("sha256")
+
+
+def _enforce_max_versions_per_file() -> None:
+    """
+    Enforce audit.max_versions_per_file by pruning old per-file backups.
+
+    Prunes file entries from manifests. If a backup folder becomes empty after
+    pruning, the folder is removed.
+    """
+    max_versions = int(POLICY.get("audit", {}).get("max_versions_per_file", 5))
+    if max_versions <= 0:
+        return
+    root = pathlib.Path(BACKUP_DIR)
+    if not root.exists():
+        return
+
+    by_source: dict[str, list[dict]] = {}
+    for folder in root.iterdir():
+        if not folder.is_dir():
+            continue
+        manifest_path = folder / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, list):
+            continue
+        try:
+            order_key = folder.stat().st_mtime
+        except OSError:
+            order_key = 0
+        for idx, item in enumerate(manifest):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "file":
+                continue
+            source = item.get("source")
+            backup = item.get("backup")
+            if not source or not backup:
+                continue
+            by_source.setdefault(source, []).append(
+                {
+                    "folder": folder,
+                    "manifest_path": manifest_path,
+                    "manifest_index": idx,
+                    "item": item,
+                    "order_key": order_key,
+                }
+            )
+
+    # Determine which specific file entries to prune.
+    to_prune: list[dict] = []
+    for _source, entries in by_source.items():
+        ordered = sorted(entries, key=lambda e: e["order_key"], reverse=True)
+        to_prune.extend(ordered[max_versions:])
+
+    # Apply prune grouped by manifest.
+    by_manifest: dict[str, list[dict]] = {}
+    for entry in to_prune:
+        key = str(entry["manifest_path"])
+        by_manifest.setdefault(key, []).append(entry)
+
+    for _, entries in by_manifest.items():
+        manifest_path = pathlib.Path(entries[0]["manifest_path"])
+        folder = pathlib.Path(entries[0]["folder"])
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, list):
+            continue
+
+        prune_indices = {e["manifest_index"] for e in entries}
+        new_manifest: list[dict] = []
+        for idx, item in enumerate(manifest):
+            if idx not in prune_indices:
+                new_manifest.append(item)
+                continue
+            backup_path = pathlib.Path(item.get("backup", ""))
+            try:
+                if backup_path.exists():
+                    if backup_path.is_file():
+                        backup_path.unlink()
+                    elif backup_path.is_dir():
+                        shutil.rmtree(backup_path, ignore_errors=True)
+            except OSError:
+                pass
+
+        try:
+            if new_manifest:
+                manifest_path.write_text(json.dumps(new_manifest, indent=2))
+            else:
+                shutil.rmtree(folder, ignore_errors=True)
+        except OSError:
+            continue
+
+
 def backup_paths(paths: list) -> str:
     """
     Copy a list of files/directories to a timestamped backup folder.
@@ -823,17 +1697,35 @@ def backup_paths(paths: list) -> str:
         dest = pathlib.Path(backup_location) / rel
 
         if resolved.is_file():
+            if POLICY.get("audit", {}).get("backup_on_content_change_only", True):
+                latest_hash = _latest_backup_hash_for_source(resolved)
+                current_hash = _sha256_file(resolved)
+                if latest_hash is not None and latest_hash == current_hash:
+                    # Skip duplicate content snapshots for this file.
+                    continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             # copy2 preserves file metadata (timestamps, permissions).
             shutil.copy2(str(resolved), str(dest))
-            manifest.append({"source": str(resolved), "backup": str(dest), "type": "file"})
+            manifest.append(
+                {
+                    "source": str(resolved),
+                    "backup": str(dest),
+                    "type": "file",
+                    "sha256": _sha256_file(dest),
+                }
+            )
         elif resolved.is_dir():
             shutil.copytree(str(resolved), str(dest))
             manifest.append({"source": str(resolved), "backup": str(dest), "type": "directory"})
 
+    if not manifest:
+        shutil.rmtree(backup_location, ignore_errors=True)
+        return ""
+
     with open(os.path.join(backup_location, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
 
+    _enforce_max_versions_per_file()
     return backup_location
 
 
@@ -844,6 +1736,206 @@ def backup_paths(paths: list) -> str:
 @mcp.tool()
 def server_info() -> str:
     return f"ai-runtime-guard build={SERVER_BUILD} workspace={WORKSPACE_ROOT} base_dir={BASE_DIR}"
+
+
+@mcp.tool()
+def restore_backup(backup_location: str, dry_run: bool = True, restore_token: str = "") -> str:
+    """
+    Restore files/directories from a backup manifest.
+
+    Args:
+        backup_location: Absolute path or backup folder name under BACKUP_DIR.
+        dry_run: If True, return restore plan without writing files.
+        restore_token: Required when dry_run=False if restore.require_dry_run_before_apply is enabled.
+    """
+    backup_path = (
+        pathlib.Path(backup_location)
+        if os.path.isabs(backup_location)
+        else pathlib.Path(BACKUP_DIR) / backup_location
+    ).resolve()
+    backup_root = pathlib.Path(BACKUP_DIR).resolve()
+    if not backup_path.is_relative_to(backup_root):
+        result = PolicyResult(
+            allowed=False,
+            reason="Backup restore path must be inside BACKUP_DIR",
+            decision_tier="blocked",
+            matched_rule="backup_boundary",
+        )
+        log_entry = build_log_entry(
+            "restore_backup",
+            result,
+            backup_location=str(backup_path),
+            dry_run=dry_run,
+        )
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(json.dumps(log_entry) + "\n")
+        return "[POLICY BLOCK] Backup restore path must be inside BACKUP_DIR"
+
+    manifest_path = backup_path / "manifest.json"
+    if not manifest_path.exists():
+        return f"Error: manifest.json not found in backup: {backup_path}"
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        return f"Error reading backup manifest: {e}"
+
+    if not isinstance(manifest, list):
+        return "Error: backup manifest is invalid (expected array)"
+
+    eligible_entries: list[dict] = []
+    for item in manifest:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        backup = item.get("backup")
+        item_type = item.get("type")
+        expected_hash = item.get("sha256")
+        if not source or not backup or not item_type:
+            continue
+        source_path = pathlib.Path(source).resolve()
+        backup_item = pathlib.Path(backup).resolve()
+        if not is_within_workspace(str(source_path)):
+            continue
+        if not backup_item.exists():
+            continue
+
+        eligible_entries.append(
+            {
+                "source_path": source_path,
+                "backup_item": backup_item,
+                "item_type": item_type,
+                "expected_hash": expected_hash,
+            }
+        )
+
+    planned = len(eligible_entries)
+
+    require_confirm = bool(POLICY.get("restore", {}).get("require_dry_run_before_apply", True))
+    if dry_run:
+        response_extra = {}
+        if require_confirm:
+            token, expires_at = _issue_restore_confirmation_token(backup_path, planned)
+            response_extra = {
+                "restore_token_issued": token,
+                "restore_token_expires_at": expires_at.isoformat() + "Z",
+            }
+        result = PolicyResult(
+            allowed=True,
+            reason="allowed",
+            decision_tier="allowed",
+            matched_rule=None,
+        )
+        log_entry = build_log_entry(
+            "restore_backup",
+            result,
+            backup_location=str(backup_path),
+            dry_run=True,
+            planned=planned,
+            restored=0,
+            hash_failures=0,
+            **response_extra,
+        )
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(json.dumps(log_entry) + "\n")
+
+        msg = f"Restore dry run complete: {planned} item(s) eligible from {backup_path}"
+        if require_confirm:
+            msg += (
+                f"\nrestore_token={response_extra['restore_token_issued']}"
+                f"\nrestore_token_expires_at={response_extra['restore_token_expires_at']}"
+            )
+        return msg
+
+    if require_confirm:
+        _prune_expired_restore_confirmations()
+        rec = PENDING_RESTORE_CONFIRMATIONS.get(restore_token)
+        if not rec:
+            result = PolicyResult(
+                allowed=False,
+                reason="Invalid or expired restore token",
+                decision_tier="blocked",
+                matched_rule="restore_token",
+            )
+            log_entry = build_log_entry(
+                "restore_backup",
+                result,
+                backup_location=str(backup_path),
+                dry_run=False,
+                restore_token=restore_token,
+            )
+            with open(LOG_PATH, "a") as log_file:
+                log_file.write(json.dumps(log_entry) + "\n")
+            return "[POLICY BLOCK] Invalid or expired restore token"
+
+        if rec["backup_path"] != str(backup_path.resolve()):
+            result = PolicyResult(
+                allowed=False,
+                reason="Restore token does not match the requested backup location",
+                decision_tier="blocked",
+                matched_rule="restore_token_mismatch",
+            )
+            log_entry = build_log_entry(
+                "restore_backup",
+                result,
+                backup_location=str(backup_path),
+                dry_run=False,
+                restore_token=restore_token,
+            )
+            with open(LOG_PATH, "a") as log_file:
+                log_file.write(json.dumps(log_entry) + "\n")
+            return "[POLICY BLOCK] Restore token does not match the requested backup location"
+
+        PENDING_RESTORE_CONFIRMATIONS.pop(restore_token, None)
+
+    restored = 0
+    hash_failures = 0
+    for entry in eligible_entries:
+        source_path = entry["source_path"]
+        backup_item = entry["backup_item"]
+        item_type = entry["item_type"]
+        expected_hash = entry["expected_hash"]
+        try:
+            if item_type == "file":
+                if expected_hash:
+                    actual_hash = _sha256_file(backup_item)
+                    if actual_hash != expected_hash:
+                        hash_failures += 1
+                        continue
+                source_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(backup_item), str(source_path))
+                restored += 1
+            elif item_type == "directory":
+                source_path.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(str(backup_item), str(source_path), dirs_exist_ok=True)
+                restored += 1
+        except OSError:
+            continue
+
+    result = PolicyResult(
+        allowed=True,
+        reason="allowed",
+        decision_tier="allowed",
+        matched_rule=None,
+    )
+    log_entry = build_log_entry(
+        "restore_backup",
+        result,
+        backup_location=str(backup_path),
+        dry_run=dry_run,
+        planned=planned,
+        restored=restored,
+        hash_failures=hash_failures,
+    )
+    with open(LOG_PATH, "a") as log_file:
+        log_file.write(json.dumps(log_entry) + "\n")
+
+    if dry_run:
+        return f"Restore dry run complete: {planned} item(s) eligible from {backup_path}"
+    return (
+        f"Restore complete from {backup_path}: restored={restored}, "
+        f"planned={planned}, hash_failures={hash_failures}"
+    )
 
 
 @mcp.tool()
@@ -865,6 +1957,9 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         policy block message (with retry guidance) if the command was blocked.
     """
 
+    network_warning = None
+    budget_fields: dict = {}
+
     # --- 1. Hard-fail commands with unsafe control characters ---
     if _has_shell_unsafe_control_chars(command):
         result = PolicyResult(
@@ -873,36 +1968,78 @@ def execute_command(command: str, retry_count: int = 0) -> str:
             decision_tier="blocked",
             matched_rule="command_control_characters",
         )
+    elif _command_targets_backup_storage(command):
+        result = PolicyResult(
+            allowed=False,
+            reason="Command targets protected backup storage; use restore_backup for controlled recovery operations",
+            decision_tier="blocked",
+            matched_rule="backup_storage_protected",
+        )
     else:
-        # --- 2. Run the policy check ---
-        result = check_policy(command)
+        # --- 2. Network policy gate ---
+        net_allowed, net_reason = _network_policy_check(command)
+        mode = str(POLICY.get("network", {}).get("enforcement_mode", "off")).lower()
+        if not net_allowed:
+            result = PolicyResult(
+                allowed=False,
+                reason=net_reason or "Network command blocked by policy",
+                decision_tier="blocked",
+                matched_rule="network_policy",
+            )
+        else:
+            if mode == "monitor" and net_reason:
+                network_warning = net_reason
+            # --- 3. Run policy tier evaluation ---
+            result = check_policy(command)
 
-    # --- 3. Server-side retry tracking ---
-    # retry_count is accepted from clients for compatibility, but enforcement
-    # is performed server-side using SERVER_RETRY_COUNTS.
+    # --- 4. Cumulative budget gate (only after command-level policy allows) ---
+    affected_for_budget: list[str] = []
+    if result.allowed:
+        sim_commands = {c.lower() for c in POLICY.get("requires_simulation", {}).get("commands", [])}
+        simulation = _simulate_blast_radius(command, list(sim_commands))
+        if simulation["affected"]:
+            affected_for_budget = simulation["affected"]
+        else:
+            affected_for_budget = extract_paths(command)
+
+        budget_allowed, budget_reason, budget_rule, budget_fields = _check_and_record_cumulative_budget(
+            tool="execute_command",
+            command=command,
+            affected_paths=affected_for_budget,
+            operation_count=1,
+        )
+        if not budget_allowed:
+            result = PolicyResult(
+                allowed=False,
+                reason=budget_reason or "Cumulative blast-radius budget exceeded for current scope.",
+                decision_tier="blocked",
+                matched_rule=budget_rule or "requires_simulation.cumulative_budget_exceeded",
+            )
+
+    # --- 5. Server-side retry tracking ---
     server_retry_count = 0
     final_block = False
     if not result.allowed and result.decision_tier != "requires_confirmation":
         server_retry_count = _register_retry(command, result.decision_tier, result.matched_rule)
         final_block = server_retry_count >= MAX_RETRIES
 
-    # --- 4. Build the log entry via the standard builder ---
+    # --- 6. Build + write log entry ---
     log_entry = build_log_entry(
-        "execute_command", result,
+        "execute_command",
+        result,
         command=command,
-        # normalized_command is the whitespace-collapsed, case-preserved form
-        # used as the base for policy matching (lowercased internally).
         normalized_command=normalize_for_audit(command),
         retry_count=retry_count,
         server_retry_count=server_retry_count,
+        affected_paths_count=len(affected_for_budget),
+        **({"network_warning": network_warning} if network_warning else {}),
+        **budget_fields,
         **({"final_block": True} if final_block else {}),
     )
-
-    # --- 5. Write the log entry (always, regardless of allow/block) ---
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
-    # --- 6. If blocked, return a structured message without executing anything ---
+    # --- 7. Blocked response path ---
     if not result.allowed:
         if result.decision_tier == "requires_confirmation":
             token, expires_at = _issue_or_reuse_approval_token(command)
@@ -915,7 +2052,6 @@ def execute_command(command: str, retry_count: int = 0) -> str:
             )
 
         if final_block:
-            # The agent has used all of its attempts — refuse permanently.
             return (
                 f"[POLICY BLOCK] {result.reason}\n\n"
                 f"Maximum retries reached ({MAX_RETRIES}/{MAX_RETRIES}). "
@@ -923,8 +2059,6 @@ def execute_command(command: str, retry_count: int = 0) -> str:
                 "No further attempts will be accepted."
             )
 
-        # Tell the agent what went wrong, how many attempts remain, and ask
-        # it to call execute_command again with a safer command.
         attempts_remaining = MAX_RETRIES - server_retry_count
         return (
             f"[POLICY BLOCK] {result.reason}\n\n"
@@ -933,42 +2067,47 @@ def execute_command(command: str, retry_count: int = 0) -> str:
             f"(server attempt {server_retry_count}/{MAX_RETRIES})."
         )
 
-    # --- 7. Back up any files that the command might modify or delete ---
-    # Only triggered for commands that contain rm, mv, or a > overwrite redirect.
+    # --- 8. Backup potentially destructive targets ---
     if MODIFYING_COMMAND_RE.search(command):
         affected = extract_paths(command)
-        if affected:
+        if affected and POLICY.get("audit", {}).get("backup_enabled", True):
             backup_location = backup_paths(affected)
-            # Record the backup location so the audit trail shows exactly where
-            # the pre-execution snapshot was saved.
-            log_entry["backup_location"] = backup_location
-            # Append an updated log line tagged "backup_created" so the final
-            # record on disk reflects the backup that was made.
-            with open(LOG_PATH, "a") as log_file:
-                log_file.write(json.dumps({**log_entry, "event": "backup_created"}) + "\n")
+            if backup_location:
+                with open(LOG_PATH, "a") as log_file:
+                    log_file.write(
+                        json.dumps(
+                            {
+                                **log_entry,
+                                "backup_location": backup_location,
+                                "event": "backup_created",
+                            }
+                        )
+                        + "\n"
+                    )
 
-    # --- 8. Execute the command with hardened shell settings ---
+    # --- 9. Execute the command with hardened shell settings ---
+    timeout_seconds, max_output_chars = _execution_limits()
     try:
         proc = subprocess.run(
             command,
-            shell=True,          # Allows pipes, redirects, etc.
+            shell=True,  # Allows pipes/redirects for MCP command compatibility.
             executable="/bin/bash",
             cwd=WORKSPACE_ROOT,
             env=_safe_subprocess_env(),
-            capture_output=True, # Captures both stdout and stderr.
-            text=True,           # Decodes bytes to str automatically.
-            timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
-        return "Command timed out after 30 seconds"
+        return f"Command timed out after {timeout_seconds} seconds"
 
-    # --- 9. Return output or error ---
+    stdout = _truncate_output(proc.stdout or "", max_output_chars)
+    stderr = _truncate_output(proc.stderr or "", max_output_chars)
+
+    # --- 10. Return output or error ---
     if proc.returncode != 0:
-        # Non-zero exit code means the command failed.
-        return proc.stderr or f"Command exited with code {proc.returncode}"
-
-    # Success: return standard output (may be an empty string).
-    return proc.stdout
+        return stderr or f"Command exited with code {proc.returncode}"
+    return stdout
 
 
 @mcp.tool()
@@ -980,10 +2119,28 @@ def approve_command(command: str, approval_token: str) -> str:
     execute_command when requires_confirmation rules fired.
     """
     _prune_expired_approvals()
+    if _approval_failures_exceeded(approval_token):
+        result = PolicyResult(
+            allowed=False,
+            reason="Approval token temporarily locked due to repeated failed attempts",
+            decision_tier="blocked",
+            matched_rule="approval_rate_limit",
+        )
+        log_entry = build_log_entry(
+            "approve_command",
+            result,
+            command=command,
+            approval_token=approval_token,
+        )
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(json.dumps(log_entry) + "\n")
+        return "[POLICY BLOCK] Approval token temporarily locked due to repeated failed attempts"
+
     rec = PENDING_APPROVALS.get(approval_token)
     expected_hash = command_hash(command)
 
     if not rec:
+        _record_approval_failure(approval_token)
         result = PolicyResult(
             allowed=False,
             reason="Invalid or expired approval token",
@@ -999,6 +2156,7 @@ def approve_command(command: str, approval_token: str) -> str:
         return "[POLICY BLOCK] Invalid or expired approval token"
 
     if rec["command_hash"] != expected_hash:
+        _record_approval_failure(approval_token)
         result = PolicyResult(
             allowed=False,
             reason="Approval token does not match the provided command",
@@ -1015,6 +2173,7 @@ def approve_command(command: str, approval_token: str) -> str:
 
     SESSION_WHITELIST.add(expected_hash)
     PENDING_APPROVALS.pop(approval_token, None)
+    APPROVAL_FAILURES.pop(approval_token, None)
 
     result = PolicyResult(
         allowed=True,
@@ -1054,7 +2213,7 @@ def read_file(path: str) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy ---
-    path_check = _check_path_policy(path)
+    path_check = _check_path_policy(path, tool="read_file")
     if path_check:
         result = PolicyResult(allowed=False, reason=path_check[0],
                               decision_tier="blocked", matched_rule=path_check[1])
@@ -1126,7 +2285,7 @@ def write_file(path: str, content: str) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy ---
-    path_check = _check_path_policy(path)
+    path_check = _check_path_policy(path, tool="write_file")
     if path_check:
         result = PolicyResult(allowed=False, reason=path_check[0],
                               decision_tier="blocked", matched_rule=path_check[1])
@@ -1134,8 +2293,25 @@ def write_file(path: str, content: str) -> str:
         result = PolicyResult(allowed=True, reason="allowed",
                               decision_tier="allowed", matched_rule=None)
 
+    budget_fields: dict = {}
+    if result.allowed:
+        budget_allowed, budget_reason, budget_rule, budget_fields = _check_and_record_cumulative_budget(
+            tool="write_file",
+            command=None,
+            affected_paths=[path],
+            operation_count=1,
+            bytes_estimate=len(content.encode()),
+        )
+        if not budget_allowed:
+            result = PolicyResult(
+                allowed=False,
+                reason=budget_reason or "Cumulative blast-radius budget exceeded for current scope.",
+                decision_tier="blocked",
+                matched_rule=budget_rule or "requires_simulation.cumulative_budget_exceeded",
+            )
+
     # --- 2. Build the log entry ---
-    log_entry = build_log_entry("write_file", result, path=path)
+    log_entry = build_log_entry("write_file", result, path=path, **budget_fields)
 
     # --- 3. Write the log entry (always, before any I/O) ---
     with open(LOG_PATH, "a") as log_file:
@@ -1149,13 +2325,14 @@ def write_file(path: str, content: str) -> str:
     backup_location = None
     if os.path.exists(path):
         backup_location = backup_paths([path])
-        # Record the backup location in a second log line so the audit trail
-        # shows where the pre-write snapshot is stored.
-        with open(LOG_PATH, "a") as log_file:
-            log_file.write(
-                json.dumps({**log_entry, "backup_location": backup_location,
-                            "event": "backup_created"}) + "\n"
-            )
+        if backup_location:
+            # Record the backup location in a second log line so the audit trail
+            # shows where the pre-write snapshot is stored.
+            with open(LOG_PATH, "a") as log_file:
+                log_file.write(
+                    json.dumps({**log_entry, "backup_location": backup_location,
+                                "event": "backup_created"}) + "\n"
+                )
 
     # --- 6. Write the file ---
     try:
@@ -1168,6 +2345,8 @@ def write_file(path: str, content: str) -> str:
     msg = f"Successfully wrote {len(content)} characters to {path}"
     if backup_location:
         msg += f" (previous version backed up to {backup_location})"
+    else:
+        msg += " (no content-change backup needed)"
     return msg
 
 
@@ -1205,7 +2384,7 @@ def delete_file(path: str) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
-    path_check = _check_path_policy(path)
+    path_check = _check_path_policy(path, tool="delete_file")
     if path_check:
         result = PolicyResult(allowed=False, reason=path_check[0],
                               decision_tier="blocked", matched_rule=path_check[1])
@@ -1239,8 +2418,31 @@ def delete_file(path: str) -> str:
                 matched_rule=None,
             )
 
+    budget_fields: dict = {}
+    if result.allowed:
+        bytes_est = 0
+        try:
+            if os.path.isfile(path):
+                bytes_est = int(os.path.getsize(path))
+        except OSError:
+            bytes_est = 0
+        budget_allowed, budget_reason, budget_rule, budget_fields = _check_and_record_cumulative_budget(
+            tool="delete_file",
+            command=None,
+            affected_paths=[path],
+            operation_count=1,
+            bytes_estimate=bytes_est,
+        )
+        if not budget_allowed:
+            result = PolicyResult(
+                allowed=False,
+                reason=budget_reason or "Cumulative blast-radius budget exceeded for current scope.",
+                decision_tier="blocked",
+                matched_rule=budget_rule or "requires_simulation.cumulative_budget_exceeded",
+            )
+
     # --- 3. Build the log entry with the final policy decision ---
-    log_entry = build_log_entry("delete_file", result, path=path)
+    log_entry = build_log_entry("delete_file", result, path=path, **budget_fields)
 
     # --- 4. If blocked, write log and return without touching the filesystem ---
     if not result.allowed:
@@ -1252,7 +2454,8 @@ def delete_file(path: str) -> str:
     # backup_paths() is called unconditionally here — existence was confirmed
     # in step 2, so the file is guaranteed to be present at this point.
     backup_location = backup_paths([path])
-    log_entry["backup_location"] = backup_location
+    if backup_location:
+        log_entry["backup_location"] = backup_location
 
     # --- 6. Write the log entry (includes backup_location) ---
     with open(LOG_PATH, "a") as log_file:
@@ -1267,7 +2470,11 @@ def delete_file(path: str) -> str:
     # --- 8. Return success with the backup location so the file is recoverable ---
     return (
         f"Successfully deleted {path}. "
-        f"Backup saved to {backup_location} — the file can be recovered from there."
+        + (
+            f"Backup saved to {backup_location} — the file can be recovered from there."
+            if backup_location
+            else "No content-change backup was needed."
+        )
     )
 
 
@@ -1280,7 +2487,7 @@ def list_directory(path: str) -> str:
       1. Path is validated against policy (blocked paths, extensions).
       2. The path must exist and be a directory — a clear error is returned
          for missing paths or plain files.
-      3. Directory depth (number of segments from the filesystem root) is
+      3. Directory depth (relative to the allowed workspace root) is
          checked against allowed.max_directory_depth in policy.json.
 
     Each entry in the listing includes:
@@ -1304,7 +2511,7 @@ def list_directory(path: str) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
-    path_check = _check_path_policy(path)
+    path_check = _check_path_policy(path, tool="list_directory")
     if path_check:
         result = PolicyResult(allowed=False, reason=path_check[0],
                               decision_tier="blocked", matched_rule=path_check[1])
@@ -1331,12 +2538,8 @@ def list_directory(path: str) -> str:
             return f"Error: '{path}' is a file, not a directory"
 
         # --- 3. Depth check ---
-        # Resolve to an absolute path first so relative paths (e.g. ".") are
-        # measured consistently against the filesystem root.
-        resolved  = pathlib.Path(path).resolve()
-        # len(resolved.parts) counts every segment including the root ("/"),
-        # so "/" has depth 1, "/home" has depth 2, "/home/user" depth 3, etc.
-        depth     = len(resolved.parts)
+        # Measure relative to the deepest allowed root, not filesystem root.
+        depth     = _relative_depth(path)
         max_depth = POLICY.get("allowed", {}).get("max_directory_depth", 5)
         if depth > max_depth:
             result = PolicyResult(
