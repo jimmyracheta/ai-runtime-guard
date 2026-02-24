@@ -1,6 +1,6 @@
 """
-MCP server that exposes five tools: execute_command, read_file, write_file,
-delete_file, and list_directory.
+MCP server that exposes six tools: execute_command, approve_command, read_file,
+write_file, delete_file, and list_directory.
 
 Policy rules are loaded from policy.json at startup. Every tool call passes
 through the policy engine (blocked → requires_confirmation →
@@ -19,6 +19,8 @@ import json
 import os
 import pathlib
 import re
+import glob
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -57,6 +59,14 @@ MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 # a command whose hash is in this set bypasses the confirmation check.
 SESSION_WHITELIST: set = set()
 
+# Pending confirmation handshakes keyed by token. Each value contains:
+#   command_hash, normalized_command, and expires_at (UTC datetime).
+PENDING_APPROVALS: dict[str, dict] = {}
+
+# Server-tracked retries for blocked commands. The client-supplied retry_count
+# parameter is accepted for compatibility but is not authoritative.
+SERVER_RETRY_COUNTS: dict[str, int] = {}
+
 # Generated once when the server process starts. Every log entry includes
 # this ID so related records across tools can be correlated by session.
 SESSION_ID: str = str(uuid.uuid4())
@@ -64,6 +74,12 @@ SESSION_ID: str = str(uuid.uuid4())
 # Root directory that this server instance is authorised to work in.
 # Override by setting the AIRG_WORKSPACE environment variable before launch.
 WORKSPACE_ROOT: str = os.environ.get("AIRG_WORKSPACE", str(BASE_DIR))
+
+# Build marker for quickly verifying the running server version.
+SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
+
+# One-time approval token validity window.
+APPROVAL_TTL_SECONDS: int = 600
 
 # Create the MCP server with a descriptive name.
 mcp = FastMCP("ai-runtime-guard")
@@ -113,6 +129,93 @@ def command_hash(command: str) -> str:
     so "ls  -la" and "ls -la" are treated as a single approval.
     """
     return hashlib.sha256(normalize_command(command).encode()).hexdigest()
+
+
+def _retry_key(command: str, tier: str, matched_rule: str | None) -> str:
+    """
+    Build a stable retry key for server-side retry enforcement.
+
+    Retries are scoped to command + blocking tier + matched rule so repeated
+    attempts cannot bypass limits by lying about retry_count.
+    """
+    base = f"{normalize_command(command)}|{tier}|{matched_rule or ''}"
+    return hashlib.sha256(base.encode()).hexdigest()
+
+
+def _register_retry(command: str, tier: str, matched_rule: str | None) -> int:
+    """
+    Increment and return the server-side retry count for this blocked action.
+
+    Once a key reaches MAX_RETRIES, the stored value is clamped and will not
+    increase further. This keeps final-block attempts stable in logs/audit.
+    """
+    key = _retry_key(command, tier, matched_rule)
+    stored_count = SERVER_RETRY_COUNTS.get(key, 0)
+    if stored_count >= MAX_RETRIES:
+        SERVER_RETRY_COUNTS[key] = MAX_RETRIES
+        return MAX_RETRIES
+
+    stored_count += 1
+    SERVER_RETRY_COUNTS[key] = stored_count
+    return stored_count
+
+
+def _prune_expired_approvals() -> None:
+    """Drop expired confirmation tokens from PENDING_APPROVALS."""
+    now = datetime.datetime.utcnow()
+    expired = [token for token, rec in PENDING_APPROVALS.items() if rec["expires_at"] <= now]
+    for token in expired:
+        PENDING_APPROVALS.pop(token, None)
+
+
+def _issue_or_reuse_approval_token(command: str) -> tuple[str, datetime.datetime]:
+    """
+    Return an active approval token for command, creating one if needed.
+
+    Reusing active tokens avoids generating a new token on every blocked retry.
+    """
+    _prune_expired_approvals()
+    cmd_hash = command_hash(command)
+    now = datetime.datetime.utcnow()
+
+    for token, rec in PENDING_APPROVALS.items():
+        if rec["command_hash"] == cmd_hash and rec["expires_at"] > now:
+            return token, rec["expires_at"]
+
+    token = uuid.uuid4().hex
+    expires_at = now + datetime.timedelta(seconds=APPROVAL_TTL_SECONDS)
+    PENDING_APPROVALS[token] = {
+        "command_hash": cmd_hash,
+        "normalized_command": normalize_for_audit(command),
+        "expires_at": expires_at,
+    }
+    return token, expires_at
+
+
+def _has_shell_unsafe_control_chars(command: str) -> bool:
+    """
+    Return True when command includes control characters we do not allow.
+
+    Newlines and NUL bytes are blocked server-side to prevent hidden command
+    chaining and parser ambiguity with shell=True.
+    """
+    return any(ch in command for ch in ("\x00", "\n", "\r"))
+
+
+def _safe_subprocess_env() -> dict:
+    """
+    Build a constrained environment for shell command execution.
+
+    Only a minimal set of variables is inherited to reduce accidental secret
+    exposure from the host process environment.
+    """
+    safe = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
+        "HOME": WORKSPACE_ROOT,
+    }
+    return safe
 
 
 # ---------------------------------------------------------------------------
@@ -258,39 +361,95 @@ def _check_simulation_tier(command: str) -> tuple[str, str] | None:
     """
     Check *command* against the 'requires_simulation' policy tier.
 
-    Any command listed in requires_simulation.commands combined with a
-    wildcard character (* or ?) is treated as a potentially dangerous bulk
-    operation and blocked. The list of commands is read from policy.json so
-    it can be updated without touching this file.
+    For configured commands (e.g. rm/mv), wildcard usage is simulated to
+    estimate how many workspace paths would be touched. Commands are blocked
+    only when simulated blast radius exceeds requires_simulation.bulk_file_threshold.
 
-    Example (with policy commands ["rm", "mv"]):
-      "rm *.log"   → blocked  (rm + wildcard)
-      "mv *.bak /" → blocked  (mv + wildcard)
-      "rm file.log"→ allowed  (rm, no wildcard)
-
-    Returns (reason, matched_rule) if simulation is required, or None
-    otherwise. matched_rule is the slash-joined display of the commands that
-    triggered the wildcard detection (e.g. "rm/mv").
+    Returns (reason, matched_rule) if simulation blocks the command, or None
+    otherwise.
     """
     sim          = POLICY.get("requires_simulation", {})
     sim_commands = sim.get("commands", [])
+    threshold    = sim.get("bulk_file_threshold", 10)
 
-    if sim_commands:
-        # Build a single regex from all simulation commands.
-        # The character class [^|;&\n]* ensures we only look for wildcards
-        # on the same command segment, not after a pipe or semicolon.
-        ops_pattern = "|".join(re.escape(c) for c in sim_commands)
-        wildcard_re = re.compile(rf"\b({ops_pattern})\b[^|;&\n]*[*?]")
-        if wildcard_re.search(command):
-            ops_display = "/".join(sim_commands)
-            return (
-                f"Bulk file operation blocked: using wildcards (* or ?) with "
-                f"'{ops_display}' can affect unintended files — "
-                "please specify exact filenames instead",
-                ops_display,
-            )
+    if not sim_commands:
+        return None
+
+    simulation = _simulate_blast_radius(command, sim_commands)
+    affected = simulation["affected"]
+    saw_wildcard = simulation["saw_wildcard"]
+    parse_error = simulation["parse_error"]
+
+    # If a sensitive command used wildcards but resolved to no concrete targets
+    # (or could not be parsed safely), block it and require explicit filenames.
+    if saw_wildcard and (parse_error or not affected):
+        return (
+            "Bulk file operation blocked: wildcard pattern could not be safely "
+            "simulated to concrete targets. Please specify exact filenames instead.",
+            "requires_simulation.wildcard_unresolved",
+        )
+
+    if len(affected) > threshold:
+        sample = ", ".join(affected[:3])
+        if len(affected) > 3:
+            sample += ", ..."
+        return (
+            f"Bulk file operation blocked: simulated blast radius is {len(affected)} "
+            f"path(s), which exceeds the policy threshold of {threshold}. "
+            f"Sample targets: {sample}",
+            "requires_simulation.bulk_file_threshold",
+        )
 
     return None
+
+
+def _simulate_blast_radius(command: str, sim_commands: list[str]) -> dict:
+    """
+    Simulate wildcard expansion for sensitive commands and return simulation data.
+
+    Expansion is constrained to WORKSPACE_ROOT and allowed roots only. Returned
+    paths are normalized absolute strings, sorted for deterministic logs/tests.
+    """
+    affected: set[str] = set()
+    lower_ops = {op.lower() for op in sim_commands}
+    saw_wildcard = False
+    parse_error = False
+
+    # Split on shell command separators; each segment is evaluated independently.
+    segments = re.split(r"[|;&]+", command)
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            # Tokenization failure makes simulation ambiguous; mark it so the
+            # caller can conservatively block wildcard operations.
+            parse_error = True
+            continue
+        if not tokens:
+            continue
+
+        op = tokens[0].lower()
+        if op not in lower_ops:
+            continue
+
+        for token in tokens[1:]:
+            if not any(ch in token for ch in ("*", "?", "[")):
+                continue
+            saw_wildcard = True
+            pattern = token if os.path.isabs(token) else os.path.join(WORKSPACE_ROOT, token)
+            for match in glob.glob(pattern):
+                resolved = str(pathlib.Path(match).resolve())
+                if os.path.exists(resolved) and is_within_workspace(resolved):
+                    affected.add(resolved)
+
+    return {
+        "affected": sorted(affected),
+        "saw_wildcard": saw_wildcard,
+        "parse_error": parse_error,
+    }
 
 
 def _log_policy_conflict(command: str, normalized: str, matching_tiers: list) -> None:
@@ -328,10 +487,10 @@ def check_policy(command: str) -> PolicyResult:
 
         blocked  >  requires_confirmation  >  requires_simulation  >  allowed
 
-    The command is normalized (whitespace-collapsed and lowercased) before
-    being passed to every tier function so pattern matching is consistent
-    regardless of how the agent formatted the command string. The original
-    command is preserved for logging purposes only.
+    The command is normalized (whitespace-collapsed and lowercased) for
+    blocked/confirmation matching so pattern checks are consistent regardless
+    of agent formatting. The simulation tier receives the original command so
+    wildcard expansion can preserve real path casing.
 
     Each tier is checked independently so we can detect conflicts. If a
     command matches more than one tier, the highest-priority tier wins and
@@ -361,7 +520,8 @@ def check_policy(command: str) -> PolicyResult:
         reason, matched_rule = confirmation_result
         matching_tiers.append(("requires_confirmation", reason, matched_rule))
 
-    simulation_result = _check_simulation_tier(norm)
+    # Simulation uses the original command to preserve path case for globbing.
+    simulation_result = _check_simulation_tier(command)
     if simulation_result:
         reason, matched_rule = simulation_result
         matching_tiers.append(("requires_simulation", reason, matched_rule))
@@ -427,10 +587,11 @@ def _check_path_policy(path: str) -> tuple[str, str] | None:
     any I/O is performed.
 
     Checks (in order):
-      1. blocked.paths        — block if any entry appears as a substring of path
-      2. blocked.extensions   — block if the path ends with a blocked extension
-      3. allowed.paths_whitelist — if non-empty, block any path that does not
-                                   resolve to WORKSPACE_ROOT or a listed root
+      1. blocked.paths      — block if any entry appears as a substring of path
+      2. blocked.extensions — block if the path ends with a blocked extension
+      3. workspace boundary — always block paths outside WORKSPACE_ROOT; the
+                              optional allowed.paths_whitelist entries extend the
+                              boundary with additional roots but never remove it
 
     Returns (reason, matched_rule) if the path is blocked, or None if it
     passes every check. matched_rule is the specific blocked path substring,
@@ -457,14 +618,15 @@ def _check_path_policy(path: str) -> tuple[str, str] | None:
                 ext,
             )
 
-    # 3. Allowed paths whitelist
-    # Only enforced when the list is non-empty; an empty list preserves the
-    # current open-access behaviour so the out-of-the-box config is unchanged.
-    whitelist = POLICY.get("allowed", {}).get("paths_whitelist", [])
-    if whitelist and not is_within_workspace(path):
+    # 3. Workspace boundary — always enforced regardless of whether
+    # allowed.paths_whitelist is populated. WORKSPACE_ROOT is the implicit
+    # minimum boundary; paths_whitelist entries extend it with additional roots.
+    # An empty whitelist does NOT disable the boundary check — WORKSPACE_ROOT
+    # is always the floor.
+    if not is_within_workspace(path):
         return (
-            f"Path '{path}' is outside the allowed workspace roots",
-            "allowed.paths_whitelist",
+            f"Path '{path}' is outside the allowed workspace",
+            "workspace_boundary",
         )
 
     return None
@@ -580,6 +742,48 @@ def extract_paths(command: str) -> list:
     return [c for c in candidates if os.path.exists(c)]
 
 
+def _allowed_roots() -> list[pathlib.Path]:
+    """Return resolved allowed roots sorted longest-first for stable matching."""
+    roots = [pathlib.Path(WORKSPACE_ROOT).resolve()]
+    for root in POLICY.get("allowed", {}).get("paths_whitelist", []):
+        roots.append(pathlib.Path(root).resolve())
+    unique = list({str(r): r for r in roots}.values())
+    return sorted(unique, key=lambda p: len(str(p)), reverse=True)
+
+
+def _backup_relative_path(path: pathlib.Path) -> pathlib.Path | None:
+    """
+    Map an absolute path into a stable backup-relative path.
+
+    The relative form preserves directory structure and avoids basename
+    collisions (e.g. dir1/a.txt and dir2/a.txt).
+    """
+    for root in _allowed_roots():
+        if path.is_relative_to(root):
+            return path.relative_to(root)
+    return None
+
+
+def _cleanup_old_backups() -> None:
+    """Remove backup folders older than audit.backup_retention_days."""
+    retention_days = POLICY.get("audit", {}).get("backup_retention_days", 30)
+    if retention_days <= 0:
+        return
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+    backup_root = pathlib.Path(BACKUP_DIR)
+    if not backup_root.exists():
+        return
+    for child in backup_root.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            mtime = datetime.datetime.utcfromtimestamp(child.stat().st_mtime)
+        except OSError:
+            continue
+        if mtime < cutoff:
+            shutil.rmtree(child, ignore_errors=True)
+
+
 def backup_paths(paths: list) -> str:
     """
     Copy a list of files/directories to a timestamped backup folder.
@@ -595,28 +799,40 @@ def backup_paths(paths: list) -> str:
     Returns:
         The path to the newly created backup folder.
     """
-    # Filesystem-safe timestamp — colons are disallowed on macOS and Windows.
-    timestamp       = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
-    backup_location = os.path.join(BACKUP_DIR, timestamp)
+    _cleanup_old_backups()
+    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S.%f")
+    suffix = uuid.uuid4().hex[:8]
+    backup_location = os.path.join(BACKUP_DIR, f"{timestamp}_{suffix}")
 
-    # Create the backup folder (and BACKUP_DIR itself if it doesn't exist yet).
-    os.makedirs(backup_location, exist_ok=True)
+    # Create folders with owner-only defaults where supported.
+    os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(backup_location, mode=0o700, exist_ok=False)
+    manifest: list[dict] = []
 
     for path in paths:
+        resolved = pathlib.Path(path).resolve()
         # Guard against backing up system paths that extract_paths() might
         # surface from agent-supplied commands (e.g. "rm /etc/hosts"). Only
         # paths inside the workspace boundary are ever copied.
-        if not is_within_workspace(path):
+        if not is_within_workspace(str(resolved)):
             continue
 
-        if os.path.isfile(path):
+        rel = _backup_relative_path(resolved)
+        if rel is None:
+            continue
+        dest = pathlib.Path(backup_location) / rel
+
+        if resolved.is_file():
+            dest.parent.mkdir(parents=True, exist_ok=True)
             # copy2 preserves file metadata (timestamps, permissions).
-            shutil.copy2(path, backup_location)
-        elif os.path.isdir(path):
-            # copytree requires the destination not to exist, so append the
-            # directory's own name to keep multiple dirs in the same backup slot.
-            dest = os.path.join(backup_location, os.path.basename(path))
-            shutil.copytree(path, dest)
+            shutil.copy2(str(resolved), str(dest))
+            manifest.append({"source": str(resolved), "backup": str(dest), "type": "file"})
+        elif resolved.is_dir():
+            shutil.copytree(str(resolved), str(dest))
+            manifest.append({"source": str(resolved), "backup": str(dest), "type": "directory"})
+
+    with open(os.path.join(backup_location, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
 
     return backup_location
 
@@ -624,6 +840,11 @@ def backup_paths(paths: list) -> str:
 # ---------------------------------------------------------------------------
 # MCP tool
 # ---------------------------------------------------------------------------
+
+@mcp.tool()
+def server_info() -> str:
+    return f"ai-runtime-guard build={SERVER_BUILD} workspace={WORKSPACE_ROOT} base_dir={BASE_DIR}"
+
 
 @mcp.tool()
 def execute_command(command: str, retry_count: int = 0) -> str:
@@ -644,13 +865,28 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         policy block message (with retry guidance) if the command was blocked.
     """
 
-    # --- 1. Run the policy check ---
-    result = check_policy(command)
+    # --- 1. Hard-fail commands with unsafe control characters ---
+    if _has_shell_unsafe_control_chars(command):
+        result = PolicyResult(
+            allowed=False,
+            reason="Command contains disallowed control characters (newline, carriage return, or NUL)",
+            decision_tier="blocked",
+            matched_rule="command_control_characters",
+        )
+    else:
+        # --- 2. Run the policy check ---
+        result = check_policy(command)
 
-    # --- 2. Build the log entry via the standard builder ---
-    # final_block is set when the agent has exhausted all retry attempts so
-    # downstream consumers can identify permanently refused operations.
-    final_block = not result.allowed and retry_count >= MAX_RETRIES
+    # --- 3. Server-side retry tracking ---
+    # retry_count is accepted from clients for compatibility, but enforcement
+    # is performed server-side using SERVER_RETRY_COUNTS.
+    server_retry_count = 0
+    final_block = False
+    if not result.allowed and result.decision_tier != "requires_confirmation":
+        server_retry_count = _register_retry(command, result.decision_tier, result.matched_rule)
+        final_block = server_retry_count >= MAX_RETRIES
+
+    # --- 4. Build the log entry via the standard builder ---
     log_entry = build_log_entry(
         "execute_command", result,
         command=command,
@@ -658,16 +894,27 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         # used as the base for policy matching (lowercased internally).
         normalized_command=normalize_for_audit(command),
         retry_count=retry_count,
+        server_retry_count=server_retry_count,
         **({"final_block": True} if final_block else {}),
     )
 
-    # --- 3. Write the log entry (always, regardless of allow/block) ---
+    # --- 5. Write the log entry (always, regardless of allow/block) ---
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(log_entry) + "\n")
 
-    # --- 4. If blocked, return a structured message without executing anything ---
+    # --- 6. If blocked, return a structured message without executing anything ---
     if not result.allowed:
-        if retry_count >= MAX_RETRIES:
+        if result.decision_tier == "requires_confirmation":
+            token, expires_at = _issue_or_reuse_approval_token(command)
+            return (
+                f"[POLICY BLOCK] {result.reason}\n\n"
+                "This command requires an explicit confirmation handshake.\n"
+                f"Call approve_command with this exact command and token:\n"
+                f"approval_token={token}\n"
+                f"token_expires_at={expires_at.isoformat()}Z"
+            )
+
+        if final_block:
             # The agent has used all of its attempts — refuse permanently.
             return (
                 f"[POLICY BLOCK] {result.reason}\n\n"
@@ -678,15 +925,15 @@ def execute_command(command: str, retry_count: int = 0) -> str:
 
         # Tell the agent what went wrong, how many attempts remain, and ask
         # it to call execute_command again with a safer command.
-        attempts_remaining = MAX_RETRIES - retry_count
+        attempts_remaining = MAX_RETRIES - server_retry_count
         return (
             f"[POLICY BLOCK] {result.reason}\n\n"
             f"You have {attempts_remaining} attempt(s) remaining. "
             "Please retry execute_command with a safer alternative command "
-            f"and set retry_count={retry_count + 1}."
+            f"(server attempt {server_retry_count}/{MAX_RETRIES})."
         )
 
-    # --- 5. Back up any files that the command might modify or delete ---
+    # --- 7. Back up any files that the command might modify or delete ---
     # Only triggered for commands that contain rm, mv, or a > overwrite redirect.
     if MODIFYING_COMMAND_RE.search(command):
         affected = extract_paths(command)
@@ -700,21 +947,88 @@ def execute_command(command: str, retry_count: int = 0) -> str:
             with open(LOG_PATH, "a") as log_file:
                 log_file.write(json.dumps({**log_entry, "event": "backup_created"}) + "\n")
 
-    # --- 6. Execute the command ---
-    proc = subprocess.run(
-        command,
-        shell=True,          # Allows pipes, redirects, etc.
-        capture_output=True, # Captures both stdout and stderr.
-        text=True,           # Decodes bytes to str automatically.
-    )
+    # --- 8. Execute the command with hardened shell settings ---
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,          # Allows pipes, redirects, etc.
+            executable="/bin/bash",
+            cwd=WORKSPACE_ROOT,
+            env=_safe_subprocess_env(),
+            capture_output=True, # Captures both stdout and stderr.
+            text=True,           # Decodes bytes to str automatically.
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds"
 
-    # --- 7. Return output or error ---
+    # --- 9. Return output or error ---
     if proc.returncode != 0:
         # Non-zero exit code means the command failed.
         return proc.stderr or f"Command exited with code {proc.returncode}"
 
     # Success: return standard output (may be an empty string).
     return proc.stdout
+
+
+@mcp.tool()
+def approve_command(command: str, approval_token: str) -> str:
+    """
+    Approve a previously blocked command for this server session.
+
+    The command and token must match an active handshake issued by
+    execute_command when requires_confirmation rules fired.
+    """
+    _prune_expired_approvals()
+    rec = PENDING_APPROVALS.get(approval_token)
+    expected_hash = command_hash(command)
+
+    if not rec:
+        result = PolicyResult(
+            allowed=False,
+            reason="Invalid or expired approval token",
+            decision_tier="blocked",
+            matched_rule="approval_token",
+        )
+        log_entry = build_log_entry(
+            "approve_command", result,
+            command=command, approval_token=approval_token,
+        )
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(json.dumps(log_entry) + "\n")
+        return "[POLICY BLOCK] Invalid or expired approval token"
+
+    if rec["command_hash"] != expected_hash:
+        result = PolicyResult(
+            allowed=False,
+            reason="Approval token does not match the provided command",
+            decision_tier="blocked",
+            matched_rule="approval_mismatch",
+        )
+        log_entry = build_log_entry(
+            "approve_command", result,
+            command=command, approval_token=approval_token,
+        )
+        with open(LOG_PATH, "a") as log_file:
+            log_file.write(json.dumps(log_entry) + "\n")
+        return "[POLICY BLOCK] Approval token does not match the provided command"
+
+    SESSION_WHITELIST.add(expected_hash)
+    PENDING_APPROVALS.pop(approval_token, None)
+
+    result = PolicyResult(
+        allowed=True,
+        reason="approved",
+        decision_tier="allowed",
+        matched_rule=None,
+    )
+    log_entry = build_log_entry(
+        "approve_command", result,
+        command=command, approval_token=approval_token, event="command_approved",
+    )
+    with open(LOG_PATH, "a") as log_file:
+        log_file.write(json.dumps(log_entry) + "\n")
+    return "Command approved for this session. Re-run execute_command with the same command."
 
 
 @mcp.tool()
@@ -732,6 +1046,12 @@ def read_file(path: str) -> str:
     Returns:
         The file contents as a string, or a [POLICY BLOCK] / error message.
     """
+
+    # --- 0. Resolve relative paths against WORKSPACE_ROOT ---
+    # Mirrors execute_command behaviour: relative paths are interpreted as
+    # relative to WORKSPACE_ROOT, not the process cwd, so callers get
+    # consistent results regardless of where the server was launched from.
+    path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy ---
     path_check = _check_path_policy(path)
@@ -798,6 +1118,12 @@ def write_file(path: str, content: str) -> str:
         A success message with the byte count, a backup note if applicable,
         or a [POLICY BLOCK] / error message.
     """
+
+    # --- 0. Resolve relative paths against WORKSPACE_ROOT ---
+    # Mirrors execute_command behaviour: relative paths are interpreted as
+    # relative to WORKSPACE_ROOT, not the process cwd, so callers get
+    # consistent results regardless of where the server was launched from.
+    path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy ---
     path_check = _check_path_policy(path)
@@ -871,6 +1197,12 @@ def delete_file(path: str) -> str:
         A success message with the backup location, or a [POLICY BLOCK] /
         error message.
     """
+
+    # --- 0. Resolve relative paths against WORKSPACE_ROOT ---
+    # Mirrors execute_command behaviour: relative paths are interpreted as
+    # relative to WORKSPACE_ROOT, not the process cwd, so callers get
+    # consistent results regardless of where the server was launched from.
+    path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
     path_check = _check_path_policy(path)
@@ -964,6 +1296,12 @@ def list_directory(path: str) -> str:
         A formatted multi-line string with one entry per line, or a
         [POLICY BLOCK] / error message.
     """
+
+    # --- 0. Resolve relative paths against WORKSPACE_ROOT ---
+    # Mirrors execute_command behaviour: relative paths are interpreted as
+    # relative to WORKSPACE_ROOT, not the process cwd, so callers get
+    # consistent results regardless of where the server was launched from.
+    path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     # --- 1. Check path against policy (blocked paths, extensions) ---
     path_check = _check_path_policy(path)
