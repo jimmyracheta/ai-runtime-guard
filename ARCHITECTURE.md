@@ -10,7 +10,15 @@ Core design goals observed in code:
 - Bound risky operations with simulation and retry limits.
 
 Primary runtime artifacts:
-- `server.py`: all policy logic, tools, logging, backup, and execution.
+- `server.py`: thin MCP entrypoint and tool registration only.
+- `config.py`: startup config load/normalize and shared runtime state.
+- `policy_engine.py`: tiered policy evaluation, command parsing/simulation, path checks.
+- `approvals.py`: command/restore token lifecycle and approval failure throttling.
+- `budget.py`: cumulative budget accounting and scope/reset behavior.
+- `backup.py`: backup extraction, dedupe/hash logic, retention/version pruning.
+- `audit.py`: canonical audit-log entry build + append helpers.
+- `executor.py`: constrained subprocess environment and shell execution wrapper.
+- `tools/`: tool surfaces split by concern (`command_tools.py`, `file_tools.py`, `restore_tools.py`).
 - `policy.json`: runtime policy tiers and thresholds.
 - `activity.log`: JSONL audit trail (one object per event).
 - `backups/`: timestamped snapshots with per-backup `manifest.json`.

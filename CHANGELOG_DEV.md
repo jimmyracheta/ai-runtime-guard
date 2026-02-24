@@ -1,8 +1,15 @@
 # CHANGELOG_DEV
 
+## 2026-02-24 (module split + test rewrite)
+- Refactored runtime from monolithic `server.py` into focused modules (`config`, `policy_engine`, `approvals`, `budget`, `backup`, `audit`, `executor`, `tools/*`) with a thin `server.py` entrypoint.
+- Preserved existing tool behavior and policy semantics while improving code isolation for future changes.
+- Added modular regression tests in `tests/` (`test_attacker_suite.py`, `test_retry_clamp.py`, `test_helpers.py`) aligned to the new architecture.
+- Replaced references to external test-workspace conventions with repo-local test execution guidance.
+- Confirmed unittest discovery passes for refactored tests: `python3 -m unittest discover -s tests -p 'test_*.py'`.
+
 ## 2026-02-24 (documentation + repo analysis session)
 - Audited all source and policy files to produce operator-facing docs tied to actual implementation behavior.
-- Added `README.md` with concise project purpose, startup steps, and test workflow aligned to using `~/Documents/ai-runtime-guard-test` for destructive scenarios.
+- Added `README.md` with concise project purpose, startup steps, and test workflow for disposable-workspace destructive scenarios.
 - Added `ARCHITECTURE.md` covering tier precedence, retry enforcement, blast-radius simulation, audit schema, backup model, and tool/action mapping.
 - Added `STATUS.md` as high-churn snapshot of branch, live workspace state, known issues, and immediate next tasks.
 - Added `CHANGELOG_DEV.md` to standardize per-session change capture for faster handoff and historical context.
