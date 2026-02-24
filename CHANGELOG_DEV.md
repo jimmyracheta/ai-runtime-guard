@@ -8,6 +8,7 @@
   - runtime must enforce caller identity/role for approval
   - regression coverage must prove no self-approval path exists
 - Added explicit approval-separation checkpoint requirements to `README.md` and `tests.md`.
+- Added a Phase-1 local control-plane UI skeleton (`ui/`) for policy management (catalog tabs, tier toggles, validation, atomic apply, and change log), intended as the base for a future out-of-band approval interface.
 
 ## 2026-02-24 (MVP lock-down prep)
 - Added explicit merge/branch policy and pre-merge gate to `README.md` (unit tests + minimum manual integration prompts + Linux checkpoint).

@@ -26,6 +26,7 @@ Last updated: 2026-02-24 (merge freeze: self-approval separation-of-duties flaw)
   - privilege escalation moved to `blocked` (`sudo`, `su`, `doas`)
   - added confirmation coverage for version-control, email, package-management, process-management, and exfiltration-oriented command families
 - Documented merge policy and explicit pre-merge gate in `README.md`.
+- Added Phase-1 local policy control-plane skeleton under `ui/` (policy load/validate/apply, command-tier editor tabs, atomic writes, change logging).
 
 ## Current known issues
 - Release blocker: approval separation-of-duties is not enforced. The same AI agent can call `execute_command`, receive a token, call `approve_command`, and complete its own confirmation loop.

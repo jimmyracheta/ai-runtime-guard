@@ -1,0 +1,30 @@
+{
+  "tabs": [
+    {
+      "id": "macos",
+      "label": "macOS",
+      "commands": ["rm", "mv", "cp -r", "chmod -r", "chown -r", "launchctl", "diskutil erasedisk", "brew install"]
+    },
+    {
+      "id": "linux",
+      "label": "Linux",
+      "commands": ["rm", "mv", "cp -r", "chmod -r", "chown -r", "systemctl", "apt install", "yum install", "dnf install"]
+    },
+    {
+      "id": "github",
+      "label": "GitHub/Git",
+      "commands": ["git clone", "git fetch", "git push", "git reset --hard", "git clean -fd"]
+    },
+    {
+      "id": "email",
+      "label": "Email/Notify",
+      "commands": ["mail", "mailx", "sendmail", "curl", "wget"]
+    },
+    {
+      "id": "network",
+      "label": "Network",
+      "commands": ["curl", "wget", "scp", "rsync", "ssh", "nc", "netcat"]
+    }
+  ],
+  "tiers": ["allowed", "requires_simulation", "requires_confirmation", "blocked"]
+}

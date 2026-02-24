@@ -18,6 +18,18 @@ A development MCP server that adds a security/policy layer in front of AI-agent 
 4. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
 5. Start MCP server over stdio: `python server.py`
 
+## Local policy UI (MVP skeleton)
+Run the local control-plane UI for policy editing:
+1. `python3 -m ui.server --host 127.0.0.1 --port 8765`
+2. Open `http://127.0.0.1:8765`
+3. Optional passcode guard: `export AIRG_UI_PASSCODE=your-passcode` and send `X-UI-PASSCODE` in requests.
+
+Current UI scope:
+- load current `policy.json`
+- tabbed command tier editing (`allowed`, `requires_simulation`, `requires_confirmation`, `blocked`)
+- validate and apply with atomic write
+- append-only config change log at `ui/config_changes.log`
+
 ## How to test
 Primary workflow (recommended for destructive-behavior testing):
 1. Register this MCP server in your AI agent/client.
