@@ -2,7 +2,6 @@ import datetime
 import os
 import pathlib
 
-from approvals import SESSION_WHITELIST
 from config import POLICY, SESSION_ID, WORKSPACE_ROOT
 from policy_engine import command_hash, is_within_workspace, tokenize_command
 
@@ -42,24 +41,12 @@ def budget_allows_override(scope_key: str, command: str) -> bool:
     overrides = cfg.get("overrides", {})
     if not overrides.get("enabled", False):
         return False
-    cmd_hash = command_hash(command)
-    if cmd_hash not in SESSION_WHITELIST:
-        return False
-    state = CUMULATIVE_BUDGET_STATE.setdefault(
-        scope_key,
-        {
-            "unique_paths": {},
-            "total_operations": 0,
-            "total_bytes_estimate": 0,
-            "last_activity": None,
-            "overrides_used": 0,
-        },
-    )
-    max_override = int(overrides.get("max_override_actions", 1))
-    if state.get("overrides_used", 0) >= max_override:
-        return False
-    state["overrides_used"] = state.get("overrides_used", 0) + 1
-    return True
+    # Disabled during approval-store migration: command approvals are now
+    # consumed through durable session+command grants in policy tier checks.
+    # Revisit budget override semantics once override policy is explicitly
+    # defined for cross-process approval state.
+    _ = (scope_key, command_hash(command), overrides)
+    return False
 
 
 def prune_budget_state(scope_key: str, now: datetime.datetime) -> dict:

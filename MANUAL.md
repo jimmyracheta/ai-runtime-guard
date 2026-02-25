@@ -35,6 +35,7 @@ Current flow:
 Storage model:
 - pending approvals are persisted in `approvals.db` (SQLite) so separate processes can read/update the same queue.
 - each pending record includes `token`, `command`, `session_id`, `requested_at`, `expires_at`, and optional `affected_paths`.
+- approved commands are persisted as one-time session+command grants in SQLite and consumed by MCP confirmation checks on retry.
 
 Current security status:
 - Merge freeze is active because approval separation-of-duties is not enforced yet.
@@ -64,6 +65,7 @@ Current enforced budget:
 
 Not currently enforced:
 - Per-command budget overrides from UI metadata.
+- Budget override tied to confirmation approvals is temporarily disabled during durable approval migration (pending explicit redesign).
 
 ## 8. UI retry/budget fields: what they mean today
 The local policy UI writes optional per-command metadata:

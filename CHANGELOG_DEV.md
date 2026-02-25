@@ -6,6 +6,7 @@
 - Added Flask backend (`ui/backend_flask.py`) with policy and approvals REST endpoints for local UI integration.
 - Added Vite + React + Tailwind frontend (`ui_v3/`) with three-layer navigation, command policy editor panel, and approvals queue panel.
 - Added approvals store unit coverage (`tests/test_approvals_store.py`).
+- Fixed approval continuity across processes by moving confirmation allow-list behavior from in-memory session state to durable SQLite session+command grants consumed by policy checks.
 
 ## 2026-02-24 (release freeze: approval separation flaw)
 - Identified a release-blocking security gap during MVP gate testing: the same agent can request a confirmation-gated command and then call `approve_command` to approve itself.

@@ -9,7 +9,6 @@ import uuid
 
 from config import APPROVAL_TTL_SECONDS, BASE_DIR, POLICY, RESTORE_CONFIRMATION_TTL_SECONDS
 
-SESSION_WHITELIST: set = set()
 APPROVAL_FAILURES: dict[str, list[datetime.datetime]] = {}
 PENDING_RESTORE_CONFIRMATIONS: dict[str, dict] = {}
 APPROVAL_DB_PATH = pathlib.Path(os.environ.get("AIRG_APPROVAL_DB_PATH", str(BASE_DIR / "approvals.db")))
@@ -64,6 +63,21 @@ def init_approval_store() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pending_approvals_expires_at ON pending_approvals(expires_at)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approved_commands (
+                session_id TEXT NOT NULL,
+                command_hash TEXT NOT NULL,
+                approved_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                source TEXT,
+                PRIMARY KEY(session_id, command_hash)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approved_commands_expires_at ON approved_commands(expires_at)"
+        )
         conn.commit()
 
 
@@ -96,6 +110,7 @@ def prune_expired_approvals() -> None:
     now = _to_z(_now_utc())
     with _conn() as conn:
         conn.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now,))
+        conn.execute("DELETE FROM approved_commands WHERE expires_at <= ?", (now,))
         conn.commit()
 
 
@@ -115,11 +130,11 @@ def issue_or_reuse_approval_token(
             """
             SELECT token, expires_at
             FROM pending_approvals
-            WHERE command_hash = ? AND expires_at > ?
+            WHERE command_hash = ? AND session_id = ? AND expires_at > ?
             ORDER BY expires_at DESC
             LIMIT 1
             """,
-            (cmd_hash, _to_z(now)),
+            (cmd_hash, session_id, _to_z(now)),
         ).fetchone()
         if row:
             return str(row["token"]), _from_z(str(row["expires_at"]))
@@ -148,7 +163,12 @@ def issue_or_reuse_approval_token(
     return token, expires_at
 
 
-def consume_command_approval(command: str, approval_token: str) -> tuple[bool, str | None, str | None]:
+def consume_command_approval(
+    command: str,
+    approval_token: str,
+    *,
+    source: str = "approve_command",
+) -> tuple[bool, str | None, str | None]:
     prune_expired_approvals()
     if approval_failures_exceeded(approval_token):
         return False, "Approval token temporarily locked due to repeated failed attempts", "approval_rate_limit"
@@ -157,7 +177,7 @@ def consume_command_approval(command: str, approval_token: str) -> tuple[bool, s
     with _conn() as conn:
         rec = conn.execute(
             """
-            SELECT command_hash, expires_at
+            SELECT command_hash, expires_at, session_id
             FROM pending_approvals
             WHERE token = ?
             LIMIT 1
@@ -181,12 +201,56 @@ def consume_command_approval(command: str, approval_token: str) -> tuple[bool, s
         record_approval_failure(approval_token)
         return False, "Approval token does not match the provided command", "approval_mismatch"
 
-    SESSION_WHITELIST.add(expected_hash)
+    session_id = str(rec["session_id"] or "")
     with _conn() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO approved_commands
+              (session_id, command_hash, approved_at, expires_at, source)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                expected_hash,
+                _to_z(_now_utc()),
+                _to_z(_now_utc() + datetime.timedelta(seconds=APPROVAL_TTL_SECONDS)),
+                source,
+            ),
+        )
         conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
         conn.commit()
     APPROVAL_FAILURES.pop(approval_token, None)
     return True, None, None
+
+
+def consume_approved_command(session_id: str, command: str) -> bool:
+    """
+    Return True and consume one approved command grant for this session+command.
+
+    Grants are one-time use and time-bounded. This enforces separation across
+    processes because state is stored in shared SQLite.
+    """
+    prune_expired_approvals()
+    init_approval_store()
+    cmd_hash = _command_hash(command)
+    with _conn() as conn:
+        row = conn.execute(
+            """
+            SELECT session_id, command_hash
+            FROM approved_commands
+            WHERE session_id = ? AND command_hash = ?
+            LIMIT 1
+            """,
+            (session_id, cmd_hash),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute(
+            "DELETE FROM approved_commands WHERE session_id = ? AND command_hash = ?",
+            (session_id, cmd_hash),
+        )
+        conn.commit()
+    return True
 
 
 def list_pending_approvals() -> list[dict]:
@@ -269,7 +333,6 @@ def consume_restore_confirmation_token(backup_path: pathlib.Path, restore_token:
 
 
 def reset_approval_state_for_tests() -> None:
-    SESSION_WHITELIST.clear()
     APPROVAL_FAILURES.clear()
     if APPROVAL_DB_PATH.exists():
         APPROVAL_DB_PATH.unlink()

@@ -37,6 +37,7 @@ Last updated: 2026-02-24 (merge freeze: self-approval separation-of-duties flaw)
   - Flask backend (`ui/backend_flask.py`) with REST endpoints for policy + approvals
   - Vite + React + Tailwind frontend (`ui_v3/`) with three-layer navigation and approvals panel
 - Replaced in-memory-only pending approval storage with a shared SQLite approval store in `approvals.py` (configurable path via `AIRG_APPROVAL_DB_PATH`).
+- Fixed cross-process approval retry bug: GUI-approved commands now create durable session+command grants in SQLite and MCP confirmation checks consume those grants (one-time), so retry after out-of-band approval works without reissuing a token.
 
 ## Current known issues
 - Release blocker: approval separation-of-duties is not enforced. The same AI agent can call `execute_command`, receive a token, call `approve_command`, and complete its own confirmation loop.
@@ -49,6 +50,7 @@ Last updated: 2026-02-24 (merge freeze: self-approval separation-of-duties flaw)
 - Cumulative budget limits are currently high enough that practical MVP prompt runs may not trigger budget blocks.
 - UI per-command retry/budget overrides are stored as policy metadata for now; runtime does not yet enforce per-command override values.
 - Legacy UI server (`ui/server.py`) remains in repo; v3 runtime path is Flask backend + `ui_v3` frontend.
+- Budget override-on-approval path is temporarily disabled during durable approval migration and should be explicitly redesigned for cross-process semantics.
 
 ## Core use cases (from README; do not edit without explicit product decision)
 1. Block destructive commands and sensitive path/extension access.

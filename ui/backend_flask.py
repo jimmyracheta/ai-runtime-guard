@@ -123,7 +123,7 @@ def approve_pending():
     command = str(payload.get("command", "")).strip()
     if not token or not command:
         return jsonify({"error": "Expected {token, command}"}), 400
-    ok, reason, matched_rule = approvals.consume_command_approval(command, token)
+    ok, reason, matched_rule = approvals.consume_command_approval(command, token, source="flask.approvals")
     if not ok:
         status = 410 if matched_rule == "approval_token" else 403
         return jsonify({"approved": False, "error": reason, "matched_rule": matched_rule}), status

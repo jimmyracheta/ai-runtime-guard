@@ -36,11 +36,22 @@ class ApprovalStoreTests(unittest.TestCase):
         ok, reason, _rule = approvals.consume_command_approval("cat x.txt", token)
         self.assertTrue(ok)
         self.assertIsNone(reason)
+        # Grant is one-time for the same session+command.
+        self.assertTrue(approvals.consume_approved_command("sess-2", "cat x.txt"))
+        self.assertFalse(approvals.consume_approved_command("sess-2", "cat x.txt"))
 
         token2, _ = approvals.issue_or_reuse_approval_token("cat y.txt", session_id="sess-2")
         denied, msg = approvals.deny_command_approval(token2)
         self.assertTrue(denied)
         self.assertIn("removed", msg)
+
+    def test_approval_is_session_scoped(self):
+        token, _ = approvals.issue_or_reuse_approval_token("rm tmp.txt", session_id="session-A")
+        ok, _reason, _rule = approvals.consume_command_approval("rm tmp.txt", token)
+        self.assertTrue(ok)
+        # Different session should not consume grant.
+        self.assertFalse(approvals.consume_approved_command("session-B", "rm tmp.txt"))
+        self.assertTrue(approvals.consume_approved_command("session-A", "rm tmp.txt"))
 
 
 if __name__ == "__main__":

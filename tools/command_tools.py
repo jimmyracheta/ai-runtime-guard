@@ -164,7 +164,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
 
 
 def approve_command(command: str, approval_token: str) -> str:
-    approved, reason, matched_rule = consume_command_approval(command, approval_token)
+    approved, reason, matched_rule = consume_command_approval(command, approval_token, source="mcp.approve_command")
     if not approved:
         result = PolicyResult(
             allowed=False,

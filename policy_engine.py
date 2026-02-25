@@ -7,7 +7,7 @@ import re
 import shlex
 from urllib.parse import urlparse
 
-from approvals import SESSION_WHITELIST
+from approvals import consume_approved_command
 from audit import append_log_entry, build_log_entry
 from config import (
     BACKUP_DIR,
@@ -276,16 +276,18 @@ def check_confirmation_tier(command: str) -> tuple[str, str] | None:
     conf = POLICY.get("requires_confirmation", {})
     lower = command.lower()
 
-    whitelist_enabled = conf.get("session_whitelist_enabled", True)
-    if whitelist_enabled and command_hash(command) in SESSION_WHITELIST:
-        return None
-
     for pattern in conf.get("commands", []):
         if build_command_matcher(pattern)(command):
+            whitelist_enabled = conf.get("session_whitelist_enabled", True)
+            if whitelist_enabled and consume_approved_command(SESSION_ID, command):
+                return None
             return (f"Command '{pattern}' requires explicit confirmation before execution", pattern)
 
     for path in conf.get("paths", []):
         if path.lower() in lower:
+            whitelist_enabled = conf.get("session_whitelist_enabled", True)
+            if whitelist_enabled and consume_approved_command(SESSION_ID, command):
+                return None
             return (f"Access to path '{path}' requires explicit confirmation", path)
 
     return None
