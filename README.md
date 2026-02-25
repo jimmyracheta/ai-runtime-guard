@@ -1,20 +1,27 @@
 # ai-runtime-guard
 
-A development MCP server that adds a security/policy layer in front of AI-agent filesystem and shell actions.
+> Your agent can say anything. It can only do what policy allows.
 
-Operator reference:
-- `MANUAL.md` contains the current behavioral guide (matching semantics, tier precedence, retries, budgets, UI metadata limits, and release gates).
+AI agents with filesystem and shell access can delete files, leak credentials, or execute destructive commands — often without the user realizing it until it's too late.
 
-## What this is
-- Python MCP server with a thin entrypoint (`server.py`) and modular runtime components:
-  - `policy_engine.py`, `approvals.py`, `budget.py`
-  - `backup.py`, `audit.py`, `executor.py`
-  - tool handlers under `tools/`
-- Exposes guarded tools: `server_info`, `execute_command`, `read_file`, `write_file`, `delete_file`, `list_directory`, `restore_backup`.
-- Policy-driven enforcement loaded from `policy.json` at startup.
-- Audit-first behavior with JSONL logs in `activity.log` and pre-change backups in `backups/`.
-- Default policy profile is **basic protection**: severe actions are blocked, all others are allowed.
-- Advanced tiers (`requires_confirmation`, `requires_simulation`, cumulative budgets) remain available in policy for opt-in use.
+`ai-runtime-guard` is an MCP server that sits between your AI agent and your system, enforcing a policy layer before any file or shell action takes effect.
+
+## What it does
+1. **Blocks dangerous operations** — `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.
+2. **Gates risky commands behind human approval** — configurable commands require explicit operator sign-off via a web GUI before the agent can proceed.
+3. **Simulates blast radius** — wildcard operations like `rm *.tmp` are evaluated against real files before running, and blocked if they exceed a safe threshold.
+4. **Backs up before it acts** — destructive or overwrite operations create automatic backups with full restore support.
+
+All actions — allowed and blocked — are logged to a full audit trail.
+
+## Who it's for
+Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or any MCP-compatible client) who want guardrails on what the agent can actually do to their system.
+
+## How it works
+- Python MCP server with policy-driven enforcement loaded from `policy.json`
+- Default profile is **basic protection**: severe actions blocked, everything else allowed
+- Advanced tiers available for opt-in: simulation gating, human approval workflows, cumulative budget limits
+- Local web GUI for policy editing, approval management, and audit log review
 
 ## Requirements
 Python:
@@ -25,24 +32,6 @@ Python:
 Why this matters:
 1. `ai-runtime-guard` depends on package versions that are not reliably installable on Python 3.9.
 2. Clean install friction is significantly lower with a modern Python runtime.
-
-## MVP capabilities and caveats
-Capabilities:
-1. Basic protection by default: explicitly destructive/sensitive actions are blocked; non-severe actions are allowed.
-2. Advanced policy tiers are available per command/path: simulation and human approval.
-3. Out-of-band approval workflow is active via GUI/API; agent self-approval via MCP tool surface is removed.
-4. Audit logging is comprehensive across agent actions, operator approvals, and server-side events.
-5. Backups are created for destructive/overwrite paths with restore support.
-6. Command normalization and policy matching reduce common obfuscation bypasses.
-7. Workspace/path protections and blocked sensitive paths harden the guardrails around the runtime and approval store.
-8. GUI policy control supports command tiering plus user-added commands and user-added categories.
-
-Caveats:
-1. Policy updates are loaded at server startup; after Apply, restart MCP server (and usually reconnect/restart agent client) to enforce new runtime behavior.
-2. “Basic vs Advanced” is a policy profile convention, not a separate runtime mode switch.
-3. Redaction/obfuscation is pattern-based and not a formal guarantee for all sensitive data shapes.
-4. Some shell-target inference remains heuristic for complex command constructs.
-5. Cumulative budget behavior depends on configured thresholds; defaults may need tuning for your workflow.
 
 ## How to run
 See `INSTALL.md` for full setup.
@@ -177,18 +166,3 @@ Automated tests:
 4. Promote releases by merging `dev` -> `main` after gates are satisfied, then tag (`v1.0`, `v1.1`, etc.).
 5. `main` should stay protected in GitHub settings: no direct pushes, at least one review, and required checks before merge.
 6. Approval separation at MCP tool surface is complete (approval remains out-of-band via GUI/API).
-
-## Completed `v0.9` release checkpoints
-1. Unit security regressions:
-   - `python3 -m unittest discover -s tests -p 'test_*.py'`
-2. Manual MCP integration validation:
-   - at least 12 prompts from `tests.md`, including destructive block, confirmation flow, simulation, cumulative-budget behavior, restore flow, and network-policy checks.
-3. Approval separation:
-   - approvals come from a separate trusted/operator channel (GUI/API), not MCP tool calls
-   - initiating agent cannot self-approve via MCP tool surface
-
-## Post-merge validation (v1.1)
-1. Linux validation is currently untested but expected to work.
-2. Track Linux as a v1.1 validation task:
-   - run the same unit suite on Linux
-   - execute a reduced manual prompt set on Linux and record outcomes in `STATUS.md`
