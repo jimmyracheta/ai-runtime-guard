@@ -3,10 +3,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 const API_BASE = 'http://127.0.0.1:5001'
 const RAIL_ITEMS = [
   { id: 'approvals', label: 'Approvals', icon: '🔔' },
-  { id: 'commands', label: 'Commands', icon: '🛡️' },
-  { id: 'paths', label: 'Paths', icon: '🗂️' },
+  { id: 'policy', label: 'Policy', icon: '🛡️' },
   { id: 'reports', label: 'Reports', icon: '📊' },
   { id: 'settings', label: 'Settings', icon: '⚙️' }
+]
+const POLICY_TABS = [
+  { id: 'commands', label: 'Commands' },
+  { id: 'paths', label: 'Paths' },
+  { id: 'extensions', label: 'Extensions' },
 ]
 const DEFAULT_TABS = [{ id: 'all', label: 'All Commands' }]
 const COLUMN_DEFS = [
@@ -61,6 +65,15 @@ function isAbsolutePath(path) {
   return String(path || '').startsWith('/')
 }
 
+function normalizeAbsolutePath(path) {
+  const trimmed = String(path || '').trim()
+  if (!trimmed) return ''
+  if (!trimmed.startsWith('/')) return trimmed
+  const collapsed = trimmed.replace(/\/{2,}/g, '/')
+  if (collapsed.length > 1 && collapsed.endsWith('/')) return collapsed.replace(/\/+$/, '')
+  return collapsed
+}
+
 function tierFor(policy, cmd) {
   if ((policy?.blocked?.commands || []).includes(cmd)) return 'blocked'
   if ((policy?.requires_confirmation?.commands || []).includes(cmd)) return 'requires_confirmation'
@@ -112,7 +125,7 @@ function relativeTime(iso) {
 
 export default function App() {
   const [activeRail, setActiveRail] = useState('approvals')
-  const [activeTab, setActiveTab] = useState('all')
+  const [activePolicyTab, setActivePolicyTab] = useState('commands')
   const [policyHash, setPolicyHash] = useState('')
   const [appliedPolicy, setAppliedPolicy] = useState(null)
   const [draftPolicy, setDraftPolicy] = useState(null)
@@ -133,8 +146,10 @@ export default function App() {
   const [newComment, setNewComment] = useState('')
   const [newCommandTabs, setNewCommandTabs] = useState([])
   const [newCategoryLabel, setNewCategoryLabel] = useState('')
+  const [selectedCategories, setSelectedCategories] = useState([])
   const [newPathValue, setNewPathValue] = useState('')
   const [newPathTier, setNewPathTier] = useState('blocked')
+  const [newExtensionValue, setNewExtensionValue] = useState('')
   const [removing, setRemoving] = useState({})
   const [loaded, setLoaded] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(() => {
@@ -217,17 +232,16 @@ export default function App() {
     }
   }, [draftPolicy])
 
-  useEffect(() => {
-    if (!tabDefs.some((t) => t.id === activeTab)) {
-      setActiveTab('all')
-    }
-  }, [activeTab, tabDefs])
-
   const commandRows = useMemo(() => {
-    const base = activeTab === 'all' ? allCommands : (tabCommands[activeTab] || [])
+    const base = allCommands
     const q = search.trim().toLowerCase()
-    return base.filter((cmd) => !q || cmd.toLowerCase().includes(q))
-  }, [allCommands, activeTab, search, tabCommands])
+    return base.filter((cmd) => {
+      if (q && !cmd.toLowerCase().includes(q)) return false
+      if (!selectedCategories.length) return true
+      const cats = (contexts[cmd] || []).map((x) => String(x).toLowerCase())
+      return selectedCategories.some((c) => cats.includes(c.toLowerCase()))
+    })
+  }, [allCommands, search, contexts, selectedCategories])
 
   function onJsonChange(next) {
     setJsonText(next)
@@ -312,7 +326,7 @@ export default function App() {
       setMessage('Command text is required')
       return
     }
-    const selectedTabs = newCommandTabs.length ? newCommandTabs : (activeTab !== 'all' ? [activeTab] : [])
+    const selectedTabs = newCommandTabs
     if (!selectedTabs.length) {
       setMessage('Select at least one category')
       return
@@ -367,7 +381,7 @@ export default function App() {
     })
     setNewCommand('')
     setNewComment('')
-    setNewCommandTabs(activeTab !== 'all' ? [activeTab] : [])
+    setNewCommandTabs([])
     setMessage(`Command "${command}" added`)
   }
 
@@ -657,13 +671,34 @@ export default function App() {
             <button onClick={onCreateCategory} className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-sm">Add category</button>
           </div>
         </div>
-        <div className="flex items-center justify-between mb-3">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white"
-            placeholder="Filter commands..."
-          />
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm mb-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filters</div>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white"
+              placeholder="Filter commands by text..."
+            />
+            <div className="border border-slate-300 rounded-lg px-3 py-2 bg-white">
+              <div className="text-xs text-slate-500 mb-1">Categories (multi-select, default: All)</div>
+              <div className="flex flex-wrap gap-2">
+                {nonAllTabs.map((tab) => (
+                  <label key={tab.id} className="text-xs border border-slate-300 rounded px-2 py-1 bg-slate-50 flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={selectedCategories.includes(tab.label)}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedCategories((prev) => Array.from(new Set([...prev, tab.label])))
+                        else setSelectedCategories((prev) => prev.filter((x) => x !== tab.label))
+                      }}
+                    />
+                    <span>{tab.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm overflow-auto">
           <div className="grid gap-2 text-xs font-semibold text-slate-500 border-b border-slate-200 pb-2" style={{ gridTemplateColumns }}>
@@ -707,25 +742,6 @@ export default function App() {
           </div>
           {commandRows.map((cmd) => <CommandRow key={cmd} cmd={cmd} />)}
         </div>
-        <div className="mt-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-          <button onClick={() => setJsonOpen((x) => !x)} className="text-sm font-medium text-slate-700">
-            {jsonOpen ? '▾' : '▸'} Advanced JSON
-          </button>
-          {jsonOpen && (
-            <textarea
-              value={jsonText}
-              onChange={(e) => onJsonChange(e.target.value)}
-              className="mt-3 w-full h-72 border border-slate-300 rounded-lg p-3 font-mono text-xs"
-            />
-          )}
-          {jsonError && <div className="mt-2 text-sm text-red-600">{jsonError}</div>}
-          {message && <div className="mt-2 text-sm text-slate-700">{message}</div>}
-          <div className="mt-4 flex gap-2">
-            <button onClick={onReload} className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700">Reload</button>
-            <button onClick={onValidate} className="px-4 py-2 rounded-lg bg-blue-600 text-white">Validate</button>
-            <button onClick={onApply} className="px-4 py-2 rounded-lg bg-brand text-white">Apply</button>
-          </div>
-        </div>
       </>
     )
   }
@@ -741,7 +757,7 @@ export default function App() {
     const pathGridColumns = `minmax(420px,1fr)_90px_90px${showPathAdvanced ? '_120px' : ''}_90px`.replaceAll('_', ' ')
 
     const onAddPath = () => {
-      const p = String(newPathValue || '').trim()
+      const p = normalizeAbsolutePath(newPathValue)
       if (!p) {
         setMessage('Path is required')
         return
@@ -758,7 +774,7 @@ export default function App() {
     const onEditPath = (oldPath) => {
       const next = window.prompt('Edit absolute path', oldPath)
       if (next === null) return
-      const normalized = String(next || '').trim()
+      const normalized = normalizeAbsolutePath(next)
       if (!normalized || !isAbsolutePath(normalized)) {
         setMessage('Only absolute paths are allowed (must start with /)')
         return
@@ -795,6 +811,7 @@ export default function App() {
               onChange={(e) => setNewPathValue(e.target.value)}
               className="border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs"
               placeholder="/absolute/path"
+              title="Use absolute paths only. Example: /Users/your_username/Documents/Folder"
             />
             <div className="flex items-center gap-3 text-xs">
               <label className="flex items-center gap-1"><input type="radio" checked={newPathTier === 'allowed'} onChange={() => setNewPathTier('allowed')} /> Allowed</label>
@@ -860,6 +877,95 @@ export default function App() {
           })}
         </div>
       </div>
+    )
+  }
+
+  function ExtensionsPanel() {
+    const blockedExt = (draftPolicy?.blocked?.extensions || []).slice().sort()
+    const onAdd = () => {
+      const val = String(newExtensionValue || '').trim()
+      if (!val) {
+        setMessage('Extension value is required')
+        return
+      }
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.blocked = next.blocked || {}
+        next.blocked.extensions = Array.from(new Set([...(next.blocked.extensions || []), val])).sort()
+        return next
+      })
+      setNewExtensionValue('')
+      setMessage(`Extension "${val}" added to blocked list`)
+    }
+    return (
+      <div className="space-y-3">
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Blocked Extensions</div>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-center">
+            <input
+              value={newExtensionValue}
+              onChange={(e) => setNewExtensionValue(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs"
+              placeholder="*.ext"
+              title="Enter extension pattern such as *.pem, *.key, *.env"
+            />
+            <button onClick={onAdd} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm">Add extension</button>
+          </div>
+          <div className="text-xs text-slate-500">Example: <span className="font-mono">*.pem</span></div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm overflow-auto">
+          <div className="grid grid-cols-[minmax(320px,1fr)_100px] gap-2 text-xs font-semibold text-slate-500 border-b border-slate-200 pb-2">
+            <div>Extension</div>
+            <div className="text-center">Actions</div>
+          </div>
+          {blockedExt.map((ext) => (
+            <div key={ext} className="grid grid-cols-[minmax(320px,1fr)_100px] gap-2 items-center border-b border-slate-200 py-2 text-sm">
+              <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-white">{ext}</div>
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setDraftPolicy((prev) => {
+                    const next = deepClone(prev)
+                    next.blocked.extensions = (next.blocked?.extensions || []).filter((e) => e !== ext)
+                    return next
+                  })}
+                  className="px-2 py-1 rounded border border-red-300 text-red-700 text-xs"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  function PolicyPanel() {
+    return (
+      <>
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm mb-3 flex flex-wrap items-center justify-end gap-2">
+          <button onClick={onReload} className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700">Reload</button>
+          <button onClick={onValidate} className="px-4 py-2 rounded-lg bg-blue-600 text-white">Validate</button>
+          <button onClick={onApply} className="px-4 py-2 rounded-lg bg-brand text-white">Apply</button>
+        </div>
+        {activePolicyTab === 'commands' && CommandsPanel()}
+        {activePolicyTab === 'paths' && PathsPanel()}
+        {activePolicyTab === 'extensions' && ExtensionsPanel()}
+        <div className="mt-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+          <button onClick={() => setJsonOpen((x) => !x)} className="text-sm font-medium text-slate-700">
+            {jsonOpen ? '▾' : '▸'} Advanced JSON
+          </button>
+          {jsonOpen && (
+            <textarea
+              value={jsonText}
+              onChange={(e) => onJsonChange(e.target.value)}
+              className="mt-3 w-full h-72 border border-slate-300 rounded-lg p-3 font-mono text-xs"
+            />
+          )}
+          {jsonError && <div className="mt-2 text-sm text-red-600">{jsonError}</div>}
+          {message && <div className="mt-2 text-sm text-slate-700">{message}</div>}
+        </div>
+      </>
     )
   }
 
@@ -938,13 +1044,13 @@ export default function App() {
           </div>
         </nav>
 
-        {activeRail === 'commands' ? (
+        {activeRail === 'policy' ? (
           <aside className="border-r border-slate-200 bg-white p-3 space-y-2">
-            {tabDefs.map((tab) => (
+            {POLICY_TABS.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm ${activeTab === tab.id ? 'bg-brand text-white' : 'text-slate-700 hover:bg-slate-100'}`}
+                onClick={() => setActivePolicyTab(tab.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${activePolicyTab === tab.id ? 'bg-brand text-white' : 'text-slate-700 hover:bg-slate-100'}`}
               >
                 {tab.label}
               </button>
@@ -957,8 +1063,7 @@ export default function App() {
         <main className="p-4">
           {!loaded && <div className="text-slate-500">Loading...</div>}
           {loaded && activeRail === 'approvals' && ApprovalsPanel()}
-          {loaded && activeRail === 'commands' && CommandsPanel()}
-          {loaded && activeRail === 'paths' && PathsPanel()}
+          {loaded && activeRail === 'policy' && PolicyPanel()}
           {loaded && (activeRail === 'reports' || activeRail === 'settings') && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm text-slate-500">Coming soon</div>
           )}
