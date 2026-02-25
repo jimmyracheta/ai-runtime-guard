@@ -4,6 +4,7 @@ Last updated: 2026-02-24 (merge freeze: self-approval separation-of-duties flaw)
 
 ## Current branch
 - `refactor` (tracking `origin/refactor`)
+- Operator behavior reference: `MANUAL.md`
 
 ## What was just changed
 - Split monolithic `server.py` into focused modules:

@@ -2,6 +2,9 @@
 
 A development MCP server that adds a security/policy layer in front of AI-agent filesystem and shell actions.
 
+Operator reference:
+- `MANUAL.md` contains the current behavioral guide (matching semantics, tier precedence, retries, budgets, UI metadata limits, and release gates).
+
 ## What this is
 - Python MCP server with a thin entrypoint (`server.py`) and modular runtime components:
   - `policy_engine.py`, `approvals.py`, `budget.py`
