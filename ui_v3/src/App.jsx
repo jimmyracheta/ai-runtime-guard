@@ -4,6 +4,7 @@ const API_BASE = 'http://127.0.0.1:5001'
 const RAIL_ITEMS = [
   { id: 'approvals', label: 'Approvals', icon: '🔔' },
   { id: 'commands', label: 'Commands', icon: '🛡️' },
+  { id: 'paths', label: 'Paths', icon: '🗂️' },
   { id: 'reports', label: 'Reports', icon: '📊' },
   { id: 'settings', label: 'Settings', icon: '⚙️' }
 ]
@@ -548,25 +549,6 @@ export default function App() {
     const nonAllTabs = tabDefs.filter((t) => t.id !== 'all')
     return (
       <>
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm mb-3 space-y-2">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Runtime Paths (Read Only)</div>
-          <div className="grid grid-cols-1 gap-2">
-            {Object.entries(runtimePaths).map(([key, value]) => (
-              <div key={key} className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-2 items-center">
-                <div className="text-xs font-mono text-slate-500">{key}</div>
-                <input
-                  value={String(value || '')}
-                  readOnly
-                  className="border border-slate-300 rounded-lg px-3 py-2 bg-slate-100 text-slate-700 font-mono text-xs"
-                />
-              </div>
-            ))}
-          </div>
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Runtime paths are managed by MCP client configuration/env. To change workspace paths, update your AI agent MCP config,
-            then restart the MCP server and agent client.
-          </div>
-        </div>
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm mb-3 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr] gap-3">
             <div className="space-y-2">
@@ -689,6 +671,32 @@ export default function App() {
     )
   }
 
+  function PathsPanel() {
+    return (
+      <div className="space-y-3">
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Runtime Paths (Read Only)</div>
+          <div className="grid grid-cols-1 gap-2">
+            {Object.entries(runtimePaths).map(([key, value]) => (
+              <div key={key} className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-2 items-center">
+                <div className="text-xs font-mono text-slate-500">{key}</div>
+                <input
+                  value={String(value || '')}
+                  readOnly
+                  className="border border-slate-300 rounded-lg px-3 py-2 bg-slate-100 text-slate-700 font-mono text-xs"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Runtime paths are managed by MCP client configuration/env. To change workspace paths, update your AI agent MCP config,
+            then restart the MCP server and agent client.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   function CommandInfoModal() {
     if (!commandModal.open) return null
     const cmd = commandModal.command
@@ -784,6 +792,7 @@ export default function App() {
           {!loaded && <div className="text-slate-500">Loading...</div>}
           {loaded && activeRail === 'approvals' && ApprovalsPanel()}
           {loaded && activeRail === 'commands' && CommandsPanel()}
+          {loaded && activeRail === 'paths' && PathsPanel()}
           {loaded && (activeRail === 'reports' || activeRail === 'settings') && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm text-slate-500">Coming soon</div>
           )}
