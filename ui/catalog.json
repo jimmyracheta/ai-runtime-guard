@@ -1,0 +1,79 @@
+{
+  "tabs": [
+    {
+      "id": "all",
+      "label": "All Commands",
+      "commands": [],
+      "descriptions": {}
+    },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "commands": ["rm", "mv", "cp -r", "chmod -r", "chown -r", "launchctl", "diskutil erasedisk", "brew install"],
+      "descriptions": {
+        "rm": "Delete files from disk.",
+        "mv": "Move or rename files/directories.",
+        "cp -r": "Copy directories recursively.",
+        "chmod -r": "Recursively change file permissions.",
+        "chown -r": "Recursively change file ownership.",
+        "launchctl": "Manage macOS launch agents and daemons.",
+        "diskutil erasedisk": "Erase an entire disk on macOS.",
+        "brew install": "Install packages using Homebrew."
+      }
+    },
+    {
+      "id": "linux",
+      "label": "Linux",
+      "commands": ["rm", "mv", "cp -r", "chmod -r", "chown -r", "systemctl", "apt install", "yum install", "dnf install"],
+      "descriptions": {
+        "systemctl": "Control Linux system services.",
+        "apt install": "Install packages with APT.",
+        "yum install": "Install packages with YUM.",
+        "dnf install": "Install packages with DNF."
+      }
+    },
+    {
+      "id": "github",
+      "label": "GitHub/Git",
+      "commands": ["git clone", "git fetch", "git push", "git reset --hard", "git clean -fd"],
+      "descriptions": {
+        "git clone": "Download repository content into local workspace.",
+        "git fetch": "Download remote refs without merging.",
+        "git push": "Upload local commits to remote repository.",
+        "git reset --hard": "Discard local changes and reset branch state.",
+        "git clean -fd": "Remove untracked files/directories."
+      }
+    },
+    {
+      "id": "email",
+      "label": "Email/Notify",
+      "commands": ["mail", "mailx", "sendmail", "curl", "wget"],
+      "descriptions": {
+        "mail": "Send messages via local/system mail transport.",
+        "mailx": "Send or process email from command line.",
+        "sendmail": "Directly invoke MTA to send outbound email.",
+        "curl": "Transfer data to/from URLs.",
+        "wget": "Fetch content from URLs over network."
+      }
+    },
+    {
+      "id": "network",
+      "label": "Network",
+      "commands": ["curl", "wget", "scp", "rsync", "ssh", "nc", "netcat"],
+      "descriptions": {
+        "scp": "Secure copy files across hosts.",
+        "rsync": "Synchronize files, often remotely.",
+        "ssh": "Remote shell access.",
+        "nc": "Raw network socket utility.",
+        "netcat": "Raw network socket utility alias."
+      }
+    }
+  ],
+  "tiers": ["allowed", "requires_simulation", "requires_confirmation", "blocked"],
+  "tier_labels": {
+    "allowed": "Allowed",
+    "requires_simulation": "Simulation",
+    "requires_confirmation": "Requires Approval",
+    "blocked": "Blocked"
+  }
+}

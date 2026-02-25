@@ -1,34 +1,70 @@
 # STATUS
 
-Last updated: 2026-02-24 (command policy rollout items 10-13 implemented)
+Last updated: 2026-02-25
 
 ## Current branch
-- `dev` (tracking `origin/dev`)
+- `refactor` (tracking `origin/refactor`)
+- Operator behavior reference: `MANUAL.md`
 
 ## What was just changed
-- Added policy schema extensions for cumulative budgets, network enforcement mode, execution limits, approval security, and audit redaction patterns.
-- Added startup policy validation/normalization with fail-fast checks for malformed policy structures.
-- Added shell-aware command segmentation/tokenization helpers and upgraded command matching/simulation parsing.
-- Added cumulative blast-radius budget enforcement (session/request/workspace/tool scope support) and budget telemetry fields in logs.
-- Added network policy enforcement hook for command execution (`off`/`monitor`/`enforce` modes).
-- Added approval token failure throttling/rate limiting.
-- Added output truncation + configurable command timeout handling.
-- Added backup manifest file hashing and new `restore_backup` MCP tool with dry-run and hash verification.
-- Fixed `list_directory` depth checks to use depth relative to allowed roots.
-- Added/expanded tests for cumulative bypass prevention, network enforcement, workspace-relative depth, and restore flow.
-- Expanded repo ignore rules for runtime/test artifacts and pinned `mcp` dependency range.
-- Activated `requires_confirmation` policy with production command/path coverage and explicitly included `rm`/`mv` to intentionally enable approval-based cumulative-budget override paths.
-- Implemented command policy rollout together:
-  - Expanded `blocked.commands` hard-deny set (including system/disk-destructive patterns).
-  - Expanded `requires_simulation.commands` to cover additional bulk-impact command families.
-  - Expanded `network.commands` to Linux/macOS parity command set.
-  - Added shell-obfuscation-aware unit tests for chaining, quoting, escaping, and normalization edge cases.
+- Re-categorized default `policy.json` to basic-protection mode:
+  - kept severe/high-impact operations in `blocked`.
+  - moved default behavior to allow for non-severe commands (cleared default `requires_confirmation` and `requires_simulation` command/path lists).
+  - disabled default cumulative budget enforcement (`requires_simulation.cumulative_budget.enabled=false`).
+  - retained advanced tier sections in policy for opt-in use by advanced users.
+- Hardened approval-store access and integrity:
+  - `approvals.db` permissions are now enforced to `0600` at open/create.
+  - approval-store parent directory world-access is now checked and logged as an `mcp-server` warning if too open.
+  - approval-store path/key path inside workspace now triggers explicit `mcp-server` warnings.
+  - approval grants now include an HMAC signature over `{session_id, command_hash, expires_at}` and tampered rows are rejected/purged.
+- Added explicit malformed/suspicious approval-store row warnings to `activity.log` (`source: mcp-server`).
+- Expanded confirmation coverage in `policy.json` for local DB/log inspection commands (`sqlite3`, `tail`, `grep`, `awk`, `sed`, `head`, `less`) and path markers (`activity.log`, `approvals.db`).
+- Added blocked-path runtime protection in policy for `activity.log`, `approvals.db`, and `approvals.db.hmac.key`.
+- Added approval-store startup health checks (`integrity_check` + schema expectations); startup now fails closed if store health checks fail.
+- Restored simulation diagnostics for confirmation-gated commands: confirmation responses and audit logs now include simulation context when simulation would have triggered (`bulk_file_threshold` or `wildcard_unresolved`).
+- Split monolithic `server.py` into focused modules:
+  - `config.py`, `models.py`, `audit.py`, `policy_engine.py`, `approvals.py`, `budget.py`, `backup.py`, `executor.py`
+  - `tools/command_tools.py`, `tools/file_tools.py`, `tools/restore_tools.py`
+- Kept `server.py` as a thin MCP entrypoint wiring tool registrations.
+- Added a refactor-compatible in-repo test suite under `tests/`:
+  - `tests/test_attacker_suite.py`
+  - `tests/test_retry_clamp.py`
+  - `tests/test_helpers.py`
+- Updated test execution to `python3 -m unittest discover -s tests -p 'test_*.py'`.
+- Moved mutable runtime state ownership out of `config.py` into owning modules:
+  - approvals/session state in `approvals.py`
+  - retry counters in `policy_engine.py`
+  - cumulative budget state in `budget.py`
+- Updated policy conflict logging to use shared audit schema construction.
+- Removed duplicate blast-radius simulation in `execute_command` by reusing one computed simulation result across policy and budget checks.
+- Replaced deprecated UTC helpers with timezone-aware UTC across runtime modules (`datetime.now(datetime.UTC)` / `datetime.fromtimestamp(..., datetime.UTC)`).
+- Expanded `policy.json` command-family coverage for lock-down:
+  - privilege escalation moved to `blocked` (`sudo`, `su`, `doas`)
+  - added confirmation coverage for version-control, email, package-management, process-management, and exfiltration-oriented command families
+- Documented merge policy and explicit pre-merge gate in `README.md`.
+- Added Phase-1 local policy control-plane skeleton under `ui/` (policy load/validate/apply, command-tier editor tabs, atomic writes, change logging).
+- Upgraded UI to v2 policy editor ergonomics:
+  - explicit tier column headers
+  - `All Commands` view + search filter so non-catalog commands are visible
+  - command tooltip descriptions and applied-state status badges (updated after Apply)
+  - per-command retry/budget editor fields persisted as `policy.ui_overrides.commands.*`
+- Added v3 control plane architecture:
+  - Flask backend (`ui/backend_flask.py`) with REST endpoints for policy + approvals
+  - Vite + React + Tailwind frontend (`ui_v3/`) with three-layer navigation and approvals panel
+- Replaced in-memory-only pending approval storage with a shared SQLite approval store in `approvals.py` (configurable path via `AIRG_APPROVAL_DB_PATH`).
+- Fixed cross-process approval retry bug: GUI-approved commands now create durable session+command grants in SQLite and MCP confirmation checks consume those grants (one-time), so retry after out-of-band approval works without reissuing a token.
 
 ## Current known issues
+- MCP `approve_command` tool exposure has been removed; approvals are now out-of-band via GUI/API only.
 - `execute_command` still uses `shell=True` for compatibility; this remains the largest residual command-parsing risk surface.
 - Network policy currently focuses on domain-level command checks; payload-size and protocol-depth enforcement are not yet comprehensive.
 - Backup target detection for shell commands remains heuristic (`PATH_TOKEN_RE` + existing-path checks) and can miss some shell expansion edge cases.
-- `test_retry_clamp_pytest.py` requires `pytest`; this environment currently lacks the `pytest` executable.
+- Runtime constants are still imported by multiple modules at load time (`WORKSPACE_ROOT`, `MAX_RETRIES`, `LOG_PATH`, `BACKUP_DIR`), so dynamic runtime reconfiguration remains non-centralized and requires careful patching in tests.
+- Linux validation checkpoint has not yet been executed in this workspace/session.
+- Cumulative budget limits are currently high enough that practical MVP prompt runs may not trigger budget blocks.
+- UI per-command retry/budget overrides are stored as policy metadata for now; runtime does not yet enforce per-command override values.
+- Legacy UI server (`ui/server.py`) remains in repo; v3 runtime path is Flask backend + `ui_v3` frontend.
+- Budget override-on-approval path is temporarily disabled during durable approval migration and should be explicitly redesigned for cross-process semantics.
 
 ## Core use cases (from README; do not edit without explicit product decision)
 1. Block destructive commands and sensitive path/extension access.
@@ -36,19 +72,57 @@ Last updated: 2026-02-24 (command policy rollout items 10-13 implemented)
 3. Require explicit confirmation handshake for configured risky commands.
 4. Create backups before destructive/overwrite actions and validate recovery.
 
-## Recommended next steps and TODO backlog (merged, deduplicated)
+## MVP lock-down sequence (approved order)
+1. Branch protection + merge policy: documented in `README.md`; GitHub branch protection settings still need to be applied operationally.
+2. UTC deprecation fix: completed.
+3. Policy coverage audit and lock-down (`policy.json` only): completed.
+4. Linux validation checkpoint: moved to post-merge v1.1 validation task (untested but expected to work).
+5. Merge `refactor` -> `main`: ready from current MVP gate perspective.
 
-### Policy/code audit follow-ups
-1. Complete policy-to-code parity: implement or remove currently unused/partially-used policy keys (`allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, override metadata fields).
-2. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file` (not only `execute_command`), and keep backup access controls consistent between file tools and `execute_command`.
-3. Harden command execution model: reduce dependence on `shell=True` with structured execution where feasible, and isolate a tightly-scoped legacy shell mode for cases that need pipes/redirection.
-4. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
+## Merge freeze status
+- Current state: no active merge freeze for approval separation.
+- Approval separation checkpoint status: complete at MVP scope (no MCP approval tool; out-of-band approval via GUI/API).
+- Remaining hardening before broad deployment (post-MVP): strengthen caller identity/authorization for operator approval endpoints.
+
+## Pre-merge gate status (for `refactor` -> `main`)
+Completed checkpoints:
+1. Unit test gate: complete (`python3 -m unittest discover -s tests -p 'test_*.py'` passes).
+2. Manual integration gate: complete (12+ prompts validated, including destructive block, confirmation, simulation, cumulative budget behavior, restore flow, and network-policy checks).
+3. Approval separation gate: complete (initiating agent cannot self-approve via MCP tool surface; approvals are out-of-band).
+
+Remaining checkpoint:
+1. None blocking MVP merge.
+
+## Post-merge validation (v1.1)
+1. Linux gate: pending (unit suite + reduced integration prompts executed on Linux with outcomes recorded).
+
+## Post-MVP backlog (grouped workstreams)
+### Execution hardening
+1. Harden command execution model: reduce dependence on `shell=True` with structured execution where feasible, and isolate a tightly-scoped legacy shell mode for cases that need pipes/redirection.
+2. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
+
+### Policy/code parity
+3. Complete policy-to-code parity for remaining unused/partial keys: `allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, and override metadata fields (`token_ttl_seconds`, `audit_reason_required`, `allowed_roles`).
+4. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file`, and keep backup access controls consistent between file tools and `execute_command`.
 5. Improve backup mutation detection: replace or augment regex path extraction with parser-aware target resolution for shell expansions (`find -exec`, `xargs`, loops, substitutions).
 6. Improve restore ergonomics and safety: add restore conflict strategies (`overwrite/skip/fail`) and clearer per-file restore result reporting.
-7. Replace deprecated UTC datetime calls with timezone-aware UTC (`datetime.now(datetime.UTC)` / `datetime.fromtimestamp(..., datetime.UTC)`).
-8. Consolidate test/runtime tooling: add `pytest` to dev/CI (or migrate remaining pytest tests to unittest), and add CI checks for policy parity regressions.
-9. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection (`dev` -> `main` with required checks).
 
-### Command policy rollout items (Unix/macOS now, Linux-ready)
+### Release readiness
+7. Add CI checks for policy parity regressions and run `python3 -m unittest discover -s tests -p 'test_*.py'` as a required check.
+8. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection enforcement in GitHub.
+9. Formalize long-term two-layer test strategy maintenance for `tests/` and `tests.md` prompt suites.
+
+### Policy validation
 10. Validate expanded command sets against real agent workflows to tune false-positive rate (especially for `find`, `xargs`, `sed`, `perl` in simulation tier).
-11. Add focused integration tests for multi-command shell constructs (`find -exec`, `xargs`, loops, substitutions) that are now represented in policy but only partially modeled by current simulation logic.
+11. Add focused integration tests for multi-command shell constructs (`find -exec`, `xargs`, loops, substitutions) that are represented in policy but only partially modeled by current simulation logic.
+13. Tune cumulative budget defaults for MVP operations so anti-bypass behavior is practically testable in manual integration runs without requiring unrealistic operation volume.
+14. Add approval separation regression coverage: verify that a command requester cannot approve the same command within the same agent/tool context.
+15. Add UI operator warnings:
+    - when any command is set to `requires_confirmation`, show a warning that approval increases security but may reduce agent autonomy and introduce operational friction;
+    - when command budget configuration is present, show a warning that budget is cumulative and applies per configured session scope (not per-command enforcement unless runtime override support is implemented).
+16. Post-MVP hardening review (after packaging + approval workflow rewrite): evaluate restart-based budget bypass risk where MCP process restarts reset in-memory session state, and decide whether to persist budget state across restarts and/or block agent-driven service restart controls.
+17. UI guardrails for edit relevance: enable/disable retry and budget inputs based on selected tier so irrelevant fields are visually greyed out (for example `allowed` should not expose retry controls), with clear helper text for why fields are disabled.
+18. Re-evaluate human-approval workflow value: assess whether `requires_confirmation` should be optional behind an explicit UI toggle, with clear warning that enabling it can reduce agent autonomy; compare against security posture achieved by `blocked` + `requires_simulation` only.
+19. Add interpreter command-family confirmation coverage in `policy.json` to reduce string-construction evasion risk (`python`, `python3`, `perl`, `ruby`, `node`, `php`, `lua`, `osascript`, `bash`, `sh`, `zsh`).
+20. Add wrapper pattern confirmation rules in `policy.json` for inline code execution surfaces (`python3 -c`, `python -c`, `perl -e`, `node -e`, `bash -c`, `sh -c`, `zsh -c`) and evaluate whether interpreter `-c/-e` should be force-confirmed in code regardless of payload text.
+21. GUI v3 visual redesign follow-up: improve information architecture and visual separation between Basic and Advanced protection settings (clearer section containers, full-height zone styling, and reduced header/control ambiguity across collapsed/expanded states).

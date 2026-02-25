@@ -10,10 +10,29 @@ Core design goals observed in code:
 - Bound risky operations with simulation and retry limits.
 
 Primary runtime artifacts:
-- `server.py`: all policy logic, tools, logging, backup, and execution.
+- `server.py`: thin MCP entrypoint and tool registration only.
+- `config.py`: startup config load/normalize and shared runtime state.
+- `policy_engine.py`: tiered policy evaluation, command parsing/simulation, path checks.
+- `approvals.py`: command/restore token lifecycle and approval failure throttling.
+- `budget.py`: cumulative budget accounting and scope/reset behavior.
+- `backup.py`: backup extraction, dedupe/hash logic, retention/version pruning.
+- `audit.py`: canonical audit-log entry build + append helpers.
+- `executor.py`: constrained subprocess environment and shell execution wrapper.
+- `tools/`: tool surfaces split by concern (`command_tools.py`, `file_tools.py`, `restore_tools.py`).
 - `policy.json`: runtime policy tiers and thresholds.
 - `activity.log`: JSONL audit trail (one object per event).
 - `backups/`: timestamped snapshots with per-backup `manifest.json`.
+- `ui/`: local control-plane UI for policy editing (`ui/server.py`, `ui/service.py`, static frontend assets).
+- `ui/backend_flask.py`: REST backend for policy + approvals endpoints used by control-plane UI v3.
+- `ui_v3/`: Vite React + Tailwind control-plane frontend.
+
+## Dependency guardrails
+The refactor assumes a one-way dependency direction:
+- `config.py`/`models.py` at the base
+- runtime modules (`audit`, `policy_engine`, `approvals`, `budget`, `backup`, `executor`) above
+- `tools/*` at the top, with `server.py` only wiring registrations
+
+To prevent future circular imports, keep `audit.py` independent of runtime modules (especially `policy_engine.py`) and avoid cross-importing between peers unless absolutely necessary. If shared behavior is needed, extract it into a lower-level helper module rather than introducing bidirectional imports.
 
 ## Policy tiers
 Policy evaluation is centralized in `check_policy(command)` and uses strict priority:
@@ -35,8 +54,9 @@ Current defaults (from `policy.json`):
 ### `requires_confirmation`
 Soft block until one-time explicit approval is provided through handshake:
 - `execute_command(...)` returns `approval_token` + expiry.
-- client must call `approve_command(command, approval_token)` with exact command match.
-- successful approval stores command hash in `SESSION_WHITELIST`, allowing same normalized command for this process session.
+- human operator approves out-of-band via control-plane GUI/API (`/approvals/approve`) with exact command match.
+- successful approval stores a one-time session+command grant in shared SQLite, consumed on next retry.
+- pending approvals are persisted in SQLite (`approvals.db`) so multiple processes (MCP server + Flask UI) can read/update shared approval state.
 
 ### `requires_simulation`
 For selected commands (currently `rm`, `mv`), wildcard impact is simulated before execution:
@@ -121,7 +141,6 @@ Backup behavior:
 ## MCP tool to action map
 - `server_info`: returns build/workspace/base metadata.
 - `execute_command`: policy-check command, track retries, optional backup, execute in constrained env (`shell=True`, `/bin/bash`, cwd=`WORKSPACE_ROOT`, 30s timeout).
-- `approve_command`: validates token-command pair and whitelists command hash for session.
 - `read_file`: path policy + file-size guard, then read text (`errors="replace"`).
 - `write_file`: path policy, optional pre-overwrite backup, write text.
 - `delete_file`: path policy, existence/type checks, pre-delete backup, delete file.
@@ -129,6 +148,30 @@ Backup behavior:
 
 ## Trust boundaries and notable gaps
 Observed current gaps/risk areas:
-- `network` policy exists in config but is explicitly not enforced in code.
+- network policy is enforced at command gate level (domain intent + domain allow/block), but deep payload/protocol controls remain limited.
 - command execution uses `shell=True`; mitigations exist but parser/shell complexity remains a core risk surface.
 - backup path extraction for command execution relies on token regex + existence checks and can miss some shell-expanded path forms.
+
+## MVP command coverage lock-down
+Policy-only lock-down was expanded to cover common agent command families without adding new runtime features:
+- Version control:
+  - `requires_confirmation`: `git clone`, `git fetch`, `git push`, `git reset --hard`, `git clean -fd`
+- Email/notification:
+  - `requires_confirmation`: `mail`, `mailx`, `sendmail`
+- Package management:
+  - `requires_confirmation`: `pip install`, `pip3 install`, `npm install`, `brew install`, `apt install`, `yum install`, `dnf install`
+- Process management/persistence:
+  - `requires_confirmation`: `kill`, `pkill`, `nohup`, `crontab`, `launchctl`, `systemctl`
+- Data exfiltration primitives:
+  - `requires_confirmation`: `base64`, `xxd`, `nc`, `netcat`, `curl`, `wget`, `scp`, `rsync`
+- Privilege escalation:
+  - `blocked`: `sudo`, `su`, `doas`
+
+## Policy UI metadata
+The UI can store per-command editor metadata in:
+- `policy.ui_overrides.commands.<command>.retry_override`
+- `policy.ui_overrides.commands.<command>.budget.*`
+
+Current behavior:
+- metadata is persisted by UI apply flow and included in audit diffs
+- runtime enforcement is unchanged for MVP; these fields are planning/config scaffolding for later per-command enforcement work
