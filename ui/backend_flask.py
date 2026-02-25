@@ -21,6 +21,7 @@ POLICY_PATH = pathlib.Path(os.environ.get("AIRG_POLICY_PATH", str(BASE_DIR / "po
 APPROVAL_DB_PATH = pathlib.Path(os.environ.get("AIRG_APPROVAL_DB_PATH", str(BASE_DIR / "approvals.db")))
 CATALOG_PATH = pathlib.Path(os.environ.get("AIRG_CATALOG_PATH", str(pathlib.Path(__file__).resolve().parent / "catalog.json")))
 UI_DIST_PATH = pathlib.Path(os.environ.get("AIRG_UI_DIST_PATH", str(BASE_DIR / "ui_v3" / "dist")))
+WORKSPACE_PATH = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(BASE_DIR)))
 
 service.POLICY_PATH = POLICY_PATH
 service.CATALOG_PATH = CATALOG_PATH
@@ -70,6 +71,15 @@ def get_policy():
             "contexts": service.command_context_map(catalog, all_commands),
             "tabs": service.visible_tabs(catalog),
             "tab_commands": service.tab_command_map(catalog),
+            "runtime_paths": {
+                "AIRG_WORKSPACE": str(WORKSPACE_PATH),
+                "AIRG_POLICY_PATH": str(POLICY_PATH),
+                "AIRG_APPROVAL_DB_PATH": str(APPROVAL_DB_PATH),
+                "AIRG_APPROVAL_HMAC_KEY_PATH": str(
+                    pathlib.Path(os.environ.get("AIRG_APPROVAL_HMAC_KEY_PATH", f"{APPROVAL_DB_PATH}.hmac.key"))
+                ),
+                "AIRG_UI_DIST_PATH": str(UI_DIST_PATH),
+            },
         }
     )
 
