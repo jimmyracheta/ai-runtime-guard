@@ -761,14 +761,14 @@ export default function App() {
 
         <main className="p-4">
           {!loaded && <div className="text-slate-500">Loading...</div>}
-          {loaded && activeRail === 'approvals' && <ApprovalsPanel />}
-          {loaded && activeRail === 'commands' && <CommandsPanel />}
+          {loaded && activeRail === 'approvals' && ApprovalsPanel()}
+          {loaded && activeRail === 'commands' && CommandsPanel()}
           {loaded && (activeRail === 'reports' || activeRail === 'settings') && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm text-slate-500">Coming soon</div>
           )}
         </main>
       </div>
-      <CommandInfoModal />
+      {CommandInfoModal()}
     </div>
   )
 }
