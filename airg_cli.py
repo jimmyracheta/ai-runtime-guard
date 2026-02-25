@@ -5,6 +5,7 @@ import pathlib
 import platform
 import runpy
 import socket
+import stat
 import threading
 import time
 from typing import Any
@@ -165,9 +166,87 @@ def main_up() -> None:
     runpy.run_module("server", run_name="__main__")
 
 
+def _fmt_mode(path: pathlib.Path) -> str:
+    try:
+        return oct(stat.S_IMODE(path.stat().st_mode))
+    except OSError:
+        return "n/a"
+
+
+def main_doctor() -> None:
+    paths = _resolve_paths()
+    _apply_runtime_env(paths)
+    issues: list[str] = []
+    warnings: list[str] = []
+
+    print("[airg] Doctor checks")
+    print(f"[airg] policy_path={paths['policy_path']}")
+    print(f"[airg] approval_db_path={paths['approval_db_path']}")
+    print(f"[airg] approval_hmac_key_path={paths['approval_hmac_key_path']}")
+
+    # Policy file
+    if not paths["policy_path"].exists():
+        issues.append("Policy file missing. Run `airg-init`.")
+    else:
+        try:
+            json.loads(paths["policy_path"].read_text())
+            print("[ok] policy.json is readable and valid JSON")
+        except Exception as exc:
+            issues.append(f"Policy file is invalid JSON: {exc}")
+
+    # Permission checks
+    for d in [paths["approval_db_path"].parent, paths["approval_hmac_key_path"].parent]:
+        if d.exists():
+            mode = stat.S_IMODE(d.stat().st_mode)
+            if mode & 0o077:
+                warnings.append(f"Directory too open: {d} mode={oct(mode)} (recommended 0o700)")
+    for f in [paths["approval_db_path"], paths["approval_hmac_key_path"]]:
+        if f.exists():
+            mode = stat.S_IMODE(f.stat().st_mode)
+            if mode != 0o600:
+                warnings.append(f"File permissions weak: {f} mode={oct(mode)} (recommended 0o600)")
+        else:
+            warnings.append(f"File missing (will be created at runtime): {f}")
+
+    # Workspace overlap check
+    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(pathlib.Path(__file__).resolve().parent))).expanduser().resolve()
+    for p, label in [
+        (paths["approval_db_path"], "approval_db_path"),
+        (paths["approval_hmac_key_path"], "approval_hmac_key_path"),
+    ]:
+        try:
+            if p.resolve().is_relative_to(workspace):
+                warnings.append(f"{label} is inside AIRG_WORKSPACE ({workspace}); move it outside for stronger hardening.")
+        except Exception:
+            pass
+
+    # UI build check
+    ui_dist = pathlib.Path(os.environ.get("AIRG_UI_DIST_PATH", str(pathlib.Path(__file__).resolve().parent / "ui_v3" / "dist")))
+    if (ui_dist / "index.html").exists():
+        print(f"[ok] UI build detected at {ui_dist}")
+    else:
+        warnings.append(f"UI build not found at {ui_dist}. Build with `cd ui_v3 && npm install && npm run build`.")
+
+    # Flask port check
+    host = os.environ.get("AIRG_FLASK_HOST", "127.0.0.1")
+    port = int(os.environ.get("AIRG_FLASK_PORT", "5001"))
+    if _port_open(host, port):
+        print(f"[ok] UI/backend is listening on http://{host}:{port}")
+    else:
+        print(f"[info] UI/backend is not currently listening on http://{host}:{port}")
+
+    for w in warnings:
+        print(f"[warn] {w}")
+    for i in issues:
+        print(f"[error] {i}")
+
+    if issues:
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ai-runtime-guard CLI")
-    parser.add_argument("command", choices=["init", "server", "ui", "up"], help="Command to run")
+    parser.add_argument("command", choices=["init", "server", "ui", "up", "doctor"], help="Command to run")
     parser.add_argument("--force-policy", action="store_true", help="Used with 'init': overwrite existing policy template")
     args = parser.parse_args()
 
@@ -179,6 +258,9 @@ def main() -> None:
         return
     if args.command == "ui":
         main_ui()
+        return
+    if args.command == "doctor":
+        main_doctor()
         return
     main_up()
 

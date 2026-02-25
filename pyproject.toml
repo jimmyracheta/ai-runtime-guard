@@ -18,6 +18,7 @@ airg-init = "airg_cli:main_init"
 airg-server = "airg_cli:main_server"
 airg-ui = "airg_cli:main_ui"
 airg-up = "airg_cli:main_up_entrypoint"
+airg-doctor = "airg_cli:main_doctor"
 
 [tool.setuptools]
 py-modules = [

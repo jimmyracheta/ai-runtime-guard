@@ -26,6 +26,7 @@ Packaged CLI alternative:
 1. `airg-init`
 2. `airg-server` (MCP server) and/or `airg-ui` (Flask backend for control plane)
 3. `airg-up` starts Flask backend as a sidecar and then starts MCP server (stdio) in one command.
+4. `airg-doctor` runs environment, path, permission, and UI-build diagnostics.
 
 ### MVP capabilities and caveats snapshot
 Capabilities:

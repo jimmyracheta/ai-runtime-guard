@@ -49,11 +49,13 @@ Packaged CLI workflow (Phase 1):
 3. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
 4. Start MCP server: `airg-server`
 5. Optional one-command bring-up (UI sidecar + MCP stdio server): `airg-up`
+6. Run health checks: `airg-doctor`
 
 Using `uvx` (without persistent install):
 1. `uvx --from /absolute/path/to/ai-runtime-guard airg-init`
 2. `uvx --from /absolute/path/to/ai-runtime-guard airg-server`
 3. Optional sidecar bring-up: `uvx --from /absolute/path/to/ai-runtime-guard airg-up`
+4. Diagnostics: `uvx --from /absolute/path/to/ai-runtime-guard airg-doctor`
 
 ## Local policy UI (v3)
 React + Tailwind frontend (Vite) with a Flask backend.
@@ -97,6 +99,26 @@ Security path note:
   - Linux: `${XDG_STATE_HOME:-~/.local/state}/ai-runtime-guard/`
 - This avoids repeated approval-store hardening warnings and is the recommended default for public packaging.
 - Built UI path can be overridden with `AIRG_UI_DIST_PATH`.
+
+## MCP client configuration (example)
+For clients that support a stdio command-based MCP config, point to the packaged entrypoint.
+
+Example JSON snippet:
+```json
+{
+  "mcpServers": {
+    "ai-runtime-guard": {
+      "command": "airg-server",
+      "args": [],
+      "env": {
+        "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace"
+      }
+    }
+  }
+}
+```
+
+If your client does not inherit shell environment, run `airg-init` first and pass explicit `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, and `AIRG_APPROVAL_HMAC_KEY_PATH` in client `env`.
 
 ## How to test
 Primary workflow (recommended for destructive-behavior testing):

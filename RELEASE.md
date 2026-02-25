@@ -43,6 +43,7 @@ Use a virtual environment:
    - `airg-server` (Ctrl+C after startup check)
    - `airg-ui` (Ctrl+C after startup check)
    - `airg-up` (verify sidecar UI starts, then Ctrl+C)
+   - `airg-doctor` (verify no hard errors)
 
 ## Release steps
 1. Merge `dev` into `main`.
@@ -82,3 +83,10 @@ Use a virtual environment:
 1. Update `STATUS.md` with release completion and next milestone.
 2. Open next milestone branch/work items on `dev`.
 3. Track any regressions from first external users.
+
+## Public-ready packaging completion criteria
+1. CI workflow passes on `dev` and `main` (tests + UI build + package build).
+2. `airg-init`, `airg-server`, `airg-ui`, `airg-up`, `airg-doctor` all run successfully on clean macOS and Linux test machines.
+3. Built UI is served from Flask backend without requiring Vite dev server.
+4. Runtime state files (`approvals.db`, HMAC key, logs, backups) are not committed and are created with secure defaults.
+5. README install + MCP config snippets are verified with at least one external agent client.
