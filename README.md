@@ -35,12 +35,23 @@ Caveats:
 5. Cumulative budget behavior depends on configured thresholds; defaults may need tuning for your workflow.
 
 ## How to run
+From source (current dev workflow):
 1. `cd /Users/liviu/Documents/ai-runtime-guard`
 2. `python3 -m venv venv && source venv/bin/activate`
 3. `pip install -r requirements.txt`
 4. Configure secure approval-store paths (recommended): `source scripts/setup_runtime_env.sh`
 5. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
 6. Start MCP server over stdio: `python server.py`
+
+Packaged CLI workflow (Phase 1):
+1. `pip install .`
+2. `airg-init`
+3. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
+4. Start MCP server: `airg-server`
+
+Using `uvx` (without persistent install):
+1. `uvx --from /absolute/path/to/ai-runtime-guard airg-init`
+2. `uvx --from /absolute/path/to/ai-runtime-guard airg-server`
 
 ## Local policy UI (v3)
 React + Tailwind frontend (Vite) with a Flask backend.
@@ -50,6 +61,11 @@ Backend:
 2. `pip install -r requirements.txt`
 3. `source scripts/setup_runtime_env.sh`
 4. `python3 ui/backend_flask.py`
+
+Packaged backend:
+1. `pip install .`
+2. `airg-init`
+3. `airg-ui`
 
 Frontend:
 1. `cd ui_v3`

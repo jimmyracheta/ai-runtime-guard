@@ -22,6 +22,10 @@ Default locations created by the script:
 
 The script also enforces restrictive permissions (`700` for directories, `600` for files) to avoid approval-store hardening warnings and reduce tamper/exfiltration risk.
 
+Packaged CLI alternative:
+1. `airg-init`
+2. `airg-server` (MCP server) and/or `airg-ui` (Flask backend for control plane)
+
 ### MVP capabilities and caveats snapshot
 Capabilities:
 1. Default basic profile blocks severe actions and allows non-severe actions.

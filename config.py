@@ -8,7 +8,7 @@ import uuid
 BASE_DIR = pathlib.Path(__file__).parent
 LOG_PATH = str(BASE_DIR / "activity.log")
 BACKUP_DIR = str(BASE_DIR / "backups")
-POLICY_PATH = BASE_DIR / "policy.json"
+POLICY_PATH = pathlib.Path(os.environ.get("AIRG_POLICY_PATH", str(BASE_DIR / "policy.json"))).expanduser().resolve()
 
 
 def _load_policy() -> dict:
