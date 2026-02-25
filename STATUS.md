@@ -94,3 +94,6 @@ Last updated: 2026-02-24 (merge freeze: self-approval separation-of-duties flaw)
 12. Restore simulation diagnostics for confirmation-gated commands: include simulation context in logs/responses so operators can distinguish `bulk_file_threshold` from `wildcard_unresolved` even when handshake is required.
 13. Tune cumulative budget defaults for MVP operations so anti-bypass behavior is practically testable in manual integration runs without requiring unrealistic operation volume.
 14. Add approval separation regression coverage: verify that a command requester cannot approve the same command within the same agent/tool context.
+15. Add UI operator warnings:
+    - when any command is set to `requires_confirmation`, show a warning that approval increases security but may reduce agent autonomy and introduce operational friction;
+    - when command budget configuration is present, show a warning that budget is cumulative and applies per configured session scope (not per-command enforcement unless runtime override support is implemented).
