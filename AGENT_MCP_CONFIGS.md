@@ -33,7 +33,7 @@ Minimal MCP server block:
 ```
 
 Tip:
-1. Run `airg-init` (or `airg-setup`) and copy the printed env block.
+1. Run `airg-setup` (or `airg-init`) and copy the printed env block.
 
 ## Codex
 ### GUI setup
@@ -82,7 +82,7 @@ AIRG_APPROVAL_HMAC_KEY_PATH = "/absolute/path/to/approvals.db.hmac.key"
 ```
 
 ### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-init`.
+1. Use explicit `AIRG_*` env vars from `airg-setup`.
 2. Restart the agent app fully after policy changes.
 
 ## Claude Desktop
@@ -98,10 +98,8 @@ Sample JSON (AIRG-focused, sanitized):
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "/absolute/path/to/ai-runtime-guard/venv/bin/python3",
-      "args": [
-        "/absolute/path/to/ai-runtime-guard/server.py"
-      ],
+      "command": "airg-server",
+      "args": [],
       "env": {
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
@@ -115,10 +113,9 @@ Sample JSON (AIRG-focused, sanitized):
 
 Notes:
 1. `preferences` keys in Claude config are optional and unrelated to MCP server registration.
-2. If you use package entrypoints, you can configure command as `airg-server` instead of direct `python3 server.py`.
 
 ### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-init`.
+1. Use explicit `AIRG_*` env vars from `airg-setup`.
 2. Restart Claude Desktop fully after policy changes.
 
 ## Cursor
@@ -139,10 +136,8 @@ Use a JSON MCP block similar to Claude-style MCP config (no `preferences` sectio
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "/absolute/path/to/ai-runtime-guard/venv/bin/python3",
-      "args": [
-        "/absolute/path/to/ai-runtime-guard/server.py"
-      ],
+      "command": "airg-server",
+      "args": [],
       "env": {
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
@@ -155,5 +150,5 @@ Use a JSON MCP block similar to Claude-style MCP config (no `preferences` sectio
 ```
 
 ### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-init`.
+1. Use explicit `AIRG_*` env vars from `airg-setup`.
 2. Restart Cursor fully after policy changes.

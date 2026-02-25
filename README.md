@@ -126,7 +126,7 @@ Example JSON snippet:
 ```
 
 Best practice:
-1. Run `airg-setup` or `airg-init` and copy the printed env block into your MCP client config.
+1. Run `airg-setup` and copy the printed env block into your MCP client config.
 2. Keep explicit `AIRG_*` paths in client config so launches are deterministic across restarts.
 
 ## AIRG_WORKSPACE (important)
@@ -151,7 +151,7 @@ Correct pattern:
 
 ## Deployment model FAQ
 1. Do I need to run `source scripts/setup_runtime_env.sh`?
-   - If you use packaged flow with `airg-init`, no. `airg-init` sets up secure default paths and files.
+   - If you use packaged flow with `airg-setup`/`airg-init`, no. Setup initializes secure default paths and files.
    - If you run directly from source (`python server.py`, `python ui/backend_flask.py`), yes, it is recommended.
 2. What folders are involved?
    - Install folder (`airg-install`): where the code/package lives.

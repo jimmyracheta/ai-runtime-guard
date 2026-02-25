@@ -34,7 +34,7 @@ pip install .
 ```
 2. Initialize runtime files:
 ```bash
-airg-init
+airg-setup --quickstart --yes
 ```
 3. Create a dedicated workspace:
 ```bash
@@ -65,6 +65,7 @@ airg-doctor
 Notes:
 1. You do not manually start MCP server in normal use. The AI client starts `airg-server` when MCP is configured.
 2. Web GUI is not required for default/basic setup.
+3. `airg-setup` is the recommended setup entrypoint; `airg-init` remains available as a low-level initializer.
 
 ## Advanced setup (MCP + Web GUI)
 Use this when you want:
@@ -133,4 +134,3 @@ airg-setup --quickstart --yes
 3. Confirm `activity.log` gets entries.
 4. If approval is enabled, confirm token appears and GUI approve/deny works.
 5. Confirm backup/restore dry-run path works for destructive file action.
-

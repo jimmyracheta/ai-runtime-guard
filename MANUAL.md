@@ -29,18 +29,18 @@ Default locations created by the script:
 The script also enforces restrictive permissions (`700` for directories, `600` for files) to avoid approval-store hardening warnings and reduce tamper/exfiltration risk.
 
 Packaged CLI alternative:
-1. `airg-init`
-2. Guided setup alias: `airg-setup` (or `airg init --wizard`)
+1. `airg-setup` (recommended)
+2. Guided setup alias: `airg init --wizard`
 3. `airg-server` (MCP server) and/or `airg-ui` (Flask backend for control plane)
 4. `airg-up` starts Flask backend as a sidecar and then starts MCP server (stdio) in one command.
 5. `airg-doctor` runs environment, path, permission, and UI-build diagnostics.
 6. Recommended gate: run `airg-doctor` and resolve warnings before first MCP client connection.
 
 Note:
-1. In packaged flow, `airg-init` already performs secure runtime path setup.
+1. In packaged flow, `airg-setup` already performs secure runtime path setup.
 2. `scripts/setup_runtime_env.sh` is mainly for direct source/manual runs.
-3. `airg-init` also seeds `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
-4. `airg-init` prints a ready-to-copy MCP config env block with resolved `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, and `AIRG_APPROVAL_HMAC_KEY_PATH`.
+3. `airg-setup`/`airg-init` seed `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
+4. `airg-setup`/`airg-init` print a ready-to-copy MCP config env block with resolved `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, and `AIRG_APPROVAL_HMAC_KEY_PATH`.
 5. `airg-setup` asks guided questions (workspace, runtime paths, optional additional workspaces, agent type), updates policy safely, writes agent-compatible MCP config snippets under `./out/mcp-configs`, then runs `airg-doctor`.
 
 ### AIRG_WORKSPACE model
