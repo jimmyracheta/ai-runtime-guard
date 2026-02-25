@@ -39,6 +39,7 @@ Use a virtual environment:
    - `airg-init`
    - `airg-server` (Ctrl+C after startup check)
    - `airg-ui` (Ctrl+C after startup check)
+   - `airg-up` (verify sidecar UI starts, then Ctrl+C)
 
 ## Release steps
 1. Merge `dev` into `main`.

@@ -4,6 +4,9 @@ import os
 import pathlib
 import platform
 import runpy
+import socket
+import threading
+import time
 from typing import Any
 
 
@@ -129,9 +132,42 @@ def main_ui() -> None:
     runpy.run_module("ui.backend_flask", run_name="__main__")
 
 
+def _port_open(host: str, port: int, timeout: float = 0.3) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def main_up() -> None:
+    paths = _resolve_paths()
+    _apply_runtime_env(paths)
+    _secure_permissions(paths)
+    _ensure_policy_file(paths, force=False)
+
+    host = os.environ.get("AIRG_FLASK_HOST", "127.0.0.1")
+    port = int(os.environ.get("AIRG_FLASK_PORT", "5001"))
+    if _port_open(host, port):
+        print(f"[airg] UI backend already listening on http://{host}:{port}")
+    else:
+        def _run_ui() -> None:
+            from ui.backend_flask import app
+
+            app.run(host=host, port=port, debug=False, use_reloader=False)
+
+        t = threading.Thread(target=_run_ui, name="airg-ui-sidecar", daemon=True)
+        t.start()
+        time.sleep(0.15)
+        print(f"[airg] UI sidecar started at http://{host}:{port}")
+
+    print("[airg] Starting MCP server (stdio)...")
+    runpy.run_module("server", run_name="__main__")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ai-runtime-guard CLI")
-    parser.add_argument("command", choices=["init", "server", "ui"], help="Command to run")
+    parser.add_argument("command", choices=["init", "server", "ui", "up"], help="Command to run")
     parser.add_argument("--force-policy", action="store_true", help="Used with 'init': overwrite existing policy template")
     args = parser.parse_args()
 
@@ -141,7 +177,14 @@ def main() -> None:
     if args.command == "server":
         main_server()
         return
-    main_ui()
+    if args.command == "ui":
+        main_ui()
+        return
+    main_up()
+
+
+def main_up_entrypoint() -> None:
+    main_up()
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ The script also enforces restrictive permissions (`700` for directories, `600` f
 Packaged CLI alternative:
 1. `airg-init`
 2. `airg-server` (MCP server) and/or `airg-ui` (Flask backend for control plane)
+3. `airg-up` starts Flask backend as a sidecar and then starts MCP server (stdio) in one command.
 
 ### MVP capabilities and caveats snapshot
 Capabilities:
