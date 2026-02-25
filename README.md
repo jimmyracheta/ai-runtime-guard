@@ -58,13 +58,14 @@ Recommended packaged workflow:
 10. Optional UI backend: `airg-ui` (open `http://127.0.0.1:5001`)
 
 Source/dev workflow:
-1. `cd /absolute/path/to/ai-runtime-guard`
-2. `python3 -m venv venv && source venv/bin/activate`
-3. `pip install -r requirements.txt`
-4. `source scripts/setup_runtime_env.sh`
-5. `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
-6. Start MCP server: `python server.py`
-7. Optional UI backend: `python3 ui/backend_flask.py`
+1. `git clone https://github.com/jimmyracheta/ai-runtime-guard.git`
+2. `cd ai-runtime-guard`
+3. `python3 -m venv venv && source venv/bin/activate`
+4. `pip install -r requirements.txt`
+5. `source scripts/setup_runtime_env.sh`
+6. `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
+7. Start MCP server: `python server.py`
+8. Optional UI backend: `python3 ui/backend_flask.py`
 
 `airg-init` runtime defaults:
 - Creates policy/runtime files in user-local config/state paths.
