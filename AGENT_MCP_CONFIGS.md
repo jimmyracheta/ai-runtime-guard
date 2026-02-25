@@ -1,0 +1,159 @@
+# Agent MCP Configuration (AIRG)
+
+This file tracks agent-specific MCP setup for `ai-runtime-guard`.
+
+Use this together with [INSTALL.md](/Users/liviu/Documents/ai-runtime-guard/INSTALL.md).
+
+## AIRG variables to include in MCP config
+Always set these explicitly in agent MCP config:
+1. `AIRG_WORKSPACE`
+2. `AIRG_POLICY_PATH`
+3. `AIRG_APPROVAL_DB_PATH`
+4. `AIRG_APPROVAL_HMAC_KEY_PATH`
+
+Server command:
+1. `airg-server`
+
+Minimal MCP server block:
+```json
+{
+  "mcpServers": {
+    "ai-runtime-guard": {
+      "command": "airg-server",
+      "args": [],
+      "env": {
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
+        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
+        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
+        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key"
+      }
+    }
+  }
+}
+```
+
+Tip:
+1. Run `airg-init` (or `airg-setup`) and copy the printed env block.
+
+## Codex
+### GUI setup
+In the Codex IDE extension:
+1. Open MCP settings from the gear menu.
+2. Select `Open config.toml`.
+3. Add an AIRG MCP server entry (example below).
+4. Save and restart Codex if needed.
+
+### CLI/file setup
+Codex stores MCP config in:
+1. Global: `~/.codex/config.toml`
+2. Project-scoped (trusted projects): `.codex/config.toml`
+3. Project-specific setup:
+   - Create `.codex/` in your project root.
+   - Add `.codex/config.toml`.
+   - Put your AIRG MCP config there.
+
+Add AIRG via CLI:
+```bash
+codex mcp add ai-runtime-guard \
+  --env AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
+  --env AIRG_POLICY_PATH=/absolute/path/to/policy.json \
+  --env AIRG_APPROVAL_DB_PATH=/absolute/path/to/approvals.db \
+  --env AIRG_APPROVAL_HMAC_KEY_PATH=/absolute/path/to/approvals.db.hmac.key \
+  -- airg-server
+```
+
+Useful Codex MCP commands:
+1. `codex mcp --help`
+2. `codex mcp` (manage configured servers)
+3. In TUI, run `/mcp` to view active MCP servers.
+
+Example `config.toml` entry:
+```toml
+[mcp_servers.ai-runtime-guard]
+command = "airg-server"
+args = []
+cwd = "/absolute/path/to/ai-runtime-guard"
+
+[mcp_servers.ai-runtime-guard.env]
+AIRG_WORKSPACE = "/absolute/path/to/airg-workspace"
+AIRG_POLICY_PATH = "/absolute/path/to/policy.json"
+AIRG_APPROVAL_DB_PATH = "/absolute/path/to/approvals.db"
+AIRG_APPROVAL_HMAC_KEY_PATH = "/absolute/path/to/approvals.db.hmac.key"
+```
+
+### AIRG notes
+1. Use explicit `AIRG_*` env vars from `airg-init`.
+2. Restart the agent app fully after policy changes.
+
+## Claude Desktop
+### GUI setup
+Use Claude Desktop settings to edit MCP configuration (or edit the JSON file directly).
+
+### CLI/file setup
+Claude Desktop config file location:
+1. macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Sample JSON (AIRG-focused, sanitized):
+```json
+{
+  "mcpServers": {
+    "ai-runtime-guard": {
+      "command": "/absolute/path/to/ai-runtime-guard/venv/bin/python3",
+      "args": [
+        "/absolute/path/to/ai-runtime-guard/server.py"
+      ],
+      "env": {
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
+        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
+        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
+        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key"
+      }
+    }
+  }
+}
+```
+
+Notes:
+1. `preferences` keys in Claude config are optional and unrelated to MCP server registration.
+2. If you use package entrypoints, you can configure command as `airg-server` instead of direct `python3 server.py`.
+
+### AIRG notes
+1. Use explicit `AIRG_*` env vars from `airg-init`.
+2. Restart Claude Desktop fully after policy changes.
+
+## Cursor
+### GUI setup
+1. Open `Settings`.
+2. Go to `Tools and MCP`.
+3. Choose `Add custom MCP`.
+4. Edit JSON and paste an AIRG MCP server block (example below).
+
+Project-specific setup:
+1. Create `.cursor/` in your project root.
+2. Add `.cursor/mcp.json`.
+3. Put your AIRG MCP config there.
+
+### CLI/file setup
+Use a JSON MCP block similar to Claude-style MCP config (no `preferences` section needed):
+```json
+{
+  "mcpServers": {
+    "ai-runtime-guard": {
+      "command": "/absolute/path/to/ai-runtime-guard/venv/bin/python3",
+      "args": [
+        "/absolute/path/to/ai-runtime-guard/server.py"
+      ],
+      "env": {
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
+        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
+        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
+        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key"
+      }
+    }
+  }
+}
+```
+
+### AIRG notes
+1. Use explicit `AIRG_*` env vars from `airg-init`.
+2. Restart Cursor fully after policy changes.
