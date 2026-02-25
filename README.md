@@ -45,44 +45,17 @@ Caveats:
 5. Cumulative budget behavior depends on configured thresholds; defaults may need tuning for your workflow.
 
 ## How to run
-Recommended packaged workflow:
-1. `git clone https://github.com/jimmyracheta/ai-runtime-guard.git`
-2. `cd ai-runtime-guard`
-3. `python3 -m venv venv && source venv/bin/activate`
-4. `pip install --upgrade pip && pip install .`
-5. Guided setup (recommended): `airg-setup`
-6. Alternative quick init: `airg-init`
-7. `mkdir -p ~/airg-workspace`
-8. `export AIRG_WORKSPACE=~/airg-workspace`
-9. `airg-doctor` (fix warnings before first use)
-10. Start MCP server: `airg-server`
-11. Optional UI backend: `airg-ui` (open `http://127.0.0.1:5001`)
+Use [INSTALL.md](/Users/liviu/Documents/ai-runtime-guard/INSTALL.md) for full setup.
 
-Wizard options:
-1. Alias command: `airg init --wizard`
-2. Non-interactive defaults: `airg-setup --quickstart --yes`
-3. Example advanced non-interactive:
-   - `airg-setup --yes --workspace ~/airg-workspace --agent claude_desktop --additional-workspaces /opt/project-a,/opt/project-b`
+Quick start:
+1. `python3 -m venv venv && source venv/bin/activate`
+2. `pip install --upgrade pip && pip install .`
+3. `airg-setup` (or `airg init --wizard`)
+4. `airg-doctor`
 
-Source/dev workflow:
-1. `git clone https://github.com/jimmyracheta/ai-runtime-guard.git`
-2. `cd ai-runtime-guard`
-3. `python3 -m venv venv && source venv/bin/activate`
-4. `pip install -r requirements.txt`
-5. `source scripts/setup_runtime_env.sh`
-6. `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
-7. Start MCP server: `python server.py`
-8. Optional UI backend: `python3 ui/backend_flask.py`
-
-`airg-init` runtime defaults:
-- Creates policy/runtime files in user-local config/state paths.
-- Sets `audit.backup_root` in generated `policy.json` to a user-local runtime path (state dir + `/backups`) so installs do not inherit developer machine paths.
-
-Using `uvx` (without persistent install):
-1. `uvx --from /absolute/path/to/ai-runtime-guard airg-init`
-2. `uvx --from /absolute/path/to/ai-runtime-guard airg-server`
-3. Optional sidecar bring-up: `uvx --from /absolute/path/to/ai-runtime-guard airg-up`
-4. Diagnostics: `uvx --from /absolute/path/to/ai-runtime-guard airg-doctor`
+Runtime notes:
+1. In normal use, your AI client starts `airg-server` automatically via MCP config.
+2. Web GUI (`airg-ui`) is optional unless you need GUI policy editing or approval actions.
 
 ## Local policy UI (v3)
 React + Tailwind frontend (Vite) with Flask backend (`ui/backend_flask.py`).
@@ -189,23 +162,9 @@ Correct pattern:
    - Additional allowed roots can be configured with `policy.allowed.paths_whitelist`.
 
 ## How to test
-Quick integration test workflow:
-1. Start backend UI: `airg-ui` (or `python3 ui/backend_flask.py` in source mode).
-2. Start MCP server: `airg-server` (or `python server.py`).
-3. Confirm runtime paths in UI `Policy -> Paths` are outside repo/workspace.
-4. Connect MCP server in your AI client with explicit `AIRG_*` env vars.
-5. Run prompts from `tests.md` and log outcomes to `results.md`.
-6. For approval flows, approve only through GUI/API and re-run exact command.
-7. After any policy Apply/Reset/Revert, restart MCP server and reconnect client.
+Testing guidance is in [INSTALL.md](/Users/liviu/Documents/ai-runtime-guard/INSTALL.md) under `Post-install smoke test`.
 
-Minimum MVP validation checklist:
-1. Block checks: verify severe commands/paths are denied (`rm -rf`, `dd`, sensitive files).
-2. Basic allow checks: verify normal non-severe commands execute.
-3. Approval checks (only when enabled): token issued, GUI approve/deny works, one-time retry behavior holds.
-4. Backup checks: destructive write/delete creates backup and `restore_backup` dry-run/apply works.
-5. Audit checks: entries are written with expected source tags (`ai-agent`, `human-operator`, `mcp-server`).
-
-Optional automated tests:
+Automated tests:
 1. `python3 -m unittest discover -s tests -p 'test_*.py'`
 
 ## Branch and release policy (current)
