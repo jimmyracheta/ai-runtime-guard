@@ -38,8 +38,9 @@ Caveats:
 1. `cd /Users/liviu/Documents/ai-runtime-guard`
 2. `python3 -m venv venv && source venv/bin/activate`
 3. `pip install -r requirements.txt`
-4. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
-5. Start MCP server over stdio: `python server.py`
+4. Configure secure approval-store paths (recommended): `source scripts/setup_runtime_env.sh`
+5. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
+6. Start MCP server over stdio: `python server.py`
 
 ## Local policy UI (v3)
 React + Tailwind frontend (Vite) with a Flask backend.
@@ -47,7 +48,8 @@ React + Tailwind frontend (Vite) with a Flask backend.
 Backend:
 1. `python3 -m venv venv && source venv/bin/activate`
 2. `pip install -r requirements.txt`
-3. `python3 ui/backend_flask.py`
+3. `source scripts/setup_runtime_env.sh`
+4. `python3 ui/backend_flask.py`
 
 Frontend:
 1. `cd ui_v3`
@@ -61,6 +63,12 @@ Current UI v3 scope:
 - command table with tier columns, tooltip descriptions, status badges, retry/budget metadata editors
 - advanced JSON editor (bidirectional with table state)
 - validate/apply/reload flows against Flask REST API
+
+Security path note:
+- `scripts/setup_runtime_env.sh` configures approval files outside workspace by default:
+  - macOS: `~/Library/Application Support/ai-runtime-guard/`
+  - Linux: `${XDG_STATE_HOME:-~/.local/state}/ai-runtime-guard/`
+- This avoids repeated approval-store hardening warnings and is the recommended default for public packaging.
 
 ## How to test
 Primary workflow (recommended for destructive-behavior testing):

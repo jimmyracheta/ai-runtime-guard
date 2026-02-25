@@ -8,6 +8,20 @@ This manual explains current runtime behavior as implemented today.
 - Logs all actions to `activity.log`.
 - Creates backups for destructive operations in `backups/`.
 
+### Runtime environment setup (recommended)
+Before starting MCP server and UI backend, source:
+- `source scripts/setup_runtime_env.sh`
+
+This exports:
+- `AIRG_APPROVAL_DB_PATH`
+- `AIRG_APPROVAL_HMAC_KEY_PATH`
+
+Default locations created by the script:
+- macOS: `~/Library/Application Support/ai-runtime-guard/`
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/ai-runtime-guard/`
+
+The script also enforces restrictive permissions (`700` for directories, `600` for files) to avoid approval-store hardening warnings and reduce tamper/exfiltration risk.
+
 ### MVP capabilities and caveats snapshot
 Capabilities:
 1. Default basic profile blocks severe actions and allows non-severe actions.
