@@ -7,6 +7,11 @@ Last updated: 2026-02-25
 - Operator behavior reference: `MANUAL.md`
 
 ## What was just changed
+- Re-categorized default `policy.json` to basic-protection mode:
+  - kept severe/high-impact operations in `blocked`.
+  - moved default behavior to allow for non-severe commands (cleared default `requires_confirmation` and `requires_simulation` command/path lists).
+  - disabled default cumulative budget enforcement (`requires_simulation.cumulative_budget.enabled=false`).
+  - retained advanced tier sections in policy for opt-in use by advanced users.
 - Hardened approval-store access and integrity:
   - `approvals.db` permissions are now enforced to `0600` at open/create.
   - approval-store parent directory world-access is now checked and logged as an `mcp-server` warning if too open.

@@ -13,6 +13,8 @@ Operator reference:
 - Exposes guarded tools: `server_info`, `execute_command`, `read_file`, `write_file`, `delete_file`, `list_directory`, `restore_backup`.
 - Policy-driven enforcement loaded from `policy.json` at startup.
 - Audit-first behavior with JSONL logs in `activity.log` and pre-change backups in `backups/`.
+- Default policy profile is **basic protection**: severe actions are blocked, all others are allowed.
+- Advanced tiers (`requires_confirmation`, `requires_simulation`, cumulative budgets) remain available in policy for opt-in use.
 
 ## How to run
 1. `cd /Users/liviu/Documents/ai-runtime-guard`
@@ -48,10 +50,12 @@ Primary workflow (recommended for destructive-behavior testing):
 2. Point `AIRG_WORKSPACE` to a disposable directory dedicated to test runs.
 3. Run tool-driven scenarios, especially:
    - blocked destructive commands (`rm -rf`, `dd`, sensitive paths/extensions)
-   - simulation-gated wildcard deletes (`rm *.tmp`) over/under threshold
-   - confirmation handshake (`execute_command` -> human approves in GUI/API -> re-run)
+   - allow-path behavior for non-severe commands (low-friction default)
+   - optional advanced-mode checks only if you enable them in policy:
+     - simulation-gated wildcard deletes (`rm *.tmp`) over/under threshold
+     - confirmation handshake (`execute_command` -> human approves in GUI/API -> re-run)
    - backup + recovery checks for write/delete/command-modify paths
-   - cumulative budget checks (multiple sub-threshold commands should still hit aggregate limits)
+   - optional cumulative budget checks (if enabled)
 
 Optional local unit tests in this repo:
 - `python3 -m unittest discover -s tests -p 'test_*.py'`

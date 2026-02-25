@@ -18,6 +18,10 @@ Command checks run in strict precedence:
 If a command matches multiple tiers, the highest tier wins.
 
 ## 3. Action options (basic vs advanced)
+Default profile:
+- Runtime ships in basic-protection mode by default: severe commands/paths are blocked, all other actions are allowed.
+- Advanced tiers remain in policy for opt-in hardening when desired.
+
 ### Basic options
 - `allowed`:
   - Command/path passes policy and executes immediately.
@@ -36,6 +40,7 @@ If a command matches multiple tiers, the highest tier wins.
   - Runtime returns an approval token and requires human/operator approval via GUI/API before retrying the exact command.
   - Approval is one-time for session+command and time-bounded.
   - This tier does not consume the server retry counter for blocked attempts.
+  - In default basic profile, this tier is configured but inactive until commands/paths are populated.
 
 ## 4. Command matching behavior
 - Matching is not strict full-string equality.
