@@ -71,7 +71,8 @@ Optional local unit tests in this repo:
    - approvals come from a separate trusted/operator channel (GUI/API), not MCP tool calls
    - initiating agent cannot self-approve via MCP tool surface
 
-## Remaining pre-merge checkpoint
-1. Linux validation before MVP release:
+## Post-merge validation (v1.1)
+1. Linux validation is currently untested but expected to work.
+2. Track Linux as a v1.1 validation task:
    - run the same unit suite on Linux
    - execute a reduced manual prompt set on Linux and record outcomes in `STATUS.md`

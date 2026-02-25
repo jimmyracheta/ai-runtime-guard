@@ -71,8 +71,8 @@ Last updated: 2026-02-25
 1. Branch protection + merge policy: documented in `README.md`; GitHub branch protection settings still need to be applied operationally.
 2. UTC deprecation fix: completed.
 3. Policy coverage audit and lock-down (`policy.json` only): completed.
-4. Linux validation checkpoint: pending (remaining explicit merge gate item).
-5. Merge `refactor` -> `main`: ready after Linux checkpoint.
+4. Linux validation checkpoint: moved to post-merge v1.1 validation task (untested but expected to work).
+5. Merge `refactor` -> `main`: ready from current MVP gate perspective.
 
 ## Merge freeze status
 - Current state: no active merge freeze for approval separation.
@@ -86,6 +86,9 @@ Completed checkpoints:
 3. Approval separation gate: complete (initiating agent cannot self-approve via MCP tool surface; approvals are out-of-band).
 
 Remaining checkpoint:
+1. None blocking MVP merge.
+
+## Post-merge validation (v1.1)
 1. Linux gate: pending (unit suite + reduced integration prompts executed on Linux with outcomes recorded).
 
 ## Post-MVP backlog (grouped workstreams)
