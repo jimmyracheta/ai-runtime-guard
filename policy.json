@@ -64,14 +64,23 @@
       "base64",
       "xxd",
       "nc",
-      "netcat"
+      "netcat",
+      "sqlite3",
+      "tail",
+      "grep",
+      "awk",
+      "sed",
+      "head",
+      "less"
     ],
     "paths": [
       "/etc",
       ".git",
       ".aws",
       ".config",
-      "/var/log"
+      "/var/log",
+      "activity.log",
+      "approvals.db"
     ],
     "session_whitelist_enabled": true,
     "approval_security": {

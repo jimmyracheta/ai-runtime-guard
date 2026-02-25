@@ -1,4 +1,5 @@
 import pathlib
+import sqlite3
 import tempfile
 import unittest
 
@@ -52,6 +53,20 @@ class ApprovalStoreTests(unittest.TestCase):
         # Different session should not consume grant.
         self.assertFalse(approvals.consume_approved_command("session-B", "rm tmp.txt"))
         self.assertTrue(approvals.consume_approved_command("session-A", "rm tmp.txt"))
+
+    def test_tampered_approval_grant_signature_is_rejected(self):
+        token, _ = approvals.issue_or_reuse_approval_token("rm tmp.txt", session_id="session-A")
+        ok, _reason, _rule = approvals.consume_command_approval("rm tmp.txt", token)
+        self.assertTrue(ok)
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE approved_commands SET signature = ? WHERE session_id = ? AND command_hash = ?",
+                ("tampered", "session-A", approvals._command_hash("rm tmp.txt")),
+            )
+            conn.commit()
+
+        self.assertFalse(approvals.consume_approved_command("session-A", "rm tmp.txt"))
 
 
 if __name__ == "__main__":

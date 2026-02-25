@@ -1,5 +1,13 @@
 # CHANGELOG_DEV
 
+## 2026-02-25 (approval DB hardening)
+- Added confirmation coverage in `policy.json` for `sqlite3`, `tail`, `grep`, `awk`, `sed`, `head`, and `less`.
+- Added confirmation path guards for `activity.log` and `approvals.db` to increase visibility for sensitive command-path access.
+- Hardened approval store permissions in `approvals.py`: enforce `0600` on `approvals.db` at open/create and emit `mcp-server` audit warnings when DB or parent directory permissions are too open.
+- Added durable approval-grant integrity signatures (HMAC over `{session_id, command_hash, expires_at}`) and reject+purge tampered grants at consume time.
+- Added explicit audit warnings for malformed approval-store rows (invalid `expires_at`, missing `session_id`, invalid `affected_paths` JSON/type).
+- Added regression test coverage for tampered approval signatures in `tests/test_approvals_store.py`.
+
 ## 2026-02-25 (approval surface hardening)
 - Removed `approve_command` from the MCP tool surface (`server.py`, `tools/__init__.py`) so agents cannot self-approve via in-band tool calls.
 - Updated confirmation block messaging in `execute_command` to require out-of-band human approval via control-plane GUI/API before retry.

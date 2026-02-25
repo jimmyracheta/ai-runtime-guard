@@ -1,17 +1,30 @@
 import datetime
+import hmac
 import hashlib
 import json
 import os
 import pathlib
 import re
+import secrets
 import sqlite3
+import stat
 import uuid
 
-from config import APPROVAL_TTL_SECONDS, BASE_DIR, POLICY, RESTORE_CONFIRMATION_TTL_SECONDS
+from audit import append_log_entry
+from config import (
+    APPROVAL_TTL_SECONDS,
+    BASE_DIR,
+    POLICY,
+    RESTORE_CONFIRMATION_TTL_SECONDS,
+    SESSION_ID,
+    WORKSPACE_ROOT,
+)
 
 APPROVAL_FAILURES: dict[str, list[datetime.datetime]] = {}
 PENDING_RESTORE_CONFIRMATIONS: dict[str, dict] = {}
 APPROVAL_DB_PATH = pathlib.Path(os.environ.get("AIRG_APPROVAL_DB_PATH", str(BASE_DIR / "approvals.db")))
+_APPROVAL_HMAC_CACHE: tuple[str, bytes] | None = None
+_SECURITY_WARNINGS_EMITTED: set[str] = set()
 
 
 def _normalize_command(command: str) -> str:
@@ -40,9 +53,142 @@ def _from_z(raw: str) -> datetime.datetime:
 
 def _conn() -> sqlite3.Connection:
     APPROVAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _warn_if_world_accessible(APPROVAL_DB_PATH.parent)
     conn = sqlite3.connect(APPROVAL_DB_PATH)
     conn.row_factory = sqlite3.Row
+    _enforce_db_file_permissions()
     return conn
+
+
+def _log_security_warning(event: str, reason: str, **kwargs) -> None:
+    key = json.dumps({"event": event, "reason": reason, **kwargs}, sort_keys=True, default=str)
+    if key in _SECURITY_WARNINGS_EMITTED:
+        return
+    _SECURITY_WARNINGS_EMITTED.add(key)
+    append_log_entry(
+        {
+            "timestamp": _to_z(_now_utc()),
+            "source": "mcp-server",
+            "session_id": SESSION_ID,
+            "tool": "approval_store",
+            "event": event,
+            "workspace": WORKSPACE_ROOT,
+            "policy_decision": "blocked",
+            "decision_tier": "blocked",
+            "block_reason": reason,
+            **kwargs,
+        }
+    )
+
+
+def _warn_if_world_accessible(path: pathlib.Path) -> None:
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError as exc:
+        _log_security_warning(
+            "approval_store_permission_check_failed",
+            "Failed to inspect approval-store directory permissions",
+            path=str(path),
+            error=str(exc),
+        )
+        return
+    if mode & 0o007:
+        _log_security_warning(
+            "approval_store_directory_too_open",
+            "Approval-store directory is world-accessible; tighten directory permissions",
+            path=str(path),
+            mode=oct(mode),
+        )
+
+
+def _enforce_db_file_permissions() -> None:
+    if not APPROVAL_DB_PATH.exists():
+        return
+    try:
+        os.chmod(APPROVAL_DB_PATH, 0o600)
+    except OSError as exc:
+        _log_security_warning(
+            "approval_db_permission_enforce_failed",
+            "Failed to enforce 0600 permissions on approvals.db",
+            path=str(APPROVAL_DB_PATH),
+            error=str(exc),
+        )
+        return
+
+    try:
+        mode = stat.S_IMODE(APPROVAL_DB_PATH.stat().st_mode)
+    except OSError as exc:
+        _log_security_warning(
+            "approval_db_permission_check_failed",
+            "Failed to verify approvals.db permissions",
+            path=str(APPROVAL_DB_PATH),
+            error=str(exc),
+        )
+        return
+
+    if mode != 0o600:
+        _log_security_warning(
+            "approval_db_permissions_weak",
+            "approvals.db permissions are weaker than expected after chmod",
+            path=str(APPROVAL_DB_PATH),
+            mode=oct(mode),
+        )
+
+
+def _approval_hmac_key_path() -> pathlib.Path:
+    override = os.environ.get("AIRG_APPROVAL_HMAC_KEY_PATH")
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+    return pathlib.Path(f"{APPROVAL_DB_PATH}.hmac.key")
+
+
+def _approval_signing_key() -> bytes:
+    global _APPROVAL_HMAC_CACHE
+    env_secret = os.environ.get("AIRG_APPROVAL_HMAC_SECRET", "").strip()
+    if env_secret:
+        return env_secret.encode()
+
+    key_path = _approval_hmac_key_path()
+    cache_key = str(key_path)
+    if _APPROVAL_HMAC_CACHE and _APPROVAL_HMAC_CACHE[0] == cache_key:
+        return _APPROVAL_HMAC_CACHE[1]
+
+    try:
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        _warn_if_world_accessible(key_path.parent)
+        if key_path.exists():
+            key = key_path.read_bytes().strip()
+        else:
+            key = secrets.token_hex(32).encode()
+            key_path.write_bytes(key + b"\n")
+        os.chmod(key_path, 0o600)
+        mode = stat.S_IMODE(key_path.stat().st_mode)
+        if mode != 0o600:
+            _log_security_warning(
+                "approval_hmac_key_permissions_weak",
+                "Approval HMAC key file permissions are weaker than expected",
+                path=str(key_path),
+                mode=oct(mode),
+            )
+        if not key:
+            raise ValueError("Approval HMAC key is empty")
+        _APPROVAL_HMAC_CACHE = (cache_key, key)
+        return key
+    except Exception as exc:
+        _log_security_warning(
+            "approval_hmac_key_fallback",
+            "Falling back to ephemeral in-memory approval signing key; configure AIRG_APPROVAL_HMAC_SECRET or writable key path",
+            path=str(key_path),
+            error=str(exc),
+        )
+        fallback = f"ephemeral::{os.getpid()}::{uuid.uuid4().hex}".encode()
+        _APPROVAL_HMAC_CACHE = (cache_key, fallback)
+        return fallback
+
+
+def _approval_grant_signature(session_id: str, command_hash: str, expires_at: str) -> str:
+    payload = f"{session_id}|{command_hash}|{expires_at}".encode()
+    return hmac.new(_approval_signing_key(), payload, hashlib.sha256).hexdigest()
 
 
 def init_approval_store() -> None:
@@ -70,11 +216,18 @@ def init_approval_store() -> None:
                 command_hash TEXT NOT NULL,
                 approved_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
+                signature TEXT,
                 source TEXT,
                 PRIMARY KEY(session_id, command_hash)
             )
             """
         )
+        cols = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(approved_commands)").fetchall()
+        }
+        if "signature" not in cols:
+            conn.execute("ALTER TABLE approved_commands ADD COLUMN signature TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_approved_commands_expires_at ON approved_commands(expires_at)"
         )
@@ -190,7 +343,22 @@ def consume_command_approval(
         record_approval_failure(approval_token)
         return False, "Invalid or expired approval token", "approval_token"
 
-    if _from_z(str(rec["expires_at"])) <= _now_utc():
+    try:
+        rec_expires_at = _from_z(str(rec["expires_at"]))
+    except Exception:
+        with _conn() as conn:
+            conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
+            conn.commit()
+        _log_security_warning(
+            "approval_store_malformed_row",
+            "Pending approval row has invalid expires_at and was discarded",
+            approval_token=approval_token,
+            expires_at=str(rec["expires_at"]),
+        )
+        record_approval_failure(approval_token)
+        return False, "Invalid or expired approval token", "approval_token"
+
+    if rec_expires_at <= _now_utc():
         with _conn() as conn:
             conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
             conn.commit()
@@ -202,18 +370,34 @@ def consume_command_approval(
         return False, "Approval token does not match the provided command", "approval_mismatch"
 
     session_id = str(rec["session_id"] or "")
+    if not session_id:
+        with _conn() as conn:
+            conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
+            conn.commit()
+        _log_security_warning(
+            "approval_store_malformed_row",
+            "Pending approval row missing session_id and was discarded",
+            approval_token=approval_token,
+        )
+        record_approval_failure(approval_token)
+        return False, "Invalid or expired approval token", "approval_token"
+
+    approved_at = _to_z(_now_utc())
+    grant_expires_at = _to_z(_now_utc() + datetime.timedelta(seconds=APPROVAL_TTL_SECONDS))
+    signature = _approval_grant_signature(session_id, expected_hash, grant_expires_at)
     with _conn() as conn:
         conn.execute(
             """
             INSERT OR REPLACE INTO approved_commands
-              (session_id, command_hash, approved_at, expires_at, source)
-            VALUES (?, ?, ?, ?, ?)
+              (session_id, command_hash, approved_at, expires_at, signature, source)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
                 expected_hash,
-                _to_z(_now_utc()),
-                _to_z(_now_utc() + datetime.timedelta(seconds=APPROVAL_TTL_SECONDS)),
+                approved_at,
+                grant_expires_at,
+                signature,
                 source,
             ),
         )
@@ -236,7 +420,7 @@ def consume_approved_command(session_id: str, command: str) -> bool:
     with _conn() as conn:
         row = conn.execute(
             """
-            SELECT session_id, command_hash
+            SELECT session_id, command_hash, expires_at, signature
             FROM approved_commands
             WHERE session_id = ? AND command_hash = ?
             LIMIT 1
@@ -244,6 +428,22 @@ def consume_approved_command(session_id: str, command: str) -> bool:
             (session_id, cmd_hash),
         ).fetchone()
         if not row:
+            return False
+        grant_expires_at = str(row["expires_at"] or "")
+        signature = str(row["signature"] or "")
+        expected_signature = _approval_grant_signature(session_id, cmd_hash, grant_expires_at)
+        if not signature or not hmac.compare_digest(signature, expected_signature):
+            _log_security_warning(
+                "approval_store_tamper_detected",
+                "Rejected approval grant due to signature mismatch",
+                session_id=session_id,
+                command_hash=cmd_hash,
+            )
+            conn.execute(
+                "DELETE FROM approved_commands WHERE session_id = ? AND command_hash = ?",
+                (session_id, cmd_hash),
+            )
+            conn.commit()
             return False
         conn.execute(
             "DELETE FROM approved_commands WHERE session_id = ? AND command_hash = ?",
@@ -269,8 +469,19 @@ def list_pending_approvals() -> list[dict]:
         try:
             affected = json.loads(str(row["affected_paths"]) or "[]")
             if not isinstance(affected, list):
+                _log_security_warning(
+                    "approval_store_malformed_row",
+                    "Pending approval row has non-list affected_paths; coercing to empty list",
+                    approval_token=str(row["token"]),
+                )
                 affected = []
-        except Exception:
+        except Exception as exc:
+            _log_security_warning(
+                "approval_store_malformed_row",
+                "Pending approval row has invalid affected_paths JSON; coercing to empty list",
+                approval_token=str(row["token"]),
+                error=str(exc),
+            )
             affected = []
         out.append(
             {
@@ -333,6 +544,12 @@ def consume_restore_confirmation_token(backup_path: pathlib.Path, restore_token:
 
 
 def reset_approval_state_for_tests() -> None:
+    global _APPROVAL_HMAC_CACHE
     APPROVAL_FAILURES.clear()
+    _SECURITY_WARNINGS_EMITTED.clear()
+    _APPROVAL_HMAC_CACHE = None
     if APPROVAL_DB_PATH.exists():
         APPROVAL_DB_PATH.unlink()
+    key_path = _approval_hmac_key_path()
+    if key_path.exists():
+        key_path.unlink()

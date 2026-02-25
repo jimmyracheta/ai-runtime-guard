@@ -7,6 +7,12 @@ Last updated: 2026-02-25
 - Operator behavior reference: `MANUAL.md`
 
 ## What was just changed
+- Hardened approval-store access and integrity:
+  - `approvals.db` permissions are now enforced to `0600` at open/create.
+  - approval-store parent directory world-access is now checked and logged as an `mcp-server` warning if too open.
+  - approval grants now include an HMAC signature over `{session_id, command_hash, expires_at}` and tampered rows are rejected/purged.
+- Added explicit malformed/suspicious approval-store row warnings to `activity.log` (`source: mcp-server`).
+- Expanded confirmation coverage in `policy.json` for local DB/log inspection commands (`sqlite3`, `tail`, `grep`, `awk`, `sed`, `head`, `less`) and path markers (`activity.log`, `approvals.db`).
 - Split monolithic `server.py` into focused modules:
   - `config.py`, `models.py`, `audit.py`, `policy_engine.py`, `approvals.py`, `budget.py`, `backup.py`, `executor.py`
   - `tools/command_tools.py`, `tools/file_tools.py`, `tools/restore_tools.py`
