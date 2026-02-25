@@ -81,7 +81,14 @@ def write_file(path: str, content: str) -> str:
     if os.path.exists(path):
         backup_location = backup_paths([path])
         if backup_location:
-            append_log_entry({**log_entry, "backup_location": backup_location, "event": "backup_created"})
+            append_log_entry(
+                {
+                    **log_entry,
+                    "source": "mcp-server",
+                    "backup_location": backup_location,
+                    "event": "backup_created",
+                }
+            )
 
     try:
         with open(path, "w") as f:

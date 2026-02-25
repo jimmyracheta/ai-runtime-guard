@@ -13,6 +13,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import approvals
+from audit import append_log_entry, build_operator_log_entry
 from ui import service
 
 # Shared paths used by MCP server and control-plane backend.
@@ -123,10 +124,23 @@ def approve_pending():
     command = str(payload.get("command", "")).strip()
     if not token or not command:
         return jsonify({"error": "Expected {token, command}"}), 400
+    pending = next((item for item in approvals.list_pending_approvals() if item["token"] == token), None)
     ok, reason, matched_rule = approvals.consume_command_approval(command, token, source="flask.approvals")
     if not ok:
         status = 410 if matched_rule == "approval_token" else 403
         return jsonify({"approved": False, "error": reason, "matched_rule": matched_rule}), status
+    append_log_entry(
+        build_operator_log_entry(
+            tool="approve_command",
+            event="command_approved",
+            session_id=(pending or {}).get("session_id", ""),
+            policy_decision="allowed",
+            decision_tier="allowed",
+            command=command,
+            approval_token=token,
+            approved_via="gui",
+        )
+    )
     return jsonify({"approved": True, "message": "Approval accepted"})
 
 
@@ -138,9 +152,22 @@ def deny_pending():
     token = str(payload.get("token", "")).strip()
     if not token:
         return jsonify({"error": "Expected {token}"}), 400
+    pending = next((item for item in approvals.list_pending_approvals() if item["token"] == token), None)
     ok, message = approvals.deny_command_approval(token)
     if not ok:
         return jsonify({"denied": False, "error": message}), 404
+    append_log_entry(
+        build_operator_log_entry(
+            tool="approve_command",
+            event="command_denied",
+            session_id=(pending or {}).get("session_id", ""),
+            policy_decision="blocked",
+            decision_tier="blocked",
+            command=(pending or {}).get("command", ""),
+            approval_token=token,
+            approved_via="gui",
+        )
+    )
     return jsonify({"denied": True, "message": message})
 
 

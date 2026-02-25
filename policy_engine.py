@@ -372,6 +372,7 @@ def log_policy_conflict(command: str, normalized: str, matching_tiers: list) -> 
     warning = build_log_entry(
         "policy_engine",
         warning_result,
+        source="mcp-server",
         event="policy_conflict_warning",
         command=command,
         normalized_command=normalized,

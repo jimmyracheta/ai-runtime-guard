@@ -144,6 +144,7 @@ def execute_command(command: str, retry_count: int = 0) -> str:
                 append_log_entry(
                     {
                         **log_entry,
+                        "source": "mcp-server",
                         "backup_location": backup_location,
                         "event": "backup_created",
                     }
