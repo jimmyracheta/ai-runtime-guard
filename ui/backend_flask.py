@@ -65,6 +65,8 @@ def get_policy():
             "policy": policy,
             "hash": service.policy_hash(policy),
             "valid": service.validate_policy(policy)[0],
+            "has_revert_snapshot": service.has_last_applied_snapshot(POLICY_PATH),
+            "has_default_snapshot": service.has_default_snapshot(POLICY_PATH),
             "tier_map": service.command_tier_map(policy),
             "all_commands": all_commands,
             "descriptions": service.command_descriptions(catalog),
@@ -110,6 +112,32 @@ def apply_policy():
     ok, details = service.validate_and_apply(candidate, actor=actor)
     if not ok:
         return jsonify({"error": details["errors"][0]}), 400
+    return jsonify({"applied": True, "hash": details["hash"], "diff": details["diff"]})
+
+
+@app.route("/policy/revert-last", methods=["POST", "OPTIONS"])
+def revert_last_policy():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    actor = request.headers.get("X-Actor", "flask-ui")
+    ok, details = service.revert_last_applied(actor=actor)
+    if not ok:
+        error = details.get("errors", ["Revert failed"])[0]
+        status = 404 if "not found" in error.lower() else 400
+        return jsonify({"error": error}), status
+    return jsonify({"applied": True, "hash": details["hash"], "diff": details["diff"]})
+
+
+@app.route("/policy/reset-defaults", methods=["POST", "OPTIONS"])
+def reset_policy_defaults():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    actor = request.headers.get("X-Actor", "flask-ui")
+    ok, details = service.reset_to_defaults(actor=actor)
+    if not ok:
+        error = details.get("errors", ["Reset failed"])[0]
+        status = 404 if "not found" in error.lower() else 400
+        return jsonify({"error": error}), status
     return jsonify({"applied": True, "hash": details["hash"], "diff": details["diff"]})
 
 

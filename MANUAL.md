@@ -187,7 +187,7 @@ Current recommended UI stack:
 - Frontend: Vite React + Tailwind (`ui_v3/`)
 
 Behavior:
-- Three-layer navigation: rail (`Approvals`, `Commands`, `Paths`, `Reports`, `Settings`) + command tabs + content panel.
+- Three-layer navigation: rail (`Approvals`, `Policy`, `Reports`, `Settings`) + policy tabs (`Commands`, `Paths`, `Extensions`) + content panel.
 - Approvals panel polls backend and supports `approve`/`deny` actions against shared SQLite approval store.
 - Commands panel supports search, tier radios, clickable command-info modal, applied-state badges, retry/budget metadata inputs, and advanced JSON editor.
 - Commands panel supports adding custom commands (with optional description/comment) and assigning them to one or more categories.
@@ -199,7 +199,8 @@ Behavior:
   - mapping: `Allowed` => `allowed.paths_whitelist`, `Blocked` => `blocked.paths`, `Requires Approval` => `requires_confirmation.paths`
   - editable/removable path entries
 - Status badges reflect applied policy only (post-`Apply`).
-- `Apply` performs validation, atomic write, and appends `ui/config_changes.log`.
+- Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
+- `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.
 
 Serving model:
 - `ui/backend_flask.py` now serves both REST API endpoints and built frontend assets from `ui_v3/dist` when present.

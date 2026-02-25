@@ -141,6 +141,8 @@ export default function App() {
   const [tabDefs, setTabDefs] = useState(DEFAULT_TABS)
   const [tabCommands, setTabCommands] = useState({ all: [] })
   const [allCommands, setAllCommands] = useState([])
+  const [hasRevertSnapshot, setHasRevertSnapshot] = useState(false)
+  const [hasDefaultSnapshot, setHasDefaultSnapshot] = useState(false)
   const [commandModal, setCommandModal] = useState({ open: false, command: '' })
   const [newCommand, setNewCommand] = useState('')
   const [newComment, setNewComment] = useState('')
@@ -183,6 +185,8 @@ export default function App() {
       return [{ id: 'all', label: 'All Commands' }, ...extras]
     })()
     setPolicyHash(payload.hash || '')
+    setHasRevertSnapshot(Boolean(payload.has_revert_snapshot))
+    setHasDefaultSnapshot(Boolean(payload.has_default_snapshot))
     setAppliedPolicy(payload.policy)
     setDraftPolicy(deepClone(payload.policy))
     setJsonText(JSON.stringify(payload.policy, null, 2))
@@ -284,6 +288,48 @@ export default function App() {
     if (unsaved && !window.confirm('Discard unsaved edits and reload from backend?')) return
     await fetchPolicy()
     setMessage('Reloaded latest policy')
+  }
+
+  async function onRevertLastApply() {
+    if (!hasRevertSnapshot) {
+      setMessage('No previous applied policy snapshot found')
+      return
+    }
+    if (!window.confirm('Revert policy to the previous applied version?')) return
+    const res = await fetch(`${API_BASE}/policy/revert-last`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Actor': 'control-plane-v3' }
+    })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setMessage(payload.error || 'Revert failed')
+      return
+    }
+    await fetchPolicy()
+    setMessage('Reverted to previous applied policy')
+  }
+
+  async function onResetDefaults() {
+    if (!hasDefaultSnapshot) {
+      setMessage('No default snapshot found yet. Apply once to create one.')
+      return
+    }
+    const confirmation = window.prompt('Type RESET to restore defaults')
+    if (confirmation !== 'RESET') {
+      setMessage('Reset canceled')
+      return
+    }
+    const res = await fetch(`${API_BASE}/policy/reset-defaults`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Actor': 'control-plane-v3' }
+    })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setMessage(payload.error || 'Reset failed')
+      return
+    }
+    await fetchPolicy()
+    setMessage('Policy reset to defaults')
   }
 
   function ensureUiCatalogTab(policy, id, label) {
@@ -947,6 +993,20 @@ export default function App() {
           <button onClick={onReload} className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700">Reload</button>
           <button onClick={onValidate} className="px-4 py-2 rounded-lg bg-blue-600 text-white">Validate</button>
           <button onClick={onApply} className="px-4 py-2 rounded-lg bg-brand text-white">Apply</button>
+          <button
+            onClick={onRevertLastApply}
+            disabled={!hasRevertSnapshot}
+            className="px-4 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Revert Last Apply
+          </button>
+          <button
+            onClick={onResetDefaults}
+            disabled={!hasDefaultSnapshot}
+            className="px-4 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Reset to Defaults
+          </button>
         </div>
         {activePolicyTab === 'commands' && CommandsPanel()}
         {activePolicyTab === 'paths' && PathsPanel()}
@@ -1007,28 +1067,8 @@ export default function App() {
             <h1 className="text-xl font-bold">Policy Control Plane</h1>
             <div className="text-xs text-slate-500 mt-1">Policy hash: <span className="font-mono">{policyHash || '-'}</span></div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-2">
-              <div className="flex flex-col items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">Basic</span>
-                <div className="flex items-center gap-2">
-                  {['allowed', 'blocked'].map((k) => (
-                    <span key={k} className={`px-2 py-0.5 rounded-full border text-xs ${STATUS_STYLE[k]}`}>{STATUS_LABEL[k]}</span>
-                  ))}
-                </div>
-              </div>
-              <span className="h-6 border-l border-slate-300 mx-2" />
-              <div className="flex flex-col items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wide text-slate-500">Advanced</span>
-                <div className="flex items-center gap-2">
-                  {['requires_simulation', 'requires_confirmation'].map((k) => (
-                    <span key={k} className={`px-2 py-0.5 rounded-full border text-xs ${STATUS_STYLE[k]}`}>{STATUS_LABEL[k]}</span>
-                  ))}
-                </div>
-              </div>
-              {unsaved && <span className="text-xs text-amber-700 font-medium flex items-center gap-1 ml-2"><span className="w-2 h-2 rounded-full bg-amber-500" /> Unsaved changes</span>}
-            </div>
-            <span className="text-xs italic text-slate-500">Status badges reflect applied policy (after Apply), not unsaved edits</span>
+          <div className="flex items-center gap-2">
+            {unsaved && <span className="text-xs text-amber-700 font-medium flex items-center gap-1 ml-2"><span className="w-2 h-2 rounded-full bg-amber-500" /> Unsaved changes</span>}
           </div>
         </div>
       </div>

@@ -15,6 +15,10 @@ CATALOG_PATH = pathlib.Path(__file__).resolve().parent / "catalog.json"
 CHANGE_LOG_PATH = pathlib.Path(__file__).resolve().parent / "config_changes.log"
 
 
+def _snapshot_path(path: pathlib.Path, kind: str) -> pathlib.Path:
+    return path.with_name(f"{path.name}.{kind}")
+
+
 def load_policy(path: pathlib.Path | None = None) -> dict:
     path = path or POLICY_PATH
     return json.loads(path.read_text())
@@ -259,6 +263,33 @@ def atomic_write_policy(policy: dict, path: pathlib.Path | None = None) -> None:
     temp_path.replace(path)
 
 
+def write_snapshot(policy: dict, path: pathlib.Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, prefix=f".{path.name}.", suffix=".tmp") as tmp:
+        json.dump(policy, tmp, indent=2)
+        tmp.write("\n")
+        tmp.flush()
+        pathlib.Path(tmp.name).chmod(0o600)
+        temp_path = pathlib.Path(tmp.name)
+    temp_path.replace(path)
+
+
+def has_last_applied_snapshot(path: pathlib.Path | None = None) -> bool:
+    policy_path = path or POLICY_PATH
+    return _snapshot_path(policy_path, "last-applied").exists()
+
+
+def has_default_snapshot(path: pathlib.Path | None = None) -> bool:
+    policy_path = path or POLICY_PATH
+    return _snapshot_path(policy_path, "defaults").exists()
+
+
+def _ensure_default_snapshot(path: pathlib.Path, current_policy: dict) -> None:
+    default_path = _snapshot_path(path, "defaults")
+    if not default_path.exists():
+        write_snapshot(current_policy, default_path)
+
+
 def append_change_log(actor: str, before: dict, after: dict, path: pathlib.Path | None = None) -> None:
     path = path or CHANGE_LOG_PATH
     record = {
@@ -278,6 +309,35 @@ def validate_and_apply(candidate: dict, actor: str = "local-ui") -> tuple[bool, 
     if not ok:
         return False, details
     normalized = details["normalized"]
+    _ensure_default_snapshot(POLICY_PATH, before)
+    write_snapshot(before, _snapshot_path(POLICY_PATH, "last-applied"))
     atomic_write_policy(normalized)
     append_change_log(actor=actor, before=before, after=normalized)
     return True, {"applied": True, "hash": policy_hash(normalized), "diff": summarize_diff(before, normalized)}
+
+
+def _apply_snapshot(snapshot_path: pathlib.Path, actor: str) -> tuple[bool, dict[str, Any]]:
+    if not snapshot_path.exists():
+        return False, {"errors": [f"Snapshot not found: {snapshot_path.name}"]}
+    try:
+        candidate = json.loads(snapshot_path.read_text())
+    except Exception as exc:
+        return False, {"errors": [f"Snapshot is invalid JSON: {exc}"]}
+    ok, details = validate_policy(candidate)
+    if not ok:
+        return False, {"errors": [f"Snapshot failed validation: {details['errors'][0]}"]}
+    before = load_policy()
+    normalized = details["normalized"]
+    _ensure_default_snapshot(POLICY_PATH, before)
+    write_snapshot(before, _snapshot_path(POLICY_PATH, "last-applied"))
+    atomic_write_policy(normalized)
+    append_change_log(actor=actor, before=before, after=normalized)
+    return True, {"applied": True, "hash": policy_hash(normalized), "diff": summarize_diff(before, normalized)}
+
+
+def revert_last_applied(actor: str = "local-ui") -> tuple[bool, dict[str, Any]]:
+    return _apply_snapshot(_snapshot_path(POLICY_PATH, "last-applied"), actor=actor)
+
+
+def reset_to_defaults(actor: str = "local-ui") -> tuple[bool, dict[str, Any]]:
+    return _apply_snapshot(_snapshot_path(POLICY_PATH, "defaults"), actor=actor)
