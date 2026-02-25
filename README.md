@@ -45,21 +45,26 @@ Caveats:
 5. Cumulative budget behavior depends on configured thresholds; defaults may need tuning for your workflow.
 
 ## How to run
-From source (current dev workflow):
-1. `cd /Users/liviu/Documents/ai-runtime-guard`
+Recommended packaged workflow:
+1. `git clone https://github.com/jimmyracheta/ai-runtime-guard.git`
+2. `cd ai-runtime-guard`
+3. `python3 -m venv venv && source venv/bin/activate`
+4. `pip install --upgrade pip && pip install .`
+5. `airg-init`
+6. `mkdir -p ~/airg-workspace`
+7. `export AIRG_WORKSPACE=~/airg-workspace`
+8. `airg-doctor` (fix warnings before first use)
+9. Start MCP server: `airg-server`
+10. Optional UI backend: `airg-ui` (open `http://127.0.0.1:5001`)
+
+Source/dev workflow:
+1. `cd /absolute/path/to/ai-runtime-guard`
 2. `python3 -m venv venv && source venv/bin/activate`
 3. `pip install -r requirements.txt`
-4. Configure secure approval-store paths (recommended): `source scripts/setup_runtime_env.sh`
-5. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
-6. Start MCP server over stdio: `python server.py`
-
-Packaged CLI workflow (Phase 1):
-1. `pip install .`
-2. `airg-init`
-3. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
-4. Start MCP server: `airg-server`
-5. Optional one-command bring-up (UI sidecar + MCP stdio server): `airg-up`
-6. Run health checks before first MCP use: `airg-doctor`
+4. `source scripts/setup_runtime_env.sh`
+5. `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
+6. Start MCP server: `python server.py`
+7. Optional UI backend: `python3 ui/backend_flask.py`
 
 `airg-init` runtime defaults:
 - Creates policy/runtime files in user-local config/state paths.
@@ -72,33 +77,29 @@ Using `uvx` (without persistent install):
 4. Diagnostics: `uvx --from /absolute/path/to/ai-runtime-guard airg-doctor`
 
 ## Local policy UI (v3)
-React + Tailwind frontend (Vite) with a Flask backend.
+React + Tailwind frontend (Vite) with Flask backend (`ui/backend_flask.py`).
 
-Production-style UI (recommended for packaging):
-1. `cd ui_v3`
-2. `npm install`
-3. `npm run build`
-4. Start backend that serves built UI + API:
-   - source workflow: `python3 ui/backend_flask.py`
+Serve mode (recommended):
+1. Build frontend once (or after frontend code changes):
+   - `cd ui_v3`
+   - `npm install`
+   - `npm run build`
+2. Start backend (serves API + built UI):
    - packaged workflow: `airg-ui`
-5. Open `http://127.0.0.1:5001`
+   - source workflow: `python3 ui/backend_flask.py`
+3. Open `http://127.0.0.1:5001`
 
-Backend API (dev mode):
-1. `python3 -m venv venv && source venv/bin/activate`
-2. `pip install -r requirements.txt`
-3. `source scripts/setup_runtime_env.sh`
-4. `python3 ui/backend_flask.py`
+Dev mode (frontend hot reload):
+1. Terminal A: start backend API (`airg-ui` or `python3 ui/backend_flask.py`)
+2. Terminal B:
+   - `cd ui_v3`
+   - `npm install`
+   - `npm run dev`
+3. Open `http://127.0.0.1:5173`
 
-Packaged backend:
-1. `pip install .`
-2. `airg-init`
-3. `airg-ui`
-
-Frontend:
-1. `cd ui_v3`
-2. `npm install`
-3. `npm run dev`
-4. Open `http://127.0.0.1:5173`
+Rebuild rule:
+1. Backend-only Python changes: no frontend rebuild required.
+2. Frontend changes (`ui_v3/src/*`): run `npm run build` for serve mode.
 
 Current UI v3 scope:
 - three-layer navigation rail (`Approvals`, `Policy`, `Reports`, `Settings`) + policy tabs (`Commands`, `Paths`, `Extensions`) + main panel
@@ -113,6 +114,7 @@ Current UI v3 scope:
 - extensions policy editor for blocked extension patterns (`blocked.extensions`)
 - shared policy actions across tabs: reload, validate, apply, revert last apply, reset to defaults
 - global header keeps policy hash + unsaved-changes indicator; per-tier status legend was removed to reduce cross-page noise
+- `Revert Last Apply` and `Reset to Defaults` are enabled only when backend snapshot files exist (`policy.json.last-applied`, `policy.json.defaults`)
 
 Security path note:
 - `scripts/setup_runtime_env.sh` configures approval files outside workspace by default:
@@ -179,20 +181,24 @@ Correct pattern:
    - Additional allowed roots can be configured with `policy.allowed.paths_whitelist`.
 
 ## How to test
-Primary workflow (recommended for destructive-behavior testing):
-1. Register this MCP server in your AI agent/client.
-2. Point `AIRG_WORKSPACE` to a disposable directory dedicated to test runs.
-3. Run tool-driven scenarios, especially:
-   - blocked destructive commands (`rm -rf`, `dd`, sensitive paths/extensions)
-   - allow-path behavior for non-severe commands (low-friction default)
-   - optional advanced-mode checks only if you enable them in policy:
-     - simulation-gated wildcard deletes (`rm *.tmp`) over/under threshold
-     - confirmation handshake (`execute_command` -> human approves in GUI/API -> re-run)
-   - backup + recovery checks for write/delete/command-modify paths
-   - optional cumulative budget checks (if enabled)
+Quick integration test workflow:
+1. Start backend UI: `airg-ui` (or `python3 ui/backend_flask.py` in source mode).
+2. Start MCP server: `airg-server` (or `python server.py`).
+3. Confirm runtime paths in UI `Policy -> Paths` are outside repo/workspace.
+4. Connect MCP server in your AI client with explicit `AIRG_*` env vars.
+5. Run prompts from `tests.md` and log outcomes to `results.md`.
+6. For approval flows, approve only through GUI/API and re-run exact command.
+7. After any policy Apply/Reset/Revert, restart MCP server and reconnect client.
 
-Optional local unit tests in this repo:
-- `python3 -m unittest discover -s tests -p 'test_*.py'`
+Minimum MVP validation checklist:
+1. Block checks: verify severe commands/paths are denied (`rm -rf`, `dd`, sensitive files).
+2. Basic allow checks: verify normal non-severe commands execute.
+3. Approval checks (only when enabled): token issued, GUI approve/deny works, one-time retry behavior holds.
+4. Backup checks: destructive write/delete creates backup and `restore_backup` dry-run/apply works.
+5. Audit checks: entries are written with expected source tags (`ai-agent`, `human-operator`, `mcp-server`).
+
+Optional automated tests:
+1. `python3 -m unittest discover -s tests -p 'test_*.py'`
 
 ## Branch and release policy (current)
 1. `main` is the release branch (currently tagged `v0.9`).
