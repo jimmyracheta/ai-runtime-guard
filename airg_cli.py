@@ -119,7 +119,49 @@ def _init_runtime(force_policy: bool = False) -> None:
     print(f"[airg] AIRG_POLICY_PATH={paths['policy_path']}")
     print(f"[airg] AIRG_APPROVAL_DB_PATH={paths['approval_db_path']}")
     print(f"[airg] AIRG_APPROVAL_HMAC_KEY_PATH={paths['approval_hmac_key_path']}")
+    print("[airg] Suggested MCP env block (copy into your client config):")
+    print(
+        json.dumps(
+            {
+                "command": "airg-server",
+                "args": [],
+                "env": {
+                    "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
+                    "AIRG_POLICY_PATH": str(paths["policy_path"]),
+                    "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
+                    "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
+                },
+            },
+            indent=2,
+        )
+    )
     print("[airg] Initialization complete.")
+
+
+def _warn_if_paths_inside_unsafe_roots(paths: dict[str, pathlib.Path]) -> None:
+    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(pathlib.Path(__file__).resolve().parent))).expanduser().resolve()
+    project_root = pathlib.Path(__file__).resolve().parent
+    checks = [
+        ("policy_path", paths["policy_path"]),
+        ("approval_db_path", paths["approval_db_path"]),
+        ("approval_hmac_key_path", paths["approval_hmac_key_path"]),
+    ]
+    for label, target in checks:
+        try:
+            resolved = target.resolve()
+            if resolved.is_relative_to(workspace):
+                print(
+                    f"[airg][warn] {label} is inside AIRG_WORKSPACE ({workspace}). "
+                    "Set explicit AIRG_* env vars in MCP config to keep runtime state outside workspace."
+                )
+            if resolved.is_relative_to(project_root):
+                print(
+                    f"[airg][warn] {label} is inside project directory ({project_root}). "
+                    "Set explicit AIRG_* env vars in MCP config to avoid repo-local runtime state."
+                )
+        except Exception:
+            # Non-fatal path resolution issues should not block startup.
+            pass
 
 
 def main_init() -> None:
@@ -131,6 +173,7 @@ def main_server() -> None:
     _apply_runtime_env(paths)
     _secure_permissions(paths)
     _ensure_policy_file(paths, force=False)
+    _warn_if_paths_inside_unsafe_roots(paths)
     runpy.run_module("server", run_name="__main__")
 
 
@@ -139,6 +182,7 @@ def main_ui() -> None:
     _apply_runtime_env(paths)
     _secure_permissions(paths)
     _ensure_policy_file(paths, force=False)
+    _warn_if_paths_inside_unsafe_roots(paths)
     runpy.run_module("ui.backend_flask", run_name="__main__")
 
 
@@ -155,6 +199,7 @@ def main_up() -> None:
     _apply_runtime_env(paths)
     _secure_permissions(paths)
     _ensure_policy_file(paths, force=False)
+    _warn_if_paths_inside_unsafe_roots(paths)
 
     host = os.environ.get("AIRG_FLASK_HOST", "127.0.0.1")
     port = int(os.environ.get("AIRG_FLASK_PORT", "5001"))
@@ -220,12 +265,26 @@ def main_doctor() -> None:
     # Workspace overlap check
     workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(pathlib.Path(__file__).resolve().parent))).expanduser().resolve()
     for p, label in [
+        (paths["policy_path"], "policy_path"),
         (paths["approval_db_path"], "approval_db_path"),
         (paths["approval_hmac_key_path"], "approval_hmac_key_path"),
     ]:
         try:
             if p.resolve().is_relative_to(workspace):
                 warnings.append(f"{label} is inside AIRG_WORKSPACE ({workspace}); move it outside for stronger hardening.")
+        except Exception:
+            pass
+
+    # Project directory overlap check.
+    project_root = pathlib.Path(__file__).resolve().parent
+    for p, label in [
+        (paths["policy_path"], "policy_path"),
+        (paths["approval_db_path"], "approval_db_path"),
+        (paths["approval_hmac_key_path"], "approval_hmac_key_path"),
+    ]:
+        try:
+            if p.resolve().is_relative_to(project_root):
+                warnings.append(f"{label} is inside project directory ({project_root}); move to user-local runtime paths.")
         except Exception:
             pass
 

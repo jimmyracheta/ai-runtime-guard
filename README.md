@@ -59,7 +59,7 @@ Packaged CLI workflow (Phase 1):
 3. Optional workspace override: `export AIRG_WORKSPACE=/absolute/path/to/sandbox`
 4. Start MCP server: `airg-server`
 5. Optional one-command bring-up (UI sidecar + MCP stdio server): `airg-up`
-6. Run health checks: `airg-doctor`
+6. Run health checks before first MCP use: `airg-doctor`
 
 `airg-init` runtime defaults:
 - Creates policy/runtime files in user-local config/state paths.
@@ -132,14 +132,19 @@ Example JSON snippet:
       "command": "airg-server",
       "args": [],
       "env": {
-        "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace"
+        "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
+        "AIRG_POLICY_PATH": "/Users/<you>/Library/Application Support/ai-runtime-guard/policy.json",
+        "AIRG_APPROVAL_DB_PATH": "/Users/<you>/Library/Application Support/ai-runtime-guard/approvals.db",
+        "AIRG_APPROVAL_HMAC_KEY_PATH": "/Users/<you>/Library/Application Support/ai-runtime-guard/approvals.db.hmac.key"
       }
     }
   }
 }
 ```
 
-If your client does not inherit shell environment, run `airg-init` first and pass explicit `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, and `AIRG_APPROVAL_HMAC_KEY_PATH` in client `env`.
+Best practice:
+1. Run `airg-init` and copy the printed env block into your MCP client config.
+2. Keep explicit `AIRG_*` paths in client config so launches are deterministic across restarts.
 
 ## AIRG_WORKSPACE (important)
 `AIRG_WORKSPACE` is the root directory that agent tool operations are allowed to act inside by default.
