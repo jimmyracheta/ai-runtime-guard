@@ -27,6 +27,7 @@ Use semantic versions:
 6. Validate packaged CLI behavior:
    - `python3 airg_cli.py init`
    - `python3 airg_cli.py --help`
+   - verify generated `policy.json` includes `audit.backup_root` under user-local runtime state path (not repo path)
 7. Review docs for release accuracy:
    - `README.md`, `MANUAL.md`, `STATUS.md`
 8. Verify CI workflow green:

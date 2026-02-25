@@ -37,6 +37,7 @@ Packaged CLI alternative:
 Note:
 1. In packaged flow, `airg-init` already performs secure runtime path setup.
 2. `scripts/setup_runtime_env.sh` is mainly for direct source/manual runs.
+3. `airg-init` also seeds `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
 
 ### AIRG_WORKSPACE model
 `AIRG_WORKSPACE` defines the operational sandbox root for AI agent actions.
@@ -201,6 +202,11 @@ Behavior:
 - Status badges reflect applied policy only (post-`Apply`).
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.
+- Global header no longer shows tier legend badges; it retains policy hash and unsaved-changes state.
+
+Snapshot behavior for policy actions:
+- `Reset to Defaults` is enabled when a defaults snapshot exists (`policy.json.defaults`).
+- `Revert Last Apply` is enabled after at least one apply/revert/reset operation creates a last-applied snapshot (`policy.json.last-applied`).
 
 Serving model:
 - `ui/backend_flask.py` now serves both REST API endpoints and built frontend assets from `ui_v3/dist` when present.

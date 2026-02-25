@@ -61,6 +61,10 @@ Packaged CLI workflow (Phase 1):
 5. Optional one-command bring-up (UI sidecar + MCP stdio server): `airg-up`
 6. Run health checks: `airg-doctor`
 
+`airg-init` runtime defaults:
+- Creates policy/runtime files in user-local config/state paths.
+- Sets `audit.backup_root` in generated `policy.json` to a user-local runtime path (state dir + `/backups`) so installs do not inherit developer machine paths.
+
 Using `uvx` (without persistent install):
 1. `uvx --from /absolute/path/to/ai-runtime-guard airg-init`
 2. `uvx --from /absolute/path/to/ai-runtime-guard airg-server`
@@ -108,6 +112,7 @@ Current UI v3 scope:
 - runtime path display in `Paths` page is read-only and managed by MCP config/env
 - extensions policy editor for blocked extension patterns (`blocked.extensions`)
 - shared policy actions across tabs: reload, validate, apply, revert last apply, reset to defaults
+- global header keeps policy hash + unsaved-changes indicator; per-tier status legend was removed to reduce cross-page noise
 
 Security path note:
 - `scripts/setup_runtime_env.sh` configures approval files outside workspace by default:
