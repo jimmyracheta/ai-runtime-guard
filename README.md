@@ -34,7 +34,7 @@ Why this matters:
 2. Clean install friction is significantly lower with a modern Python runtime.
 
 ## How to run
-See `INSTALL.md` for full setup.
+See `docs/INSTALL.md` for full setup.
 
 Quick start:
 1. `python3 -m venv venv && source venv/bin/activate`
@@ -58,7 +58,7 @@ airg-ui
 ```
 Open `http://127.0.0.1:5001`
 
-See [INSTALL.md](INSTALL.md) for advanced setup, dev mode, and frontend rebuild instructions.
+See [INSTALL.md](docs/INSTALL.md) for advanced setup, dev mode, and frontend rebuild instructions.
 
 ## MCP client configuration (example)
 For clients that support a stdio command-based MCP config, point to the packaged entrypoint.
@@ -118,7 +118,7 @@ Correct pattern:
    - Additional allowed roots can be configured with `policy.allowed.paths_whitelist`.
 
 ## How to test
-Testing guidance is in `INSTALL.md` under `Post-install smoke test`.
+Testing guidance is in `docs/INSTALL.md` under `Post-install smoke test`.
 
 Automated tests:
 1. `python3 -m unittest discover -s tests -p 'test_*.py'`

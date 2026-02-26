@@ -4,7 +4,7 @@ Last updated: 2026-02-25
 
 ## Current branch
 - `dev` (tracking `origin/dev`)
-- Operator behavior reference: `MANUAL.md`
+- Operator behavior reference: `docs/MANUAL.md`
 
 ## What was just changed
 - Added packaged runtime CLI for public onboarding:
@@ -124,7 +124,7 @@ Completed checkpoints:
 ### Release readiness
 7. Add CI checks for policy parity regressions and run `python3 -m unittest discover -s tests -p 'test_*.py'` as a required check.
 8. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection enforcement in GitHub.
-9. Formalize long-term two-layer test strategy maintenance for `tests/` and `tests.md` prompt suites.
+9. Formalize long-term two-layer test strategy maintenance for `tests/` and `docs/tests.md` prompt suites.
 
 ### Policy validation
 10. Validate expanded command sets against real agent workflows to tune false-positive rate (especially for `find`, `xargs`, `sed`, `perl` in simulation tier).
