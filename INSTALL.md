@@ -99,6 +99,17 @@ npm run dev
 ```
 3. Open `http://127.0.0.1:5173`
 
+### Linux-specific GUI note
+On some Linux source installs, `airg-ui`/`airg-doctor` may not auto-detect the built frontend path.
+
+If UI build detection fails, set:
+```bash
+export AIRG_UI_DIST_PATH=/absolute/path/to/ai-runtime-guard/ui_v3/dist
+airg-ui
+```
+
+If `airg-doctor` warns about missing UI build under `site-packages` but the GUI works at `http://127.0.0.1:5001`, treat it as a known path-resolution warning and continue.
+
 ## Guided setup (optional)
 Wizard:
 ```bash
@@ -131,6 +142,7 @@ Branch note:
 3. Enforced budget is currently cumulative per session scope (policy-driven), not per-command.
 4. Approval is out-of-band via GUI/API; agent cannot self-approve through MCP tool surface.
 5. Blast-radius simulation, when configured, evaluates candidate targets relative to the current workspace context. Directory-depth/path checks are anchored from `AIRG_WORKSPACE`.
+6. For Claude Code users, add client-side workspace guard instructions (see `AGENT_MCP_CONFIGS.md`); this is a client-behavior mitigation, not an AIRG enforcement boundary.
 
 ## Post-install smoke test
 1. Confirm blocked command is denied (`rm -rf ...` test target in workspace).
