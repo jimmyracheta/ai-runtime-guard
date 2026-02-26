@@ -1,10 +1,10 @@
 # STATUS
 
-Last updated: 2026-02-25
+Last updated: 2026-02-26
 
 ## Current branch
 - `dev` (tracking `origin/dev`)
-- Operator behavior reference: `MANUAL.md`
+- Operator behavior reference: `docs/MANUAL.md`
 
 ## What was just changed
 - Added packaged runtime CLI for public onboarding:
@@ -69,14 +69,16 @@ Last updated: 2026-02-25
   - Vite + React + Tailwind frontend (`ui_v3/`) with three-layer navigation and approvals panel
 - Replaced in-memory-only pending approval storage with a shared SQLite approval store in `approvals.py` (configurable path via `AIRG_APPROVAL_DB_PATH`).
 - Fixed cross-process approval retry bug: GUI-approved commands now create durable session+command grants in SQLite and MCP confirmation checks consume those grants (one-time), so retry after out-of-band approval works without reissuing a token.
+- Improved Linux/source-install UI path discovery in `airg-ui`, `airg-doctor`, and Flask backend by probing env, source-tree, and package-style locations before warning.
 
 ## Current known issues
 - MCP `approve_command` tool exposure has been removed; approvals are now out-of-band via GUI/API only.
+- AIRG policy enforcement applies only to MCP tool calls; AI clients with native shell/file tools outside MCP can bypass AIRG controls if those tools are used.
 - `execute_command` still uses `shell=True` for compatibility; this remains the largest residual command-parsing risk surface.
 - Network policy currently focuses on domain-level command checks; payload-size and protocol-depth enforcement are not yet comprehensive.
 - Backup target detection for shell commands remains heuristic (`PATH_TOKEN_RE` + existing-path checks) and can miss some shell expansion edge cases.
 - Runtime constants are still imported by multiple modules at load time (`WORKSPACE_ROOT`, `MAX_RETRIES`, `LOG_PATH`, `BACKUP_DIR`), so dynamic runtime reconfiguration remains non-centralized and requires careful patching in tests.
-- Linux validation checkpoint has not yet been executed in this workspace/session.
+- Linux validation checkpoint has been executed (Ubuntu 24.04, Python 3.12, 26/26 tests passing; see `docs/LINUX_VALIDATION.md`).
 - Cumulative budget limits are currently high enough that practical MVP prompt runs may not trigger budget blocks.
 - UI per-command retry/budget overrides are stored as policy metadata for now; runtime does not yet enforce per-command override values.
 - Legacy UI server (`ui/server.py`) remains in repo; v3 runtime path is Flask backend + `ui_v3` frontend.
@@ -92,23 +94,23 @@ Last updated: 2026-02-25
 1. Branch protection + merge policy: documented in `README.md`; GitHub branch protection settings still need to be applied operationally.
 2. UTC deprecation fix: completed.
 3. Policy coverage audit and lock-down (`policy.json` only): completed.
-4. Linux validation checkpoint: moved to post-merge v1.1 validation task (untested but expected to work).
-5. Release to `main`: completed (tagged `v0.9`).
+4. Linux validation checkpoint: completed and documented (`docs/LINUX_VALIDATION.md`).
+5. Release to `main`: completed (tagged `v1.0`).
 
 ## Merge freeze status
 - Current state: no active merge freeze for approval separation.
 - Approval separation checkpoint status: complete at MVP scope (no MCP approval tool; out-of-band approval via GUI/API).
 - Remaining hardening before broad deployment (post-MVP): strengthen caller identity/authorization for operator approval endpoints.
 
-## Release gate status (`v0.9`)
+## Release gate status (`v1.0`)
 Completed checkpoints:
 1. Unit test gate: complete (`python3 -m unittest discover -s tests -p 'test_*.py'` passes).
 2. Manual integration gate: complete (12+ prompts validated, including destructive block, confirmation, simulation, cumulative budget behavior, restore flow, and network-policy checks).
 3. Approval separation gate: complete (initiating agent cannot self-approve via MCP tool surface; approvals are out-of-band).
-4. `main` release completed and tagged as `v0.9`.
+4. `main` release completed and tagged as `v1.0`.
 
 ## Post-merge validation (v1.1)
-1. Linux gate: pending (unit suite + reduced integration prompts executed on Linux with outcomes recorded).
+1. Linux gate: completed (unit suite + integration prompts executed on Linux with outcomes recorded).
 
 ## Post-MVP backlog (grouped workstreams)
 ### Execution hardening
@@ -124,7 +126,7 @@ Completed checkpoints:
 ### Release readiness
 7. Add CI checks for policy parity regressions and run `python3 -m unittest discover -s tests -p 'test_*.py'` as a required check.
 8. Strengthen release hygiene: dependency vulnerability checks (`pip-audit`), reproducible constraints/lock workflow, and branch protection enforcement in GitHub.
-9. Formalize long-term two-layer test strategy maintenance for `tests/` and `tests.md` prompt suites.
+9. Formalize long-term two-layer test strategy maintenance for `tests/` and `docs/tests.md` prompt suites.
 
 ### Policy validation
 10. Validate expanded command sets against real agent workflows to tune false-positive rate (especially for `find`, `xargs`, `sed`, `perl` in simulation tier).

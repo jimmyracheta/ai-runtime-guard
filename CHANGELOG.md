@@ -2,7 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.0.0] - Unreleased
+## [1.1.0] - 2026-02-26
+### Added
+- Root `Dockerfile` for containerized MCP runtime startup (`airg-server`).
+- Docker usage guide (`docs/DOCKER.md`) for listing/validation workflows.
+- Linux validation report (`docs/LINUX_VALIDATION.md`) with Ubuntu 24.04 + Python 3.12 test outcomes.
+- Optional packaging metadata for bundled `ui_v3/dist` artifacts.
+
+### Changed
+- Linux/source-install UI path discovery improved across `airg-ui`, `airg-doctor`, and Flask backend (`AIRG_UI_DIST_PATH` fallback behavior now probes multiple candidate paths).
+- Installation and operator docs updated for current runtime model, known enforcement boundaries, and Linux notes.
+- Documentation consolidated under `docs/` (root kept for `README.md`, `CHANGELOG.md`, `STATUS.md`).
+
+### Fixed
+- Linux/UI friction where frontend build detection could incorrectly point at package paths during source installs.
+- Runtime artifact hygiene by expanding `.gitignore` for DB sidecars, rotated logs, and setup-generated output directories.
+
+## [1.0.0] - 2026-02-25
 ### Added
 - Guided setup wizard (`airg-setup` / `airg init --wizard`) with preflight checks, workspace/runtime path prompts, agent config generation, and automatic `airg-doctor` verification.
 - Dedicated installation guide (`INSTALL.md`) with Basic (MCP-only) and Advanced (MCP+GUI) flows.
@@ -35,4 +51,4 @@ All notable changes to this project are documented in this file.
 - Durable approval store with signature checks and health checks.
 
 ### Notes
-- Linux validation is tracked as post-merge v1.1 validation work.
+- Linux validation moved to v1.1 and completed there.

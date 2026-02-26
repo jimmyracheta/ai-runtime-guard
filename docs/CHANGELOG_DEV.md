@@ -1,5 +1,18 @@
 # CHANGELOG_DEV
 
+## 2026-02-26 (linux polish + packaging/doc hygiene)
+- Added root `Dockerfile` for direct containerized MCP runtime (`airg-server`) and documented container usage in `docs/DOCKER.md`.
+- Extended `.gitignore` for runtime sidecar artifacts (`*.db-wal`, `*.db-shm`, `*.db-journal`, `approvals.db-*`), rotated logs (`activity.log.*`), and setup output (`out/`).
+- Completed docs reorganization by keeping only `README.md`, `CHANGELOG.md`, and `STATUS.md` at repo root and moving operational docs under `docs/`.
+- Added/updated Linux validation report (`docs/LINUX_VALIDATION.md`) and reflected validation completion in status tracking.
+- Improved Linux/source-install UI discovery in runtime code:
+  - `airg-ui` now sets `AIRG_UI_DIST_PATH` automatically from discovered valid UI paths.
+  - `airg-doctor` now checks multiple candidate UI build paths before warning.
+  - Flask backend now resolves UI dist path from env, source-tree, and package-style locations.
+- Added optional package-data wiring for `ui_v3/dist` when build artifacts are present at packaging time (`pyproject.toml`, `ui_v3/__init__.py`).
+- Updated docs to clarify hard enforcement boundary: AIRG controls only MCP-routed actions; native client shell/file tools can bypass policy.
+- Added Docker listing baseline docs intended to support MCP catalog validation workflows (including Glama-style checks).
+
 ## 2026-02-25 (packaging + paths UI iteration)
 - Added Phase-1 packaging baseline via `pyproject.toml` with CLI entrypoints: `airg-init`, `airg-server`, `airg-ui`.
 - Added `airg-up` one-command sidecar startup (UI backend + MCP server) for local operator convenience.

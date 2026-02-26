@@ -41,3 +41,4 @@ include = ["tools*", "ui*"]
 
 [tool.setuptools.package-data]
 ui = ["catalog.json", "static/*"]
+ui_v3 = ["dist/**"]

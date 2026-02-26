@@ -23,6 +23,11 @@ Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or 
 - Advanced tiers available for opt-in: simulation gating, human approval workflows, cumulative budget limits
 - Local web GUI for policy editing, approval management, and audit log review
 
+## Important limitation
+1. AIRG can only enforce actions that go through its MCP tools.
+2. If an AI client exposes native shell/file tools outside MCP (for example, Claude Code Bash), those tools can bypass AIRG policy enforcement.
+3. Client-side instructions to avoid native tools are a mitigation, not a guarantee.
+
 ## Requirements
 Python:
 1. Required: Python `>=3.10` (project package metadata enforces this).
@@ -34,7 +39,7 @@ Why this matters:
 2. Clean install friction is significantly lower with a modern Python runtime.
 
 ## How to run
-See `INSTALL.md` for full setup.
+See `docs/INSTALL.md` for full setup.
 
 Quick start:
 1. `python3 -m venv venv && source venv/bin/activate`
@@ -58,7 +63,7 @@ airg-ui
 ```
 Open `http://127.0.0.1:5001`
 
-See [INSTALL.md](INSTALL.md) for advanced setup, dev mode, and frontend rebuild instructions.
+See [INSTALL.md](docs/INSTALL.md) for advanced setup, dev mode, and frontend rebuild instructions.
 
 ## MCP client configuration (example)
 For clients that support a stdio command-based MCP config, point to the packaged entrypoint.
@@ -118,13 +123,13 @@ Correct pattern:
    - Additional allowed roots can be configured with `policy.allowed.paths_whitelist`.
 
 ## How to test
-Testing guidance is in `INSTALL.md` under `Post-install smoke test`.
+Testing guidance is in `docs/INSTALL.md` under `Post-install smoke test`.
 
 Automated tests:
 1. `python3 -m unittest discover -s tests -p 'test_*.py'`
 
 ## Branch and release policy (current)
-1. `main` is the release branch (currently tagged `v0.9`).
+1. `main` is the release branch (currently tagged `v1.0`).
 2. `dev` is the active integration branch for ongoing work.
 3. Use short-lived feature branches from `dev`, then merge back into `dev`.
 4. Promote releases by merging `dev` -> `main` after gates are satisfied, then tag (`v1.0`, `v1.1`, etc.).

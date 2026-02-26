@@ -7,8 +7,13 @@ __pycache__/
 
 # Runtime log (contains command history — keep off version control)
 activity.log
+activity.log.*
 approvals.db
 approvals.db.hmac.key
+approvals.db-*
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Environment variables / secrets
 .env
@@ -34,3 +39,6 @@ ai_runtime_guard.egg-info/
 package-lock.json
 policy.json.defaults
 policy.json.last-applied
+
+# Setup/generated output artifacts
+out/

@@ -118,6 +118,44 @@ Notes:
 1. Use explicit `AIRG_*` env vars from `airg-setup`.
 2. Restart Claude Desktop fully after policy changes.
 
+## Claude Code
+### CLI/file setup
+Claude Code MCP registration is CLI-based:
+```bash
+claude mcp add ai-runtime-guard \
+  -e AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
+  -e AIRG_POLICY_PATH=/home/$USER/.config/ai-runtime-guard/policy.json \
+  -e AIRG_APPROVAL_DB_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db \
+  -e AIRG_APPROVAL_HMAC_KEY_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db.hmac.key \
+  -- airg-server
+```
+
+Useful commands:
+1. `claude mcp list`
+2. `claude mcp remove ai-runtime-guard`
+
+### Client-behavior mitigation (recommended)
+Claude Code includes a native Bash tool outside MCP. To reduce bypass risk, add workspace instructions:
+
+Path:
+1. `<workspace>/.claude/CLAUDE.md`
+
+Example:
+```markdown
+# Workspace Rules
+
+This workspace is protected by ai-runtime-guard MCP server.
+
+1. Never use Bash tool in this workspace.
+2. Never use interpreter tools to execute system commands.
+3. If ai-runtime-guard blocks an action, report block reason and stop.
+4. Use ai-runtime-guard MCP tools only for file/shell operations.
+```
+
+Note:
+1. This is a client-behavior mitigation, not a hard AIRG enforcement boundary.
+2. If Claude Code uses native Bash/file tools, those actions occur outside MCP and AIRG cannot enforce policy on them.
+
 ## Cursor
 ### GUI setup
 1. Open `Settings`.

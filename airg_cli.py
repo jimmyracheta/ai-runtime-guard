@@ -18,6 +18,31 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def _candidate_ui_dist_paths() -> list[pathlib.Path]:
+    # Search both source-tree and installed-package style locations.
+    here = pathlib.Path(__file__).resolve().parent
+    env_ui_dist = os.environ.get("AIRG_UI_DIST_PATH", "").strip()
+    candidates: list[pathlib.Path] = []
+    if env_ui_dist:
+        candidates.append(pathlib.Path(env_ui_dist).expanduser())
+    return [
+        *candidates,
+        here / "ui_v3" / "dist",
+        here / "ui" / "static",
+        pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui_v3" / "dist",
+        pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui" / "static",
+    ]
+
+
+def _resolve_ui_dist_path() -> pathlib.Path:
+    for candidate in _candidate_ui_dist_paths():
+        resolved = candidate.expanduser()
+        if (resolved / "index.html").exists():
+            return resolved.resolve()
+    # Keep first source-tree path as deterministic fallback for warnings.
+    return (pathlib.Path(__file__).resolve().parent / "ui_v3" / "dist").resolve()
+
+
 def _default_base_config_dir() -> pathlib.Path:
     if _is_macos():
         return pathlib.Path.home() / "Library" / "Application Support" / "ai-runtime-guard"
@@ -435,6 +460,7 @@ def main_ui() -> None:
     _secure_permissions(paths)
     _ensure_policy_file(paths, force=False)
     _warn_if_paths_inside_unsafe_roots(paths)
+    os.environ.setdefault("AIRG_UI_DIST_PATH", str(_resolve_ui_dist_path()))
     runpy.run_module("ui.backend_flask", run_name="__main__")
 
 
@@ -541,11 +567,14 @@ def main_doctor() -> None:
             pass
 
     # UI build check
-    ui_dist = pathlib.Path(os.environ.get("AIRG_UI_DIST_PATH", str(pathlib.Path(__file__).resolve().parent / "ui_v3" / "dist")))
+    ui_dist = _resolve_ui_dist_path()
     if (ui_dist / "index.html").exists():
         print(f"[ok] UI build detected at {ui_dist}")
     else:
-        warnings.append(f"UI build not found at {ui_dist}. Build with `cd ui_v3 && npm install && npm run build`.")
+        warnings.append(
+            "UI build not found. Build with `cd ui_v3 && npm install && npm run build`, "
+            "or set AIRG_UI_DIST_PATH to a directory containing index.html."
+        )
 
     # Flask port check
     host = os.environ.get("AIRG_FLASK_HOST", "127.0.0.1")

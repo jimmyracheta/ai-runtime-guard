@@ -180,11 +180,23 @@ Important improvement already implemented:
 - Dry run issues a `restore_token` bound to the apply step.
 
 ## 11. Network behavior
-- Network policy gate is active via `network.enforcement_mode` and `network.commands`.
-- Domain allow/block logic applies when network intent is detected.
+- `network.enforcement_mode` controls behavior:
+1. `off`: skip network policy checks.
+2. `monitor`: evaluate policy and emit warnings/diagnostics, but do not block command execution.
+3. `enforce`: evaluate policy and block when domain rules fail.
+
+- `network.commands` is intent classification, not a direct deny list:
+1. These command markers (`curl`, `wget`, `scp`, etc.) are used to decide whether network-domain policy should run.
+2. Listing a command in `network.commands` alone does not block it.
+
+- Domain rules:
+1. `blocked_domains`: explicit deny list. Matching domains are blocked in `enforce` mode.
+2. `allowed_domains`: allow list. When non-empty, domains not in this list are blocked in `enforce` mode.
+3. If both `blocked_domains` and `allowed_domains` are empty, network commands are allowed (even in `enforce` mode).
 
 Still limited:
-- Deep payload/protocol enforcement is not complete.
+1. `network.max_payload_size_kb` is currently policy metadata and not runtime-enforced.
+2. Deep payload/protocol inspection is not implemented.
 
 ## 12. Local policy UI behavior (current)
 Current recommended UI stack:
@@ -241,3 +253,4 @@ Linux validation note:
 - `shell=True` remains in command execution path.
 - Cumulative budget defaults may be too high to trigger in typical manual runs.
 - Per-command UI override fields are metadata only today.
+- AIRG enforcement only applies to MCP tool calls; native client shell/file tools (for example Claude Code Bash) can bypass AIRG controls.

@@ -20,8 +20,34 @@ from ui import service
 POLICY_PATH = pathlib.Path(os.environ.get("AIRG_POLICY_PATH", str(BASE_DIR / "policy.json")))
 APPROVAL_DB_PATH = pathlib.Path(os.environ.get("AIRG_APPROVAL_DB_PATH", str(BASE_DIR / "approvals.db")))
 CATALOG_PATH = pathlib.Path(os.environ.get("AIRG_CATALOG_PATH", str(pathlib.Path(__file__).resolve().parent / "catalog.json")))
-UI_DIST_PATH = pathlib.Path(os.environ.get("AIRG_UI_DIST_PATH", str(BASE_DIR / "ui_v3" / "dist")))
 WORKSPACE_PATH = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(BASE_DIR)))
+
+
+def _candidate_ui_dist_paths() -> list[pathlib.Path]:
+    env_ui_dist = os.environ.get("AIRG_UI_DIST_PATH", "").strip()
+    candidates: list[pathlib.Path] = []
+    if env_ui_dist:
+        candidates.append(pathlib.Path(env_ui_dist).expanduser())
+    candidates.extend(
+        [
+            BASE_DIR / "ui_v3" / "dist",
+            BASE_DIR / "ui" / "static",
+            pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui_v3" / "dist",
+            pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui" / "static",
+        ]
+    )
+    return candidates
+
+
+def _resolve_ui_dist_path() -> pathlib.Path:
+    for candidate in _candidate_ui_dist_paths():
+        resolved = candidate.expanduser()
+        if (resolved / "index.html").exists():
+            return resolved.resolve()
+    return (BASE_DIR / "ui_v3" / "dist").resolve()
+
+
+UI_DIST_PATH = _resolve_ui_dist_path()
 
 service.POLICY_PATH = POLICY_PATH
 service.CATALOG_PATH = CATALOG_PATH
