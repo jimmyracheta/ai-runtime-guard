@@ -1087,6 +1087,14 @@ export default function App() {
     const cumulative = simulation?.cumulative_budget || {}
     const limits = cumulative?.limits || {}
     const counting = cumulative?.counting || {}
+    const confirmation = draftPolicy?.requires_confirmation || {}
+    const approvalSecurity = confirmation?.approval_security || {}
+    const execution = draftPolicy?.execution || {}
+    const allowed = draftPolicy?.allowed || {}
+    const backupAccess = draftPolicy?.backup_access || {}
+    const restore = draftPolicy?.restore || {}
+    const audit = draftPolicy?.audit || {}
+    const network = draftPolicy?.network || {}
     const bytesMultiplier = {
       KB: 1024,
       MB: 1024 * 1024,
@@ -1097,6 +1105,66 @@ export default function App() {
       setDraftPolicy((prev) => {
         const next = deepClone(prev)
         next.requires_simulation = { ...(next.requires_simulation || {}), ...patch }
+        return next
+      })
+    }
+
+    const setConfirmationSecurity = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.requires_confirmation = { ...(next.requires_confirmation || {}) }
+        next.requires_confirmation.approval_security = {
+          ...(next.requires_confirmation.approval_security || {}),
+          ...patch,
+        }
+        return next
+      })
+    }
+
+    const setExecution = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.execution = { ...(next.execution || {}), ...patch }
+        return next
+      })
+    }
+
+    const setAllowed = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.allowed = { ...(next.allowed || {}), ...patch }
+        return next
+      })
+    }
+
+    const setBackupAccess = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.backup_access = { ...(next.backup_access || {}), ...patch }
+        return next
+      })
+    }
+
+    const setRestore = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.restore = { ...(next.restore || {}), ...patch }
+        return next
+      })
+    }
+
+    const setAudit = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.audit = { ...(next.audit || {}), ...patch }
+        return next
+      })
+    }
+
+    const setNetwork = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.network = { ...(next.network || {}), ...patch }
         return next
       })
     }
@@ -1142,12 +1210,102 @@ export default function App() {
     }
 
     const commandsIncluded = Array.isArray(counting.commands_included) ? counting.commands_included.join(', ') : ''
+    const allowedToolsText = Array.isArray(backupAccess.allowed_tools) ? backupAccess.allowed_tools.join(', ') : ''
+    const redactPatternsText = Array.isArray(audit.redact_patterns) ? audit.redact_patterns.join('\n') : ''
 
     return (
       <div className="space-y-3">
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
           These settings are global/session-level controls for simulation and cumulative budget, not per-command controls.
           Check the manual for exact enforcement semantics and examples.
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Confirmation Security</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="text-xs text-slate-600">
+              Max failed attempts per token
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.max_failed_attempts_per_token ?? 5}
+                onChange={(e) => setConfirmationSecurity({ max_failed_attempts_per_token: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Failed-attempt window (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.failed_attempt_window_seconds ?? 600}
+                onChange={(e) => setConfirmationSecurity({ failed_attempt_window_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Approval token TTL (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.token_ttl_seconds ?? 600}
+                onChange={(e) => setConfirmationSecurity({ token_ttl_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Execution Limits</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Max command timeout (seconds)
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={execution.max_command_timeout_seconds ?? 30}
+                onChange={(e) => setExecution({ max_command_timeout_seconds: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max output chars
+              <input
+                type="number"
+                min={1024}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={execution.max_output_chars ?? 200000}
+                onChange={(e) => setExecution({ max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Allowed Limits</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Max file size (MB)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={allowed.max_file_size_mb ?? 10}
+                onChange={(e) => setAllowed({ max_file_size_mb: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max files per operation
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={allowed.max_files_per_operation ?? 10}
+                onChange={(e) => setAllowed({ max_files_per_operation: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
@@ -1293,6 +1451,146 @@ export default function App() {
               Include noop attempts
             </label>
           </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Network Limit</div>
+          <label className="text-xs text-slate-600">
+            Max payload size (KB)
+            <input
+              type="number"
+              min={0}
+              className="mt-1 w-full md:w-80 border border-slate-300 rounded-lg px-3 py-2 text-sm"
+              value={network.max_payload_size_kb ?? 1024}
+              onChange={(e) => setNetwork({ max_payload_size_kb: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+            />
+            <div className="mt-1 text-[11px] text-amber-700">Current runtime behavior: this is policy metadata and not fully enforced yet.</div>
+          </label>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Backup & Restore</div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(backupAccess.block_agent_tools)}
+                onChange={(e) => setBackupAccess({ block_agent_tools: e.target.checked })}
+              />
+              Protect backup storage from agent tools
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(restore.require_dry_run_before_apply)}
+                onChange={(e) => setRestore({ require_dry_run_before_apply: e.target.checked })}
+              />
+              Require dry run before restore apply
+            </label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Backup allowed tools (comma-separated)
+              <input
+                type="text"
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
+                value={allowedToolsText}
+                onChange={(e) => {
+                  const values = e.target.value
+                    .split(',')
+                    .map((v) => normalizeListToken(v))
+                    .filter(Boolean)
+                  setBackupAccess({ allowed_tools: values })
+                }}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Restore confirmation TTL (seconds)
+              <input
+                type="number"
+                min={30}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={restore.confirmation_ttl_seconds ?? 300}
+                onChange={(e) => setRestore({ confirmation_ttl_seconds: Math.max(30, parseInt(e.target.value, 10) || 30) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Audit Settings</div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(audit.backup_enabled)}
+                onChange={(e) => setAudit({ backup_enabled: e.target.checked })}
+              />
+              Backup enabled
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(audit.backup_on_content_change_only)}
+                onChange={(e) => setAudit({ backup_on_content_change_only: e.target.checked })}
+              />
+              Backup on content change only
+            </label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Backup root
+              <input
+                type="text"
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
+                value={audit.backup_root ?? ''}
+                onChange={(e) => setAudit({ backup_root: e.target.value })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Log level
+              <input
+                type="text"
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={audit.log_level ?? 'verbose'}
+                onChange={(e) => setAudit({ log_level: e.target.value })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max versions per file
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={audit.max_versions_per_file ?? 5}
+                onChange={(e) => setAudit({ max_versions_per_file: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Backup retention days
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={audit.backup_retention_days ?? 30}
+                onChange={(e) => setAudit({ backup_retention_days: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
+          <label className="text-xs text-slate-600 block">
+            Redact patterns (one regex per line)
+            <textarea
+              className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono h-28"
+              value={redactPatternsText}
+              onChange={(e) => {
+                const values = e.target.value
+                  .split('\n')
+                  .map((v) => v.trim())
+                  .filter(Boolean)
+                setAudit({ redact_patterns: values })
+              }}
+            />
+          </label>
         </div>
       </div>
     )
