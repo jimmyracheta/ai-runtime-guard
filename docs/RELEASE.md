@@ -9,9 +9,9 @@ This document defines a practical release workflow for `ai-runtime-guard`.
 
 ## Versioning
 Use semantic versions:
-1. `v0.9.x` for MVP stabilization patches.
-2. `v1.0.0` for first public packaged release.
-3. `v1.x.y` for subsequent minor/patch updates.
+1. `v1.1.x` for stabilization patches on current release baseline.
+2. `v1.x.y` for subsequent minor/patch updates.
+3. `v2.0.0` for intentionally breaking runtime/policy schema changes.
 
 ## Pre-release checklist (run on `dev`)
 1. Confirm clean working tree (or intentionally staged changes only).

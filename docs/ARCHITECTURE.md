@@ -59,15 +59,24 @@ Soft block until one-time explicit approval is provided through handshake:
 - pending approvals are persisted in SQLite (`approvals.db`) so multiple processes (MCP server + Flask UI) can read/update shared approval state.
 
 ### `requires_simulation`
-For selected commands (currently `rm`, `mv`), wildcard impact is simulated before execution:
+For configured command families, wildcard impact is simulated before execution:
 - command is tokenized per shell segment
 - wildcard tokens are expanded with `glob`
 - matches are constrained to workspace/allowed roots
 - operation is blocked when affected path count exceeds `bulk_file_threshold`
 - wildcard that cannot be safely resolved is blocked and requires explicit filenames
 
+Current default profile:
+- `requires_simulation.commands` is empty (basic-protection default).
+- simulation logic becomes active when operators add command patterns to this tier.
+
 ### `allowed`
 If no higher tier matched, the command/path is allowed, still logged, and then executed/read/written/deleted/listed subject to path boundary and size/depth limits for file tools.
+
+Allowed-tier limits currently enforced in runtime:
+- `allowed.max_file_size_mb` for `read_file`
+- `allowed.max_files_per_operation` for default-allowed multi-target `execute_command` flows (resolved path targets)
+- `allowed.max_directory_depth` for `list_directory`
 
 ## Retry logic
 Retry enforcement is server-side, independent of any client-provided `retry_count`.
@@ -108,7 +117,7 @@ Canonical builder: `build_log_entry(tool, PolicyResult, **kwargs)`.
 
 Base fields:
 - `timestamp` (UTC ISO8601 with `Z`)
-- `source` (`ai-agent`)
+- `source` (typically `ai-agent`, with `mcp-server` for internal side-effects/warnings and `human-operator` for GUI/API approvals)
 - `session_id` (UUID4 generated at process start)
 - `tool`
 - `workspace`
@@ -148,24 +157,17 @@ Backup behavior:
 
 ## Trust boundaries and notable gaps
 Observed current gaps/risk areas:
-- network policy is enforced at command gate level (domain intent + domain allow/block), but deep payload/protocol controls remain limited.
+- network policy is enforced at command gate level (domain intent + domain allow/block + optional unknown-domain default-deny), but redirect/final-destination inspection remains limited.
 - command execution uses `shell=True`; mitigations exist but parser/shell complexity remains a core risk surface.
 - backup path extraction for command execution relies on token regex + existence checks and can miss some shell-expanded path forms.
 
-## MVP command coverage lock-down
-Policy-only lock-down was expanded to cover common agent command families without adding new runtime features:
-- Version control:
-  - `requires_confirmation`: `git clone`, `git fetch`, `git push`, `git reset --hard`, `git clean -fd`
-- Email/notification:
-  - `requires_confirmation`: `mail`, `mailx`, `sendmail`
-- Package management:
-  - `requires_confirmation`: `pip install`, `pip3 install`, `npm install`, `brew install`, `apt install`, `yum install`, `dnf install`
-- Process management/persistence:
-  - `requires_confirmation`: `kill`, `pkill`, `nohup`, `crontab`, `launchctl`, `systemctl`
-- Data exfiltration primitives:
-  - `requires_confirmation`: `base64`, `xxd`, `nc`, `netcat`, `curl`, `wget`, `scp`, `rsync`
-- Privilege escalation:
-  - `blocked`: `sudo`, `su`, `doas`
+## Policy profile baseline
+Current shipping policy baseline is basic protection:
+- severe destructive/system commands are blocked by default
+- `requires_confirmation.commands` and `requires_simulation.commands` are empty by default
+- advanced tiers are opt-in via policy/UI configuration
+
+This keeps default operation low-friction for accidental-safety use cases while preserving stricter controls for advanced deployments.
 
 ## Policy UI metadata
 The UI can store per-command editor metadata in:
@@ -174,4 +176,4 @@ The UI can store per-command editor metadata in:
 
 Current behavior:
 - metadata is persisted by UI apply flow and included in audit diffs
-- runtime enforcement is unchanged for MVP; these fields are planning/config scaffolding for later per-command enforcement work
+- runtime enforcement is unchanged in current v1.1 baseline; these fields are planning/config scaffolding for later per-command enforcement work

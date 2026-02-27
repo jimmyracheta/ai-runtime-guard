@@ -86,7 +86,7 @@ DEFAULT_TEST_POLICY = {
         "commands": [],
         "allowed_domains": [],
         "blocked_domains": [],
-        "max_payload_size_kb": 1024,
+        "block_unknown_domains": False,
     },
     "execution": {"max_command_timeout_seconds": 30, "max_output_chars": 200000},
     "backup_access": {"block_agent_tools": True, "allowed_tools": ["restore_backup"]},

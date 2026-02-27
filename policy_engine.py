@@ -121,6 +121,7 @@ def truncate_output(text: str, max_chars: int) -> str:
 def network_policy_check(command: str) -> tuple[bool, str | None]:
     network = POLICY.get("network", {})
     mode = str(network.get("enforcement_mode", "off")).lower()
+    block_unknown = bool(network.get("block_unknown_domains", False))
     if mode == "off":
         return True, None
 
@@ -157,10 +158,10 @@ def network_policy_check(command: str) -> tuple[bool, str | None]:
                 return True, reason
             return False, reason
 
-    if allowed:
+    if block_unknown:
         for domain in domains:
             if not _domain_matches(domain, allowed):
-                reason = f"Network domain '{domain}' is not in allowed_domains policy"
+                reason = f"Network domain '{domain}' is not in allowed_domains policy (block_unknown_domains=true)"
                 if mode == "monitor":
                     return True, reason
                 return False, reason

@@ -29,6 +29,7 @@
   },
 
   "requires_confirmation": {
+    "_comment": "session_whitelist_enabled is a legacy compatibility toggle; keep true for the current one-time approval grant flow.",
     "commands": [],
     "paths": [],
     "session_whitelist_enabled": true,
@@ -63,11 +64,13 @@
         "reset_on_server_restart": true
       },
       "on_exceed": {
+        "_comment": "Current runtime behavior blocks on budget exceed; decision_tier is kept for forward-compatibility metadata.",
         "decision_tier": "blocked",
         "matched_rule": "requires_simulation.cumulative_budget_exceeded",
         "message": "Cumulative blast-radius budget exceeded for current scope."
       },
       "overrides": {
+        "_comment": "Budget override flow is currently disabled in runtime logic; keep for future redesign.",
         "enabled": true,
         "require_confirmation_tool": "out_of_band_operator_approval",
         "token_ttl_seconds": 300,
@@ -76,6 +79,7 @@
         "allowed_roles": ["human-operator"]
       },
       "audit": {
+        "_comment": "Budget audit visibility metadata; runtime currently emits a fixed budget field set.",
         "log_budget_state": true,
         "fields": [
           "budget_scope",
@@ -93,11 +97,12 @@
     "paths_whitelist": [],
     "max_files_per_operation": 10,
     "max_file_size_mb": 10,
-    "max_directory_depth": 5
+    "_comment": "max_directory_depth is optional hardening for tight project-folder access control; keep high for normal workflows.",
+    "max_directory_depth": 100
   },
 
   "network": {
-    "_comment": "Network policy for command execution. enforcement_mode supports: off, monitor, enforce",
+    "_comment": "Network policy for command execution. enforcement_mode supports: off, monitor, enforce; block_unknown_domains controls default-deny behavior for domains not in either list.",
     "enforcement_mode": "enforce",
     "commands": [
       "curl",
@@ -113,7 +118,7 @@
     ],
     "allowed_domains": [],
     "blocked_domains": [],
-    "max_payload_size_kb": 1024
+    "block_unknown_domains": false
   },
 
   "execution": {
@@ -134,7 +139,7 @@
   },
 
   "audit": {
-    "_comment": "Audit and backup settings — backup_enabled is read by the server at startup",
+    "_comment": "Audit and backup settings — backup_enabled is read at startup; log_level is retained for future runtime level support.",
     "backup_enabled": true,
     "backup_on_content_change_only": true,
     "max_versions_per_file": 5,

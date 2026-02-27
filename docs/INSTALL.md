@@ -71,6 +71,7 @@ Notes:
 Use this when you want:
 1. Easier policy edits (instead of editing `policy.json` manually).
 2. Human approval workflow when `requires_confirmation` is enabled.
+3. Policy pages for commands, paths, extensions, network controls, and global advanced simulation/budget settings.
 
 ### Serve mode (recommended)
 1. Build UI:
@@ -144,6 +145,8 @@ Branch note:
 5. Blast-radius simulation, when configured, evaluates candidate targets relative to the current workspace context. Directory-depth/path checks are anchored from `AIRG_WORKSPACE`.
 6. For Claude Code users, add client-side workspace guard instructions (see `AGENT_MCP_CONFIGS.md`); this is a client-behavior mitigation, not an AIRG enforcement boundary.
 7. AIRG only enforces operations that flow through MCP tools. If the client has native shell/file tools outside MCP, those operations can bypass AIRG policy.
+8. Product scope is accidental-safety first: block severe destructive actions, keep actions inside known workspace boundaries, gate mass/wildcard operations, back up destructive/overwrite targets automatically, and keep full audit logs.
+9. Budget reset behavior is event-driven: counters are checked/reset when budgeted operations run (no background reset timer). With idle reset enabled, slow-drip patterns beyond `idle_reset_seconds` can avoid cumulative growth; budget controls are optimized for accidental burst-risk reduction during normal sessions.
 
 ## Post-install smoke test
 1. Confirm blocked command is denied (`rm -rf ...` test target in workspace).
