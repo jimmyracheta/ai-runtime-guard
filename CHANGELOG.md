@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.1.1] - 2026-02-27
+### Changed
+- Network policy model clarified and hardened:
+  - added `network.block_unknown_domains` to support optional default-deny for unknown domains.
+  - blocklist precedence is explicit when a domain appears in both allowlist and blocklist.
+  - runtime/domain behavior and limitations are now surfaced directly in the Network GUI.
+- Removed non-enforced `network.max_payload_size_kb` from active policy/schema defaults to reduce operator confusion.
+- Advanced Policy UI refinements:
+  - section order and naming aligned to current runtime semantics.
+  - backup-related audit controls merged into Backup & Restore.
+  - removed fixed single-option controls (cumulative budget scope/counting mode) from GUI.
+- Enforced `allowed.max_files_per_operation` in runtime for default-allowed multi-target command flows.
+
+### Docs
+- Updated architecture/manual/status/release-checklist docs to match current v1.1 baseline behavior and release flow.
+- Release checklist now includes package build, UI build, and packaged CLI smoke checks.
+
 ## [1.1.0] - 2026-02-26
 ### Added
 - Root `Dockerfile` for containerized MCP runtime startup (`airg-server`).

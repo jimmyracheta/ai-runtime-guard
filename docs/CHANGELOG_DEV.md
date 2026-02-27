@@ -1,5 +1,80 @@
 # CHANGELOG_DEV
 
+## 2026-02-27 (network policy precedence + default-deny toggle)
+- Updated network enforcement logic to support explicit unknown-domain policy:
+  - added `network.block_unknown_domains` (`false` by default)
+  - when `false`, domains not in either list are allowed
+  - when `true`, domains not in `allowed_domains` are blocked (default-deny)
+- Kept list overlap precedence explicit: if a domain appears in both allowlist and blocklist, blocklist wins.
+- Preserved enforcement-mode gating:
+  - `off`: no blocking
+  - `monitor`: diagnostics only
+  - `enforce`: hard blocking
+- Added GUI control on Network page (shown in `enforce` mode) for `block_unknown_domains`.
+- Updated Network panel guidance text to match runtime precedence/behavior.
+- Updated policy/docs/templates:
+  - `policy.json` includes `network.block_unknown_domains`
+  - `config.py` validates/normalizes the new boolean key
+  - `airg_cli.py` default policy template includes the new key
+  - test policy fixtures updated accordingly
+  - `docs/MANUAL.md` network section now documents precedence, subdomain matching, and redirect-inspection limits.
+- Removed `network.max_payload_size_kb` from active policy/schema defaults (`policy.json`, `config.py`, template/test fixtures) since payload-size enforcement is not implemented in runtime.
+- Added a Network-page info panel in GUI with runtime domain-matching behavior notes (subdomains, redirects, short links, referral params).
+
+## 2026-02-27 (allowed cap enforcement + advanced reset controls)
+- Implemented runtime enforcement for `allowed.max_files_per_operation` in `execute_command` for default-allowed multi-target operations (resolved workspace/whitelist paths).
+- Preserved tier separation intent:
+  - simulation-tier wildcard handling remains governed by `requires_simulation` rules
+  - confirmation-tier behavior remains approval-token based
+  - allowed-tier safety caps are evaluated independently for non-simulated default-allowed flows.
+- Added Advanced Policy UI controls for cumulative-budget reset:
+  - `requires_simulation.cumulative_budget.reset.window_seconds`
+  - `requires_simulation.cumulative_budget.reset.idle_reset_seconds`
+  - plus helper text explaining age-out behavior for budget accounting.
+- Removed non-actionable Advanced Policy controls:
+  - removed `audit.log_level` from GUI (metadata-only today)
+  - removed payload-size control from Advanced Policy (payload enforcement intentionally deferred; network remains domain-enforcement focused).
+- Added policy comments clarifying metadata-only behavior:
+  - `requires_simulation.cumulative_budget.audit.log_budget_state` / `audit.fields` are visibility metadata in current runtime.
+  - `audit.log_level` is retained for future runtime log-level support.
+- Updated `docs/MANUAL.md` to reflect:
+  - enforced status of `allowed.max_files_per_operation`
+  - reset controls now exposed in Advanced Policy
+  - payload-size remains metadata (not enforced).
+- Validation:
+  - `python3 -m py_compile tools/command_tools.py`
+  - `npm run build` in `ui_v3` passed.
+
+## 2026-02-27 (policy UI parity pass: network + advanced settings split)
+- Extended Policy tabs with `Network` and `Advanced Policy` pages.
+- Commands page now focuses on tier selection only (basic/advanced radios) and removed per-command retry/budget fields to avoid implying unsupported runtime behavior.
+- Added Commands-page guidance to configure global simulation/budget controls on `Advanced Policy`.
+- Added Network page controls for:
+  - `network.enforcement_mode` (`off`, `monitor`, `enforce`)
+  - `network.commands` list management
+  - domain whitelist + blocklist management with precedence guidance text.
+- Added Advanced Policy page controls for global/session simulation and cumulative budget settings:
+  - `requires_simulation.max_retries`, `bulk_file_threshold`
+  - cumulative budget `enabled`, `scope`, `limits`
+  - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`).
+- Updated docs (`docs/MANUAL.md`, `docs/INSTALL.md`) to reflect the new configuration layout and semantics.
+- Verified frontend compiles successfully with `npm run build` in `ui_v3`.
+
+## 2026-02-27 (v1.1 release flow + scope clarification)
+- Updated release messaging/docs for `v1.1` readiness:
+  - added `v1.1` section in `CHANGELOG.md`
+  - aligned release references to `v1.0`/`v1.1` where needed
+  - merged `dev` into `main` locally as part of release prep and tagged `v1.1`
+- Added reusable release runbook: `docs/RELEASE_CHECKLIST.md` (prep, PR merge, tagging, verification, retag recovery).
+- Added containerization artifacts/docs baseline:
+  - root `Dockerfile`
+  - `docs/DOCKER.md` with build/run/MCP Docker config examples
+- Expanded `.gitignore` to exclude runtime/generated artifacts (`activity.log.*`, sqlite sidecars, `out/`) and local planning scratch (`containerization.md`).
+- Clarified product scope across docs as accidental-safety-first (not full malicious-actor containment):
+  - AIRG enforces MCP-routed actions only
+  - native client shell/file tools outside MCP are out-of-scope for enforcement
+  - core controls now explicitly include automatic backups before destructive/overwrite actions and comprehensive audit logging.
+
 ## 2026-02-26 (linux polish + packaging/doc hygiene)
 - Added root `Dockerfile` for direct containerized MCP runtime (`airg-server`) and documented container usage in `docs/DOCKER.md`.
 - Extended `.gitignore` for runtime sidecar artifacts (`*.db-wal`, `*.db-shm`, `*.db-journal`, `approvals.db-*`), rotated logs (`activity.log.*`), and setup output (`out/`).

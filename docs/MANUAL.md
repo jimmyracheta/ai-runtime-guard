@@ -14,6 +14,18 @@ Python:
 - Logs all actions to `activity.log`.
 - Creates backups for destructive operations in `backups/`.
 
+### Product scope (intentional)
+1. AIRG is designed to prevent accidental damage (hallucinated deletes, wrong-path writes, broad wildcard actions, accidental secret access).
+2. AIRG is not a full malicious-actor containment boundary.
+3. Core controls:
+   - block severe destructive/exfiltration actions by policy
+   - enforce workspace/path boundaries
+   - gate mass/wildcard actions through simulation/budget controls
+   - optionally require operator approval for selected risky commands
+   - automatically create backups before destructive/overwrite operations
+   - comprehensively audit allowed/blocked actions and operator decisions
+4. Enforcement boundary: AIRG controls MCP tool calls only. Native client tools outside MCP are out of scope for AIRG enforcement.
+
 ### Runtime environment setup (recommended)
 Before starting MCP server and UI backend, source:
 - `source scripts/setup_runtime_env.sh`
@@ -58,7 +70,7 @@ Operational guidance:
 4. Do not use the install folder as the default destructive-test workspace.
 5. If you need multiple workspaces, add explicit extra roots under `policy.allowed.paths_whitelist`.
 
-### MVP capabilities and caveats snapshot
+### Current capabilities and caveats snapshot
 Capabilities:
 1. Default basic profile blocks severe actions and allows non-severe actions.
 2. Advanced tiers (`requires_simulation`, `requires_confirmation`) are policy-available and per-command configurable.
@@ -161,6 +173,18 @@ Not currently enforced:
 - Per-command budget overrides from UI metadata.
 - Budget override tied to confirmation approvals is temporarily disabled during durable approval migration (pending explicit redesign).
 
+Reset behavior details (current implementation):
+- Budget state is evaluated/reset on budget-checked operations (no background timer loop).
+- `reset.idle_reset_seconds` performs a full budget-state reset after inactivity beyond the threshold.
+- `reset.window_seconds` prunes path-timestamp history for unique-path accounting (sliding-window effect).
+- `reset.mode` is currently metadata-level (no distinct mode-specific runtime branches yet).
+- `reset.reset_on_server_restart` is effectively redundant while budget state is in-memory, because process restart resets counters.
+
+Practical implication:
+- Current settings are strong for burst/mass operations in normal coding sessions.
+- Slow-drip patterns spaced beyond `idle_reset_seconds` can avoid meaningful cumulative growth (for example, one operation every 901 seconds with `idle_reset_seconds=900`).
+- This is acceptable for accidental-safety-first scope, but should not be treated as malicious-intent containment.
+
 ## 9. UI retry/budget fields: what they mean today
 The local policy UI writes optional per-command metadata:
 - `policy.ui_overrides.commands.<command>.retry_override`
@@ -171,6 +195,13 @@ Current status:
 - Visible in UI status tags.
 - Not enforced by runtime yet.
 
+## 9.1 Allowed limits semantics
+- `allowed.max_file_size_mb` is enforced per file, not cumulatively across all files in one operation.
+- `allowed.max_files_per_operation` is enforced for default-allowed multi-target operations (safety cap).
+- `allowed.max_directory_depth` is measured relative to the deepest matching allowed root (workspace root or a whitelisted root), not from filesystem `/`.
+  - Example: if allowed root is `/home/user/airg-workspace` and max depth is `5`, then `/home/user/airg-workspace/a/b/c/d/e` is allowed depth, while adding one more segment exceeds it.
+  - This is why the default stays high for normal workflows and is mainly for tight-access deployments.
+
 ## 10. Backup and restore behavior
 - Backup creation occurs before destructive/overwrite actions.
 - Backups are timestamped directories with `manifest.json`.
@@ -178,6 +209,22 @@ Current status:
 
 Important improvement already implemented:
 - Dry run issues a `restore_token` bound to the apply step.
+
+Restore confirmation token behavior:
+1. `restore.require_dry_run_before_apply=true` means apply requires a valid token from a prior dry-run.
+2. Token is time-bounded by `restore.confirmation_ttl_seconds`.
+3. If apply is attempted after TTL expiry, restore is rejected and a new dry-run is required.
+4. This is an operation-safety gate; it is not a human-approval workflow by itself.
+
+Backup retention/pruning behavior:
+1. `audit.backup_on_content_change_only=true` deduplicates backups by content hash (sha256) and skips redundant snapshots.
+2. Version/day pruning is event-driven during backup operations (not a background scheduler).
+3. `audit.max_versions_per_file` and `audit.backup_retention_days` govern cleanup.
+4. Pruning does not currently emit a dedicated prune event for every removed backup artifact.
+
+Audit logging detail:
+1. `audit.redact_patterns` applies to log output redaction, not backup file payloads.
+2. `audit.log_level` is currently configuration metadata with limited runtime differentiation.
 
 ## 11. Network behavior
 - `network.enforcement_mode` controls behavior:
@@ -191,12 +238,15 @@ Important improvement already implemented:
 
 - Domain rules:
 1. `blocked_domains`: explicit deny list. Matching domains are blocked in `enforce` mode.
-2. `allowed_domains`: allow list. When non-empty, domains not in this list are blocked in `enforce` mode.
-3. If both `blocked_domains` and `allowed_domains` are empty, network commands are allowed (even in `enforce` mode).
+2. `allowed_domains`: explicit allow list. Matching domains are allowed when not blocked.
+3. `block_unknown_domains`:
+   - `false` (default): domains not in either list are allowed.
+   - `true`: domains not in `allowed_domains` are blocked (default-deny behavior).
+4. If a domain appears in both `allowed_domains` and `blocked_domains`, blocklist wins.
+5. Subdomains are matched (`example.com` also matches `api.example.com`).
 
 Still limited:
-1. `network.max_payload_size_kb` is currently policy metadata and not runtime-enforced.
-2. Deep payload/protocol inspection is not implemented.
+1. Runtime evaluates domains parsed from command tokens/URLs; redirect chains and out-of-band destination changes are not deeply inspected.
 
 ## 12. Local policy UI behavior (current)
 Current recommended UI stack:
@@ -204,17 +254,28 @@ Current recommended UI stack:
 - Frontend: Vite React + Tailwind (`ui_v3/`)
 
 Behavior:
-- Three-layer navigation: rail (`Approvals`, `Policy`, `Reports`, `Settings`) + policy tabs (`Commands`, `Paths`, `Extensions`) + content panel.
+- Three-layer navigation: rail (`Approvals`, `Policy`, `Reports`, `Settings`) + policy tabs (`Commands`, `Paths`, `Extensions`, `Network`, `Advanced Policy`) + content panel.
 - Approvals panel polls backend and supports `approve`/`deny` actions against shared SQLite approval store.
-- Commands panel supports search, tier radios, clickable command-info modal, applied-state badges, retry/budget metadata inputs, and advanced JSON editor.
+- Commands panel supports search, tier radios, clickable command-info modal, applied-state badges, and advanced JSON editor.
 - Commands panel supports adding custom commands (with optional description/comment) and assigning them to one or more categories.
 - Commands panel supports adding custom categories.
+- Commands panel advanced tier visibility toggle controls only command tier radios (`Simulation`, `Requires Approval`); global retry/budget controls are configured on `Advanced Policy`.
 - Paths panel is separate from Commands and includes:
   - read-only runtime path display (workspace/policy/approval paths)
   - instructions to update MCP config/env and restart for runtime path changes
   - policy-managed path rules with absolute-path validation
   - mapping: `Allowed` => `allowed.paths_whitelist`, `Blocked` => `blocked.paths`, `Requires Approval` => `requires_confirmation.paths`
   - editable/removable path entries
+- Network panel includes:
+  - `network.enforcement_mode` control (`off` / `monitor` / `enforce`)
+  - editable `network.commands` list (used to trigger network policy evaluation)
+  - editable domain whitelist/blocklist with precedence guidance
+- Advanced Policy panel includes global simulation/budget controls:
+  - `requires_simulation.max_retries` and `bulk_file_threshold`
+  - cumulative budget enable/scope/limits
+  - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`)
+  - reset controls (`reset.window_seconds`, `reset.idle_reset_seconds`)
+  - note: `cumulative_budget.audit.*` is still not exposed in GUI controls
 - Status badges reflect applied policy only (post-`Apply`).
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.
@@ -245,8 +306,7 @@ Before merge to `main`:
 3. Approval separation gate must pass (agent cannot approve via MCP tool surface).
 
 Linux validation note:
-- Linux is currently untested but expected to work.
-- Linux validation is tracked as a post-merge v1.1 validation task.
+- Linux validation has been completed and documented (`docs/LINUX_VALIDATION.md`).
 
 ## 15. Known high-priority limitations
 - Operator endpoint authentication/authorization remains local-trust oriented and should be hardened before broad deployment.

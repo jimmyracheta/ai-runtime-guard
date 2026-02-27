@@ -128,16 +128,18 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     _ensure_list(allowed, "paths_whitelist")
     allowed.setdefault("max_files_per_operation", 10)
     allowed.setdefault("max_file_size_mb", 10)
-    allowed.setdefault("max_directory_depth", 5)
+    allowed.setdefault("max_directory_depth", 100)
 
     network = _ensure_dict("network")
     network.setdefault("enforcement_mode", "off")
     _ensure_list(network, "commands")
     _ensure_list(network, "allowed_domains")
     _ensure_list(network, "blocked_domains")
-    network.setdefault("max_payload_size_kb", 1024)
+    network.setdefault("block_unknown_domains", False)
     if network["enforcement_mode"] not in {"off", "monitor", "enforce"}:
         raise ValueError("network.enforcement_mode must be one of: off, monitor, enforce")
+    if not isinstance(network["block_unknown_domains"], bool):
+        raise ValueError("network.block_unknown_domains must be boolean")
 
     execution = _ensure_dict("execution")
     execution.setdefault("max_command_timeout_seconds", 30)

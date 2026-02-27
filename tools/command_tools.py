@@ -1,3 +1,4 @@
+import pathlib
 import subprocess
 
 from approvals import issue_or_reuse_approval_token
@@ -18,6 +19,7 @@ from policy_engine import (
     register_retry,
     simulate_blast_radius,
     truncate_output,
+    is_within_workspace,
 )
 
 
@@ -68,25 +70,59 @@ def execute_command(command: str, retry_count: int = 0) -> str:
                 simulation_diagnostic = check_simulation_tier(command, simulation=simulation)
 
     affected_for_budget: list[str] = []
+    affected_for_limits: list[str] = []
     if result.allowed:
         if simulation and simulation["affected"]:
             affected_for_budget = simulation["affected"]
+            affected_for_limits = simulation["affected"]
         else:
             affected_for_budget = extract_paths(command)
+            affected_for_limits = affected_for_budget
 
-        budget_allowed, budget_reason, budget_rule, budget_fields = check_and_record_cumulative_budget(
-            tool="execute_command",
-            command=command,
-            affected_paths=affected_for_budget,
-            operation_count=1,
-        )
-        if not budget_allowed:
-            result = PolicyResult(
-                allowed=False,
-                reason=budget_reason or "Cumulative blast-radius budget exceeded for current scope.",
-                decision_tier="blocked",
-                matched_rule=budget_rule or "requires_simulation.cumulative_budget_exceeded",
+        # Allowed-tier safety cap for default-allowed multi-target operations.
+        # Keep simulation-specific wildcard logic governed by simulation thresholds.
+        is_simulation_wildcard_flow = bool(simulation and simulation.get("saw_wildcard"))
+        if not is_simulation_wildcard_flow:
+            resolved_unique: list[str] = []
+            seen: set[str] = set()
+            for candidate in affected_for_limits:
+                try:
+                    resolved = str(pathlib.Path(candidate).resolve())
+                except OSError:
+                    continue
+                if not is_within_workspace(resolved):
+                    continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                resolved_unique.append(resolved)
+
+            max_files = int(POLICY.get("allowed", {}).get("max_files_per_operation", 10))
+            if max_files >= 0 and len(resolved_unique) > max_files:
+                result = PolicyResult(
+                    allowed=False,
+                    reason=(
+                        f"Operation targets {len(resolved_unique)} file/path entries, "
+                        f"which exceeds allowed.max_files_per_operation={max_files}"
+                    ),
+                    decision_tier="blocked",
+                    matched_rule="allowed.max_files_per_operation",
+                )
+
+        if result.allowed:
+            budget_allowed, budget_reason, budget_rule, budget_fields = check_and_record_cumulative_budget(
+                tool="execute_command",
+                command=command,
+                affected_paths=affected_for_budget,
+                operation_count=1,
             )
+            if not budget_allowed:
+                result = PolicyResult(
+                    allowed=False,
+                    reason=budget_reason or "Cumulative blast-radius budget exceeded for current scope.",
+                    decision_tier="blocked",
+                    matched_rule=budget_rule or "requires_simulation.cumulative_budget_exceeded",
+                )
 
     server_retry_count = 0
     final_block = False

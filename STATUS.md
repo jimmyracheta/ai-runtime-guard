@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-02-26
+Last updated: 2026-02-27
 
 ## Current branch
 - `dev` (tracking `origin/dev`)
@@ -79,7 +79,8 @@ Last updated: 2026-02-26
 - Backup target detection for shell commands remains heuristic (`PATH_TOKEN_RE` + existing-path checks) and can miss some shell expansion edge cases.
 - Runtime constants are still imported by multiple modules at load time (`WORKSPACE_ROOT`, `MAX_RETRIES`, `LOG_PATH`, `BACKUP_DIR`), so dynamic runtime reconfiguration remains non-centralized and requires careful patching in tests.
 - Linux validation checkpoint has been executed (Ubuntu 24.04, Python 3.12, 26/26 tests passing; see `docs/LINUX_VALIDATION.md`).
-- Cumulative budget limits are currently high enough that practical MVP prompt runs may not trigger budget blocks.
+- Cumulative budget limits are currently high enough that practical day-to-day prompt runs may not trigger budget blocks.
+- Budget reset is operation-triggered with idle-reset behavior; slow-drip patterns spaced beyond `idle_reset_seconds` can avoid cumulative growth (acceptable for accidental-safety-first scope, but weak for malicious pacing).
 - UI per-command retry/budget overrides are stored as policy metadata for now; runtime does not yet enforce per-command override values.
 - Legacy UI server (`ui/server.py`) remains in repo; v3 runtime path is Flask backend + `ui_v3` frontend.
 - Budget override-on-approval path is temporarily disabled during durable approval migration and should be explicitly redesigned for cross-process semantics.
@@ -90,35 +91,35 @@ Last updated: 2026-02-26
 3. Require explicit confirmation handshake for configured risky commands.
 4. Create backups before destructive/overwrite actions and validate recovery.
 
-## MVP lock-down sequence (approved order)
+## Lock-down sequence (completed)
 1. Branch protection + merge policy: documented in `README.md`; GitHub branch protection settings still need to be applied operationally.
 2. UTC deprecation fix: completed.
 3. Policy coverage audit and lock-down (`policy.json` only): completed.
 4. Linux validation checkpoint: completed and documented (`docs/LINUX_VALIDATION.md`).
-5. Release to `main`: completed (tagged `v1.0`).
+5. Release to `main`: completed (tagged `v1.1`).
 
 ## Merge freeze status
 - Current state: no active merge freeze for approval separation.
-- Approval separation checkpoint status: complete at MVP scope (no MCP approval tool; out-of-band approval via GUI/API).
-- Remaining hardening before broad deployment (post-MVP): strengthen caller identity/authorization for operator approval endpoints.
+- Approval separation checkpoint status: complete in current scope (no MCP approval tool; out-of-band approval via GUI/API).
+- Remaining hardening before broader deployment: strengthen caller identity/authorization for operator approval endpoints.
 
-## Release gate status (`v1.0`)
+## Release gate status (`v1.1`)
 Completed checkpoints:
 1. Unit test gate: complete (`python3 -m unittest discover -s tests -p 'test_*.py'` passes).
 2. Manual integration gate: complete (12+ prompts validated, including destructive block, confirmation, simulation, cumulative budget behavior, restore flow, and network-policy checks).
 3. Approval separation gate: complete (initiating agent cannot self-approve via MCP tool surface; approvals are out-of-band).
-4. `main` release completed and tagged as `v1.0`.
+4. `main` release completed and tagged as `v1.1`.
 
-## Post-merge validation (v1.1)
+## Post-release validation (v1.1)
 1. Linux gate: completed (unit suite + integration prompts executed on Linux with outcomes recorded).
 
-## Post-MVP backlog (grouped workstreams)
+## Post-v1.1 backlog (grouped workstreams)
 ### Execution hardening
 1. Harden command execution model: reduce dependence on `shell=True` with structured execution where feasible, and isolate a tightly-scoped legacy shell mode for cases that need pipes/redirection.
-2. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
+2. Strengthen network control depth: keep domain controls and add deeper protocol/redirect-aware enforcement for stronger destination assurance.
 
 ### Policy/code parity
-3. Complete policy-to-code parity for remaining unused/partial keys: `allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, and override metadata fields (`token_ttl_seconds`, `audit_reason_required`, `allowed_roles`).
+3. Complete policy-to-code parity for remaining unused/partial keys: `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, and override metadata fields (`token_ttl_seconds`, `audit_reason_required`, `allowed_roles`).
 4. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file`, and keep backup access controls consistent between file tools and `execute_command`.
 5. Improve backup mutation detection: replace or augment regex path extraction with parser-aware target resolution for shell expansions (`find -exec`, `xargs`, loops, substitutions).
 6. Improve restore ergonomics and safety: add restore conflict strategies (`overwrite/skip/fail`) and clearer per-file restore result reporting.
@@ -131,12 +132,12 @@ Completed checkpoints:
 ### Policy validation
 10. Validate expanded command sets against real agent workflows to tune false-positive rate (especially for `find`, `xargs`, `sed`, `perl` in simulation tier).
 11. Add focused integration tests for multi-command shell constructs (`find -exec`, `xargs`, loops, substitutions) that are represented in policy but only partially modeled by current simulation logic.
-13. Tune cumulative budget defaults for MVP operations so anti-bypass behavior is practically testable in manual integration runs without requiring unrealistic operation volume.
+13. Tune cumulative budget defaults for regular operations so anti-bypass behavior is practically testable in manual integration runs without requiring unrealistic operation volume.
 14. Add approval separation regression coverage: verify that a command requester cannot approve the same command within the same agent/tool context.
 15. Add UI operator warnings:
     - when any command is set to `requires_confirmation`, show a warning that approval increases security but may reduce agent autonomy and introduce operational friction;
     - when command budget configuration is present, show a warning that budget is cumulative and applies per configured session scope (not per-command enforcement unless runtime override support is implemented).
-16. Post-MVP hardening review (after packaging + approval workflow rewrite): evaluate restart-based budget bypass risk where MCP process restarts reset in-memory session state, and decide whether to persist budget state across restarts and/or block agent-driven service restart controls.
+16. Post-v1.1 hardening review (after packaging + approval workflow rewrite): evaluate restart-based budget bypass risk where MCP process restarts reset in-memory session state, and decide whether to persist budget state across restarts and/or block agent-driven service restart controls.
 17. UI guardrails for edit relevance: enable/disable retry and budget inputs based on selected tier so irrelevant fields are visually greyed out (for example `allowed` should not expose retry controls), with clear helper text for why fields are disabled.
 18. Re-evaluate human-approval workflow value: assess whether `requires_confirmation` should be optional behind an explicit UI toggle, with clear warning that enabling it can reduce agent autonomy; compare against security posture achieved by `blocked` + `requires_simulation` only.
 19. Add interpreter command-family confirmation coverage in `policy.json` to reduce string-construction evasion risk (`python`, `python3`, `perl`, `ruby`, `node`, `php`, `lua`, `osascript`, `bash`, `sh`, `zsh`).

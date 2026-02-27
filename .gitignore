@@ -42,3 +42,5 @@ policy.json.last-applied
 
 # Setup/generated output artifacts
 out/
+containerization.md
+todo_dev.md
