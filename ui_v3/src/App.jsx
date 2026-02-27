@@ -1226,16 +1226,6 @@ export default function App() {
               />
               Enabled
             </label>
-            <label className="text-xs text-slate-600">
-              Scope
-              <select
-                className="ml-2 border border-slate-300 rounded px-2 py-1 text-sm"
-                value={cumulative.scope || 'session'}
-                onChange={(e) => setCumulative({ scope: e.target.value })}
-              >
-                <option value="session">session</option>
-              </select>
-            </label>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1286,17 +1276,7 @@ export default function App() {
             </label>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-600">
-              Counting mode
-              <select
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={counting.mode || 'affected_paths'}
-                onChange={(e) => setCounting({ mode: e.target.value })}
-              >
-                <option value="affected_paths">affected_paths</option>
-              </select>
-            </label>
+          <div className="grid grid-cols-1 gap-3">
             <label className="text-xs text-slate-600">
               Commands included (comma-separated)
               <input
