@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-02-26
+Last updated: 2026-02-27
 
 ## Current branch
 - `dev` (tracking `origin/dev`)
@@ -119,7 +119,7 @@ Completed checkpoints:
 2. Strengthen network control depth: keep domain controls and add payload/protocol-aware enforcement so `network.max_payload_size_kb` and related policy fields become meaningful.
 
 ### Policy/code parity
-3. Complete policy-to-code parity for remaining unused/partial keys: `allowed.max_files_per_operation`, `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, and override metadata fields (`token_ttl_seconds`, `audit_reason_required`, `allowed_roles`).
+3. Complete policy-to-code parity for remaining unused/partial keys: `network.max_payload_size_kb`, `audit.log_level`, cumulative budget `counting.mode`, `reset.mode`, `reset_on_server_restart`, `audit.log_budget_state`, `audit.fields`, `on_exceed.decision_tier`, and override metadata fields (`token_ttl_seconds`, `audit_reason_required`, `allowed_roles`).
 4. Unify backup policy behavior across tools: enforce `audit.backup_enabled` consistently for `write_file` and `delete_file`, and keep backup access controls consistent between file tools and `execute_command`.
 5. Improve backup mutation detection: replace or augment regex path extraction with parser-aware target resolution for shell expansions (`find -exec`, `xargs`, loops, substitutions).
 6. Improve restore ergonomics and safety: add restore conflict strategies (`overwrite/skip/fail`) and clearer per-file restore result reporting.

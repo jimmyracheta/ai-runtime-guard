@@ -197,7 +197,7 @@ Current status:
 
 ## 9.1 Allowed limits semantics
 - `allowed.max_file_size_mb` is enforced per file, not cumulatively across all files in one operation.
-- `allowed.max_files_per_operation` is currently configuration metadata and is not runtime-enforced.
+- `allowed.max_files_per_operation` is enforced for default-allowed multi-target operations (safety cap).
 - `allowed.max_directory_depth` is measured relative to the deepest matching allowed root (workspace root or a whitelisted root), not from filesystem `/`.
   - Example: if allowed root is `/home/user/airg-workspace` and max depth is `5`, then `/home/user/airg-workspace/a/b/c/d/e` is allowed depth, while adding one more segment exceeds it.
   - This is why the default stays high for normal workflows and is mainly for tight-access deployments.
@@ -271,7 +271,8 @@ Behavior:
   - `requires_simulation.max_retries` and `bulk_file_threshold`
   - cumulative budget enable/scope/limits
   - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`)
-  - note: `cumulative_budget.reset.*` and `cumulative_budget.audit.*` are not yet exposed in GUI controls
+  - reset controls (`reset.window_seconds`, `reset.idle_reset_seconds`)
+  - note: `cumulative_budget.audit.*` is still not exposed in GUI controls
 - Status badges reflect applied policy only (post-`Apply`).
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.

@@ -1087,6 +1087,7 @@ export default function App() {
     const cumulative = simulation?.cumulative_budget || {}
     const limits = cumulative?.limits || {}
     const counting = cumulative?.counting || {}
+    const reset = cumulative?.reset || {}
     const confirmation = draftPolicy?.requires_confirmation || {}
     const approvalSecurity = confirmation?.approval_security || {}
     const execution = draftPolicy?.execution || {}
@@ -1094,7 +1095,6 @@ export default function App() {
     const backupAccess = draftPolicy?.backup_access || {}
     const restore = draftPolicy?.restore || {}
     const audit = draftPolicy?.audit || {}
-    const network = draftPolicy?.network || {}
     const bytesMultiplier = {
       KB: 1024,
       MB: 1024 * 1024,
@@ -1161,14 +1161,6 @@ export default function App() {
       })
     }
 
-    const setNetwork = (patch) => {
-      setDraftPolicy((prev) => {
-        const next = deepClone(prev)
-        next.network = { ...(next.network || {}), ...patch }
-        return next
-      })
-    }
-
     const setCumulative = (patch) => {
       setDraftPolicy((prev) => {
         const next = deepClone(prev)
@@ -1207,6 +1199,9 @@ export default function App() {
 
     const setCounting = (patch) => {
       setCumulative({ counting: { ...(counting || {}), ...patch } })
+    }
+    const setReset = (patch) => {
+      setCumulative({ reset: { ...(reset || {}), ...patch } })
     }
 
     const commandsIncluded = Array.isArray(counting.commands_included) ? counting.commands_included.join(', ') : ''
@@ -1454,18 +1449,32 @@ export default function App() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Network Limit</div>
-          <label className="text-xs text-slate-600">
-            Max payload size (KB)
-            <input
-              type="number"
-              min={0}
-              className="mt-1 w-full md:w-80 border border-slate-300 rounded-lg px-3 py-2 text-sm"
-              value={network.max_payload_size_kb ?? 1024}
-              onChange={(e) => setNetwork({ max_payload_size_kb: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-            />
-            <div className="mt-1 text-[11px] text-amber-700">Current runtime behavior: this is policy metadata and not fully enforced yet.</div>
-          </label>
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Cumulative Budget Reset</div>
+          <div className="text-[11px] text-slate-500">
+            Operations older than the configured window are removed from budget calculation.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Sliding window (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reset.window_seconds ?? 3600}
+                onChange={(e) => setReset({ window_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Idle reset (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reset.idle_reset_seconds ?? 900}
+                onChange={(e) => setReset({ idle_reset_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
@@ -1545,15 +1554,6 @@ export default function App() {
                 className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
                 value={audit.backup_root ?? ''}
                 onChange={(e) => setAudit({ backup_root: e.target.value })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Log level
-              <input
-                type="text"
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={audit.log_level ?? 'verbose'}
-                onChange={(e) => setAudit({ log_level: e.target.value })}
               />
             </label>
             <label className="text-xs text-slate-600">

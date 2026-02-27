@@ -1,5 +1,29 @@
 # CHANGELOG_DEV
 
+## 2026-02-27 (allowed cap enforcement + advanced reset controls)
+- Implemented runtime enforcement for `allowed.max_files_per_operation` in `execute_command` for default-allowed multi-target operations (resolved workspace/whitelist paths).
+- Preserved tier separation intent:
+  - simulation-tier wildcard handling remains governed by `requires_simulation` rules
+  - confirmation-tier behavior remains approval-token based
+  - allowed-tier safety caps are evaluated independently for non-simulated default-allowed flows.
+- Added Advanced Policy UI controls for cumulative-budget reset:
+  - `requires_simulation.cumulative_budget.reset.window_seconds`
+  - `requires_simulation.cumulative_budget.reset.idle_reset_seconds`
+  - plus helper text explaining age-out behavior for budget accounting.
+- Removed non-actionable Advanced Policy controls:
+  - removed `audit.log_level` from GUI (metadata-only today)
+  - removed payload-size control from Advanced Policy (payload enforcement intentionally deferred; network remains domain-enforcement focused).
+- Added policy comments clarifying metadata-only behavior:
+  - `requires_simulation.cumulative_budget.audit.log_budget_state` / `audit.fields` are visibility metadata in current runtime.
+  - `audit.log_level` is retained for future runtime log-level support.
+- Updated `docs/MANUAL.md` to reflect:
+  - enforced status of `allowed.max_files_per_operation`
+  - reset controls now exposed in Advanced Policy
+  - payload-size remains metadata (not enforced).
+- Validation:
+  - `python3 -m py_compile tools/command_tools.py`
+  - `npm run build` in `ui_v3` passed.
+
 ## 2026-02-27 (policy UI parity pass: network + advanced settings split)
 - Extended Policy tabs with `Network` and `Advanced Policy` pages.
 - Commands page now focuses on tier selection only (basic/advanced radios) and removed per-command retry/budget fields to avoid implying unsupported runtime behavior.

@@ -79,6 +79,7 @@
         "allowed_roles": ["human-operator"]
       },
       "audit": {
+        "_comment": "Budget audit visibility metadata; runtime currently emits a fixed budget field set.",
         "log_budget_state": true,
         "fields": [
           "budget_scope",
@@ -138,7 +139,7 @@
   },
 
   "audit": {
-    "_comment": "Audit and backup settings — backup_enabled is read by the server at startup",
+    "_comment": "Audit and backup settings — backup_enabled is read at startup; log_level is retained for future runtime level support.",
     "backup_enabled": true,
     "backup_on_content_change_only": true,
     "max_versions_per_file": 5,
