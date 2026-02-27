@@ -1,5 +1,20 @@
 # CHANGELOG_DEV
 
+## 2026-02-27 (v1.1 release flow + scope clarification)
+- Updated release messaging/docs for `v1.1` readiness:
+  - added `v1.1` section in `CHANGELOG.md`
+  - aligned release references to `v1.0`/`v1.1` where needed
+  - merged `dev` into `main` locally as part of release prep and tagged `v1.1`
+- Added reusable release runbook: `docs/RELEASE_CHECKLIST.md` (prep, PR merge, tagging, verification, retag recovery).
+- Added containerization artifacts/docs baseline:
+  - root `Dockerfile`
+  - `docs/DOCKER.md` with build/run/MCP Docker config examples
+- Expanded `.gitignore` to exclude runtime/generated artifacts (`activity.log.*`, sqlite sidecars, `out/`) and local planning scratch (`containerization.md`).
+- Clarified product scope across docs as accidental-safety-first (not full malicious-actor containment):
+  - AIRG enforces MCP-routed actions only
+  - native client shell/file tools outside MCP are out-of-scope for enforcement
+  - core controls now explicitly include automatic backups before destructive/overwrite actions and comprehensive audit logging.
+
 ## 2026-02-26 (linux polish + packaging/doc hygiene)
 - Added root `Dockerfile` for direct containerized MCP runtime (`airg-server`) and documented container usage in `docs/DOCKER.md`.
 - Extended `.gitignore` for runtime sidecar artifacts (`*.db-wal`, `*.db-shm`, `*.db-journal`, `approvals.db-*`), rotated logs (`activity.log.*`), and setup output (`out/`).
