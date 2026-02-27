@@ -246,8 +246,7 @@ Audit logging detail:
 5. Subdomains are matched (`example.com` also matches `api.example.com`).
 
 Still limited:
-1. `network.max_payload_size_kb` is currently policy metadata and not runtime-enforced.
-2. Runtime evaluates domains parsed from command tokens/URLs; redirect chains and out-of-band destination changes are not deeply inspected.
+1. Runtime evaluates domains parsed from command tokens/URLs; redirect chains and out-of-band destination changes are not deeply inspected.
 
 ## 12. Local policy UI behavior (current)
 Current recommended UI stack:

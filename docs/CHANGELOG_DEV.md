@@ -18,6 +18,8 @@
   - `airg_cli.py` default policy template includes the new key
   - test policy fixtures updated accordingly
   - `docs/MANUAL.md` network section now documents precedence, subdomain matching, and redirect-inspection limits.
+- Removed `network.max_payload_size_kb` from active policy/schema defaults (`policy.json`, `config.py`, template/test fixtures) since payload-size enforcement is not implemented in runtime.
+- Added a Network-page info panel in GUI with runtime domain-matching behavior notes (subdomains, redirects, short links, referral params).
 
 ## 2026-02-27 (allowed cap enforcement + advanced reset controls)
 - Implemented runtime enforcement for `allowed.max_files_per_operation` in `execute_command` for default-allowed multi-target operations (resolved workspace/whitelist paths).

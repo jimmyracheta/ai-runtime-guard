@@ -978,6 +978,16 @@ export default function App() {
           </div>
         </div>
 
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 shadow-sm">
+          <div className="text-xs font-semibold text-blue-900 uppercase tracking-wide mb-1">Runtime Domain Matching Notes</div>
+          <div className="text-xs text-blue-900 space-y-1">
+            <div>Subdomains are matched: a rule for <span className="font-mono">example.com</span> also applies to <span className="font-mono">api.example.com</span>.</div>
+            <div>Policy checks the hostnames found in command arguments/URLs only.</div>
+            <div>Redirect chains and short-link expansion are not followed; checks apply to the visible domain in the command.</div>
+            <div>Referral/tracking query params do not affect domain matching.</div>
+          </div>
+        </div>
+
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Enforcement Mode</div>
           <div className="flex flex-wrap gap-3 text-sm">

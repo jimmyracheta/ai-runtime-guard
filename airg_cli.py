@@ -76,7 +76,6 @@ def _policy_template() -> dict[str, Any]:
             "allowed_domains": [],
             "blocked_domains": [],
             "block_unknown_domains": False,
-            "max_payload_size_kb": 1024,
         },
         "execution": {"max_command_timeout_seconds": 30, "max_output_chars": 200000},
         "backup_access": {"block_agent_tools": True, "allowed_tools": ["restore_backup"]},

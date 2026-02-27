@@ -136,7 +136,6 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     _ensure_list(network, "allowed_domains")
     _ensure_list(network, "blocked_domains")
     network.setdefault("block_unknown_domains", False)
-    network.setdefault("max_payload_size_kb", 1024)
     if network["enforcement_mode"] not in {"off", "monitor", "enforce"}:
         raise ValueError("network.enforcement_mode must be one of: off, monitor, enforce")
     if not isinstance(network["block_unknown_domains"], bool):

@@ -118,8 +118,7 @@
     ],
     "allowed_domains": [],
     "blocked_domains": [],
-    "block_unknown_domains": false,
-    "max_payload_size_kb": 1024
+    "block_unknown_domains": false
   },
 
   "execution": {
