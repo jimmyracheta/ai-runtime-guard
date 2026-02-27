@@ -1216,120 +1216,6 @@ export default function App() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Confirmation Security</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <label className="text-xs text-slate-600">
-              Max failed attempts per token
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={approvalSecurity.max_failed_attempts_per_token ?? 5}
-                onChange={(e) => setConfirmationSecurity({ max_failed_attempts_per_token: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Failed-attempt window (seconds)
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={approvalSecurity.failed_attempt_window_seconds ?? 600}
-                onChange={(e) => setConfirmationSecurity({ failed_attempt_window_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Approval token TTL (seconds)
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={approvalSecurity.token_ttl_seconds ?? 600}
-                onChange={(e) => setConfirmationSecurity({ token_ttl_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Execution Limits</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-600">
-              Max command timeout (seconds)
-              <input
-                type="number"
-                min={1}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={execution.max_command_timeout_seconds ?? 30}
-                onChange={(e) => setExecution({ max_command_timeout_seconds: Math.max(1, parseInt(e.target.value, 10) || 1) })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Max output chars
-              <input
-                type="number"
-                min={1024}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={execution.max_output_chars ?? 200000}
-                onChange={(e) => setExecution({ max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024) })}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Allowed Limits</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-600">
-              Max file size (MB)
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={allowed.max_file_size_mb ?? 10}
-                onChange={(e) => setAllowed({ max_file_size_mb: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Max files per operation
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={allowed.max_files_per_operation ?? 10}
-                onChange={(e) => setAllowed({ max_files_per_operation: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Simulation Controls</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-600">
-              Max retries
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={simulation.max_retries ?? 0}
-                onChange={(e) => setSimulation({ max_retries: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Bulk file threshold
-              <input
-                type="number"
-                min={0}
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={simulation.bulk_file_threshold ?? 0}
-                onChange={(e) => setSimulation({ bulk_file_threshold: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Cumulative Budget</div>
           <div className="flex items-center gap-3 text-sm">
             <label className="flex items-center gap-2">
@@ -1478,6 +1364,35 @@ export default function App() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Command Simulation Controls</div>
+          <div className="text-[11px] text-slate-500">
+            Configures retry and blast-radius thresholds for commands under simulation policy.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Max retries
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={simulation.max_retries ?? 0}
+                onChange={(e) => setSimulation({ max_retries: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Bulk file threshold
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={simulation.bulk_file_threshold ?? 0}
+                onChange={(e) => setSimulation({ bulk_file_threshold: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Backup & Restore</div>
           <div className="flex flex-wrap gap-4 text-sm">
             <label className="flex items-center gap-2">
@@ -1495,6 +1410,22 @@ export default function App() {
                 onChange={(e) => setRestore({ require_dry_run_before_apply: e.target.checked })}
               />
               Require dry run before restore apply
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(audit.backup_enabled)}
+                onChange={(e) => setAudit({ backup_enabled: e.target.checked })}
+              />
+              Backup enabled
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(audit.backup_on_content_change_only)}
+                onChange={(e) => setAudit({ backup_on_content_change_only: e.target.checked })}
+              />
+              Backup on content change only
             </label>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1523,30 +1454,6 @@ export default function App() {
                 onChange={(e) => setRestore({ confirmation_ttl_seconds: Math.max(30, parseInt(e.target.value, 10) || 30) })}
               />
             </label>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
-          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Audit Settings</div>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(audit.backup_enabled)}
-                onChange={(e) => setAudit({ backup_enabled: e.target.checked })}
-              />
-              Backup enabled
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(audit.backup_on_content_change_only)}
-                onChange={(e) => setAudit({ backup_on_content_change_only: e.target.checked })}
-              />
-              Backup on content change only
-            </label>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-xs text-slate-600">
               Backup root
               <input
@@ -1577,6 +1484,107 @@ export default function App() {
               />
             </label>
           </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Command Execution Limits</div>
+          <div className="text-[11px] text-slate-500">
+            Sets safety limits for command runtime duration and output size.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Max command timeout (seconds)
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={execution.max_command_timeout_seconds ?? 30}
+                onChange={(e) => setExecution({ max_command_timeout_seconds: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max output chars
+              <input
+                type="number"
+                min={1024}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={execution.max_output_chars ?? 200000}
+                onChange={(e) => setExecution({ max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Whitelisted Commands Limits</div>
+          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            Applies to commands not explicitly configured as blocked, simulation-gated, or approval-gated.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-xs text-slate-600">
+              Max file size (MB)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={allowed.max_file_size_mb ?? 10}
+                onChange={(e) => setAllowed({ max_file_size_mb: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max files per operation
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={allowed.max_files_per_operation ?? 10}
+                onChange={(e) => setAllowed({ max_files_per_operation: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Command Approval Security Settings</div>
+          <div className="text-[11px] text-slate-500">
+            Controls token security and failed-approval throttling for commands requiring human approval.
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="text-xs text-slate-600">
+              Max failed attempts per token
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.max_failed_attempts_per_token ?? 5}
+                onChange={(e) => setConfirmationSecurity({ max_failed_attempts_per_token: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Failed-attempt window (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.failed_attempt_window_seconds ?? 600}
+                onChange={(e) => setConfirmationSecurity({ failed_attempt_window_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Approval token TTL (seconds)
+              <input
+                type="number"
+                min={0}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={approvalSecurity.token_ttl_seconds ?? 600}
+                onChange={(e) => setConfirmationSecurity({ token_ttl_seconds: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Log Redaction</div>
           <label className="text-xs text-slate-600 block">
             Redact patterns (one regex per line)
             <textarea
