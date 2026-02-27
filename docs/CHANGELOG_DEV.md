@@ -1,5 +1,24 @@
 # CHANGELOG_DEV
 
+## 2026-02-27 (network policy precedence + default-deny toggle)
+- Updated network enforcement logic to support explicit unknown-domain policy:
+  - added `network.block_unknown_domains` (`false` by default)
+  - when `false`, domains not in either list are allowed
+  - when `true`, domains not in `allowed_domains` are blocked (default-deny)
+- Kept list overlap precedence explicit: if a domain appears in both allowlist and blocklist, blocklist wins.
+- Preserved enforcement-mode gating:
+  - `off`: no blocking
+  - `monitor`: diagnostics only
+  - `enforce`: hard blocking
+- Added GUI control on Network page (shown in `enforce` mode) for `block_unknown_domains`.
+- Updated Network panel guidance text to match runtime precedence/behavior.
+- Updated policy/docs/templates:
+  - `policy.json` includes `network.block_unknown_domains`
+  - `config.py` validates/normalizes the new boolean key
+  - `airg_cli.py` default policy template includes the new key
+  - test policy fixtures updated accordingly
+  - `docs/MANUAL.md` network section now documents precedence, subdomain matching, and redirect-inspection limits.
+
 ## 2026-02-27 (allowed cap enforcement + advanced reset controls)
 - Implemented runtime enforcement for `allowed.max_files_per_operation` in `execute_command` for default-allowed multi-target operations (resolved workspace/whitelist paths).
 - Preserved tier separation intent:

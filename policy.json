@@ -102,7 +102,7 @@
   },
 
   "network": {
-    "_comment": "Network policy for command execution. enforcement_mode supports: off, monitor, enforce",
+    "_comment": "Network policy for command execution. enforcement_mode supports: off, monitor, enforce; block_unknown_domains controls default-deny behavior for domains not in either list.",
     "enforcement_mode": "enforce",
     "commands": [
       "curl",
@@ -118,6 +118,7 @@
     ],
     "allowed_domains": [],
     "blocked_domains": [],
+    "block_unknown_domains": false,
     "max_payload_size_kb": 1024
   },
 

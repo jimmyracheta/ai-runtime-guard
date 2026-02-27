@@ -238,12 +238,16 @@ Audit logging detail:
 
 - Domain rules:
 1. `blocked_domains`: explicit deny list. Matching domains are blocked in `enforce` mode.
-2. `allowed_domains`: allow list. When non-empty, domains not in this list are blocked in `enforce` mode.
-3. If both `blocked_domains` and `allowed_domains` are empty, network commands are allowed (even in `enforce` mode).
+2. `allowed_domains`: explicit allow list. Matching domains are allowed when not blocked.
+3. `block_unknown_domains`:
+   - `false` (default): domains not in either list are allowed.
+   - `true`: domains not in `allowed_domains` are blocked (default-deny behavior).
+4. If a domain appears in both `allowed_domains` and `blocked_domains`, blocklist wins.
+5. Subdomains are matched (`example.com` also matches `api.example.com`).
 
 Still limited:
 1. `network.max_payload_size_kb` is currently policy metadata and not runtime-enforced.
-2. Deep payload/protocol inspection is not implemented.
+2. Runtime evaluates domains parsed from command tokens/URLs; redirect chains and out-of-band destination changes are not deeply inspected.
 
 ## 12. Local policy UI behavior (current)
 Current recommended UI stack:

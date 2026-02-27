@@ -992,6 +992,16 @@ export default function App() {
               </label>
             ))}
           </div>
+          {(network.enforcement_mode || 'off') === 'enforce' && (
+            <label className="mt-1 inline-flex items-center gap-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={Boolean(network.block_unknown_domains)}
+                onChange={(e) => updateNetwork({ block_unknown_domains: e.target.checked })}
+              />
+              Block domains not present in whitelist or blocklist
+            </label>
+          )}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
@@ -1028,10 +1038,12 @@ export default function App() {
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Domain Rules</div>
           <div className="text-xs text-slate-600 mb-3">
-            {hasWhitelist && !hasBlocklist && 'Whitelist is active: only whitelisted domains are allowed.'}
-            {!hasWhitelist && hasBlocklist && 'Blocklist is active: listed domains are denied; all others are allowed.'}
-            {hasWhitelist && hasBlocklist && 'Whitelist takes precedence: only whitelisted domains are allowed, so blocklist entries are effectively redundant.'}
-            {!hasWhitelist && !hasBlocklist && 'No domain rules configured: domains are unrestricted unless enforcement is handled elsewhere.'}
+            {(network.enforcement_mode || 'off') !== 'enforce' && 'Network policy is not blocking in current mode; switch to enforce for hard blocking.'}
+            {(network.enforcement_mode || 'off') === 'enforce' && hasWhitelist && !hasBlocklist && !network.block_unknown_domains && 'Whitelist is advisory only: listed domains are explicitly allowed, and other domains are also allowed unless blocked.'}
+            {(network.enforcement_mode || 'off') === 'enforce' && !hasWhitelist && hasBlocklist && 'Blocklist is active: listed domains are denied; all others are allowed.'}
+            {(network.enforcement_mode || 'off') === 'enforce' && hasWhitelist && hasBlocklist && !network.block_unknown_domains && 'Blocklist takes precedence on overlap. Whitelisted domains are allowed unless also blocked. Domains in neither list are allowed.'}
+            {(network.enforcement_mode || 'off') === 'enforce' && network.block_unknown_domains && 'Default-deny is active: domains in blocklist are denied, and domains not present in whitelist are denied.'}
+            {(network.enforcement_mode || 'off') === 'enforce' && !hasWhitelist && !hasBlocklist && !network.block_unknown_domains && 'No domain rules configured: domains are unrestricted unless enforcement is handled elsewhere.'}
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="border-r-0 lg:border-r lg:pr-4 border-slate-200 space-y-2">
