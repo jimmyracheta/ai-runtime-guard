@@ -2,17 +2,17 @@
 
 > Your agent can say anything. It can only do what policy allows.
 
-AI agents with filesystem and shell access can delete files, leak credentials, or execute destructive commands — often without the user realizing it until it's too late.
+AI agents with filesystem and shell access can delete files, leak credentials, or execute destructive commands  -  often without the user realizing it until it's too late.
 
-`ai-runtime-guard` is an MCP server that sits between your AI agent and your system, enforcing a policy layer before any file or shell action takes effect. No retraining, no prompt engineering, no changes to your agent or workflow — just install, configure once, and your agent operates within the boundaries you set.
+`ai-runtime-guard` is an MCP server that sits between your AI agent and your system, enforcing a policy layer before any file or shell action takes effect. No retraining, no prompt engineering, no changes to your agent or workflow  -  just install, configure once, and your agent operates within the boundaries you set.
 
 ## What it does
-1. **Blocks dangerous operations** — `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.
-2. **Gates risky commands behind human approval** — configurable commands require explicit operator sign-off via a web GUI before the agent can proceed.
-3. **Simulates blast radius** — wildcard operations like `rm *.tmp` are evaluated against real files before running, and blocked if they exceed a safe threshold.
-4. **Backs up before it acts** — destructive or overwrite operations create automatic backups with full restore support.
+1. **Blocks dangerous operations**  -  `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.
+2. **Gates risky commands behind human approval**  -  configurable commands require explicit operator sign-off via a web GUI before the agent can proceed.
+3. **Simulates blast radius**  -  wildcard operations like `rm *.tmp` are evaluated against real files before running, and blocked if they exceed a safe threshold.
+4. **Backs up before it acts**  -  destructive or overwrite operations create automatic backups with full restore support.
 
-All actions — allowed and blocked — are logged to a full audit trail.
+All actions  -  allowed and blocked  -  are logged to a full audit trail.
 
 ## Who it's for
 Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or any MCP-compatible client) who want guardrails on what the agent can actually do to their system.

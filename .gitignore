@@ -5,7 +5,7 @@ venv/
 __pycache__/
 *.pyc
 
-# Runtime log (contains command history — keep off version control)
+# Runtime log (contains command history  -  keep off version control)
 activity.log
 activity.log.*
 approvals.db
