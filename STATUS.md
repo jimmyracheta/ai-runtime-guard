@@ -80,6 +80,7 @@ Last updated: 2026-02-26
 - Runtime constants are still imported by multiple modules at load time (`WORKSPACE_ROOT`, `MAX_RETRIES`, `LOG_PATH`, `BACKUP_DIR`), so dynamic runtime reconfiguration remains non-centralized and requires careful patching in tests.
 - Linux validation checkpoint has been executed (Ubuntu 24.04, Python 3.12, 26/26 tests passing; see `docs/LINUX_VALIDATION.md`).
 - Cumulative budget limits are currently high enough that practical MVP prompt runs may not trigger budget blocks.
+- Budget reset is operation-triggered with idle-reset behavior; slow-drip patterns spaced beyond `idle_reset_seconds` can avoid cumulative growth (acceptable for accidental-safety-first scope, but weak for malicious pacing).
 - UI per-command retry/budget overrides are stored as policy metadata for now; runtime does not yet enforce per-command override values.
 - Legacy UI server (`ui/server.py`) remains in repo; v3 runtime path is Flask backend + `ui_v3` frontend.
 - Budget override-on-approval path is temporarily disabled during durable approval migration and should be explicitly redesigned for cross-process semantics.

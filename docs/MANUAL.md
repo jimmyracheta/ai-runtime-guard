@@ -173,6 +173,18 @@ Not currently enforced:
 - Per-command budget overrides from UI metadata.
 - Budget override tied to confirmation approvals is temporarily disabled during durable approval migration (pending explicit redesign).
 
+Reset behavior details (current implementation):
+- Budget state is evaluated/reset on budget-checked operations (no background timer loop).
+- `reset.idle_reset_seconds` performs a full budget-state reset after inactivity beyond the threshold.
+- `reset.window_seconds` prunes path-timestamp history for unique-path accounting (sliding-window effect).
+- `reset.mode` is currently metadata-level (no distinct mode-specific runtime branches yet).
+- `reset.reset_on_server_restart` is effectively redundant while budget state is in-memory, because process restart resets counters.
+
+Practical implication:
+- Current settings are strong for burst/mass operations in normal coding sessions.
+- Slow-drip patterns spaced beyond `idle_reset_seconds` can avoid meaningful cumulative growth (for example, one operation every 901 seconds with `idle_reset_seconds=900`).
+- This is acceptable for accidental-safety-first scope, but should not be treated as malicious-intent containment.
+
 ## 9. UI retry/budget fields: what they mean today
 The local policy UI writes optional per-command metadata:
 - `policy.ui_overrides.commands.<command>.retry_override`
