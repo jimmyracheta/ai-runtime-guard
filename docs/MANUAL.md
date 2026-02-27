@@ -195,6 +195,13 @@ Current status:
 - Visible in UI status tags.
 - Not enforced by runtime yet.
 
+## 9.1 Allowed limits semantics
+- `allowed.max_file_size_mb` is enforced per file, not cumulatively across all files in one operation.
+- `allowed.max_files_per_operation` is currently configuration metadata and is not runtime-enforced.
+- `allowed.max_directory_depth` is measured relative to the deepest matching allowed root (workspace root or a whitelisted root), not from filesystem `/`.
+  - Example: if allowed root is `/home/user/airg-workspace` and max depth is `5`, then `/home/user/airg-workspace/a/b/c/d/e` is allowed depth, while adding one more segment exceeds it.
+  - This is why the default stays high for normal workflows and is mainly for tight-access deployments.
+
 ## 10. Backup and restore behavior
 - Backup creation occurs before destructive/overwrite actions.
 - Backups are timestamped directories with `manifest.json`.
@@ -202,6 +209,22 @@ Current status:
 
 Important improvement already implemented:
 - Dry run issues a `restore_token` bound to the apply step.
+
+Restore confirmation token behavior:
+1. `restore.require_dry_run_before_apply=true` means apply requires a valid token from a prior dry-run.
+2. Token is time-bounded by `restore.confirmation_ttl_seconds`.
+3. If apply is attempted after TTL expiry, restore is rejected and a new dry-run is required.
+4. This is an operation-safety gate; it is not a human-approval workflow by itself.
+
+Backup retention/pruning behavior:
+1. `audit.backup_on_content_change_only=true` deduplicates backups by content hash (sha256) and skips redundant snapshots.
+2. Version/day pruning is event-driven during backup operations (not a background scheduler).
+3. `audit.max_versions_per_file` and `audit.backup_retention_days` govern cleanup.
+4. Pruning does not currently emit a dedicated prune event for every removed backup artifact.
+
+Audit logging detail:
+1. `audit.redact_patterns` applies to log output redaction, not backup file payloads.
+2. `audit.log_level` is currently configuration metadata with limited runtime differentiation.
 
 ## 11. Network behavior
 - `network.enforcement_mode` controls behavior:
@@ -248,6 +271,7 @@ Behavior:
   - `requires_simulation.max_retries` and `bulk_file_threshold`
   - cumulative budget enable/scope/limits
   - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`)
+  - note: `cumulative_budget.reset.*` and `cumulative_budget.audit.*` are not yet exposed in GUI controls
 - Status badges reflect applied policy only (post-`Apply`).
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.

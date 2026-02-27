@@ -64,11 +64,13 @@
         "reset_on_server_restart": true
       },
       "on_exceed": {
+        "_comment": "Current runtime behavior blocks on budget exceed; decision_tier is kept for forward-compatibility metadata.",
         "decision_tier": "blocked",
         "matched_rule": "requires_simulation.cumulative_budget_exceeded",
         "message": "Cumulative blast-radius budget exceeded for current scope."
       },
       "overrides": {
+        "_comment": "Budget override flow is currently disabled in runtime logic; keep for future redesign.",
         "enabled": true,
         "require_confirmation_tool": "out_of_band_operator_approval",
         "token_ttl_seconds": 300,
