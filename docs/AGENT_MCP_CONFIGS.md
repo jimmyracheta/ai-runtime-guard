@@ -6,11 +6,12 @@ Use this together with `INSTALL.md`.
 
 ## AIRG variables to include in MCP config
 Always set these explicitly in agent MCP config:
-1. `AIRG_WORKSPACE`
-2. `AIRG_POLICY_PATH`
-3. `AIRG_APPROVAL_DB_PATH`
-4. `AIRG_APPROVAL_HMAC_KEY_PATH`
-5. `AIRG_LOG_PATH`
+1. `AIRG_AGENT_ID`
+2. `AIRG_WORKSPACE`
+3. `AIRG_POLICY_PATH`
+4. `AIRG_APPROVAL_DB_PATH`
+5. `AIRG_APPROVAL_HMAC_KEY_PATH`
+6. `AIRG_LOG_PATH`
 
 Server command:
 1. `airg-server`
@@ -23,6 +24,7 @@ Minimal MCP server block:
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "my-agent",
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
         "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
@@ -57,6 +59,7 @@ Codex stores MCP config in:
 Add AIRG via CLI:
 ```bash
 codex mcp add ai-runtime-guard \
+  --env AIRG_AGENT_ID=my-agent \
   --env AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
   --env AIRG_POLICY_PATH=/absolute/path/to/policy.json \
   --env AIRG_APPROVAL_DB_PATH=/absolute/path/to/approvals.db \
@@ -78,6 +81,7 @@ args = []
 cwd = "/absolute/path/to/ai-runtime-guard"
 
 [mcp_servers.ai-runtime-guard.env]
+AIRG_AGENT_ID = "my-agent"
 AIRG_WORKSPACE = "/absolute/path/to/airg-workspace"
 AIRG_POLICY_PATH = "/absolute/path/to/policy.json"
 AIRG_APPROVAL_DB_PATH = "/absolute/path/to/approvals.db"
@@ -105,6 +109,7 @@ Sample JSON (AIRG-focused, sanitized):
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "my-agent",
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
         "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
@@ -128,6 +133,7 @@ Notes:
 Claude Code MCP registration is CLI-based:
 ```bash
 claude mcp add ai-runtime-guard \
+  -e AIRG_AGENT_ID=my-agent \
   -e AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
   -e AIRG_POLICY_PATH=/home/$USER/.config/ai-runtime-guard/policy.json \
   -e AIRG_APPROVAL_DB_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db \
@@ -183,6 +189,7 @@ Use a JSON MCP block similar to Claude-style MCP config (no `preferences` sectio
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "my-agent",
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
         "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",

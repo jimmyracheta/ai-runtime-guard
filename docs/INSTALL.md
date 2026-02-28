@@ -49,6 +49,7 @@ mkdir -p ~/airg-workspace
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "claude-desktop",
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
         "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",

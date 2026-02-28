@@ -221,6 +221,7 @@ def _init_runtime(
                 "command": "airg-server",
                 "args": [],
                 "env": {
+                    "AIRG_AGENT_ID": os.environ.get("AIRG_AGENT_ID", "unknown-agent"),
                     "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
                     "AIRG_POLICY_PATH": str(paths["policy_path"]),
                     "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
@@ -303,8 +304,9 @@ def _apply_backup_override(policy: dict[str, Any], backup_root: str) -> dict[str
     return out
 
 
-def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.Path]) -> dict[str, Any]:
+def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.Path], agent_id: str) -> dict[str, Any]:
     env_block = {
+        "AIRG_AGENT_ID": agent_id.strip() or "Unknown",
         "AIRG_WORKSPACE": workspace,
         "AIRG_POLICY_PATH": str(paths["policy_path"]),
         "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
@@ -346,6 +348,7 @@ def _run_setup(
     backup_root: str,
     additional_workspaces: str,
     agent: str,
+    agent_id: str,
     force_policy: bool,
     enable_ui: str,
     out_dir: str,
@@ -369,6 +372,7 @@ def _run_setup(
     selected_key_path = approval_hmac_key_path.strip()
     selected_backup_root = backup_root.strip()
     selected_additional = [p.strip() for p in additional_workspaces.split(",") if p.strip()]
+    selected_agent_id = agent_id.strip() or "Unknown"
 
     if not yes and not quickstart:
         selected_workspace = _prompt_text("Primary workspace path", selected_workspace or str(pathlib.Path.home() / "airg-workspace"))
@@ -384,6 +388,7 @@ def _run_setup(
         selected_agent = _prompt_text("Agent type (claude_desktop/cursor/generic)", selected_agent)
         if selected_agent not in {"claude_desktop", "cursor", "generic"}:
             selected_agent = "generic"
+        selected_agent_id = _prompt_text("Agent identifier for logs (AIRG_AGENT_ID)", selected_agent_id)
 
     if not selected_workspace:
         selected_workspace = str(pathlib.Path.home() / "airg-workspace")
@@ -406,7 +411,7 @@ def _run_setup(
         current_policy = _apply_backup_override(current_policy, str(backup_override))
     _save_policy_to_path(path_overrides["policy_path"], current_policy)
 
-    payload = _agent_config_payload(selected_agent, str(workspace_path), path_overrides)
+    payload = _agent_config_payload(selected_agent, str(workspace_path), path_overrides, selected_agent_id)
     output_root = pathlib.Path(out_dir).expanduser().resolve()
     output_path = _write_agent_config_outputs(selected_agent, payload, output_root)
 
@@ -467,6 +472,7 @@ def main_setup_entrypoint() -> None:
     parser.add_argument("--backup-root", default="", help="Override audit.backup_root.")
     parser.add_argument("--additional-workspaces", default="", help="Comma-separated absolute workspace paths to whitelist.")
     parser.add_argument("--agent", default="generic", help="Agent target: claude_desktop, cursor, generic.")
+    parser.add_argument("--agent-id", default="Unknown", help="Agent identifier to include in runtime logs.")
     parser.add_argument("--force-policy", action="store_true", help="Regenerate policy file from template before applying wizard updates.")
     parser.add_argument("--enable-ui", default="yes", choices=["yes", "no"], help="Whether to keep UI management workflow enabled.")
     parser.add_argument("--out-dir", default="./out/mcp-configs", help="Output directory for generated MCP config snippets.")
@@ -481,6 +487,7 @@ def main_setup_entrypoint() -> None:
         backup_root=args.backup_root,
         additional_workspaces=args.additional_workspaces,
         agent=args.agent,
+        agent_id=args.agent_id,
         force_policy=args.force_policy,
         enable_ui=args.enable_ui,
         out_dir=args.out_dir,
@@ -573,6 +580,7 @@ def main_doctor() -> None:
     print(f"[airg] approval_hmac_key_path={paths['approval_hmac_key_path']}")
     print(f"[airg] log_path={paths['log_path']}")
     print(f"[airg] workspace={pathlib.Path(os.environ.get('AIRG_WORKSPACE', str(_project_root()))).expanduser().resolve()}")
+    print(f"[airg] agent_id={os.environ.get('AIRG_AGENT_ID', 'Unknown')}")
 
     # Policy file
     if not paths["policy_path"].exists():
@@ -677,6 +685,7 @@ def main() -> None:
     parser.add_argument("--backup-root", default="", help="Wizard mode: override audit.backup_root.")
     parser.add_argument("--additional-workspaces", default="", help="Wizard mode: comma-separated absolute workspace paths.")
     parser.add_argument("--agent", default="generic", help="Wizard mode: claude_desktop, cursor, generic.")
+    parser.add_argument("--agent-id", default="Unknown", help="Wizard mode: agent identifier for logs.")
     parser.add_argument("--enable-ui", default="yes", choices=["yes", "no"], help="Wizard mode: UI workflow preference.")
     parser.add_argument("--out-dir", default="./out/mcp-configs", help="Wizard mode: output directory for generated MCP config.")
     parser.add_argument(
@@ -697,6 +706,7 @@ def main() -> None:
             backup_root=args.backup_root,
             additional_workspaces=args.additional_workspaces,
             agent=args.agent,
+            agent_id=args.agent_id,
             force_policy=args.force_policy,
             enable_ui=args.enable_ui,
             out_dir=args.out_dir,

@@ -13,6 +13,7 @@ from contextlib import contextmanager
 
 from audit import append_log_entry
 from config import (
+    AGENT_ID,
     APPROVAL_TTL_SECONDS,
     BASE_DIR,
     POLICY,
@@ -75,6 +76,7 @@ def _log_security_warning(event: str, reason: str, **kwargs) -> None:
         {
             "timestamp": _to_z(_now_utc()),
             "source": "mcp-server",
+            "agent_id": AGENT_ID,
             "session_id": SESSION_ID,
             "tool": "approval_store",
             "event": event,

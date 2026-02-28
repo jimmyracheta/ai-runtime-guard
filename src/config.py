@@ -225,6 +225,7 @@ BACKUP_DIR = str(pathlib.Path(POLICY.get("audit", {}).get("backup_root", BACKUP_
 MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
 SESSION_ID: str = str(uuid.uuid4())
+AGENT_ID: str = (os.environ.get("AIRG_AGENT_ID", "").strip() or "Unknown")
 WORKSPACE_ROOT: str = os.environ.get("AIRG_WORKSPACE", str(BASE_DIR))
 SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
 

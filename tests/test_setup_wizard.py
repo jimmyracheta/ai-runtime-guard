@@ -23,8 +23,9 @@ class SetupWizardTests(unittest.TestCase):
             "approval_hmac_key_path": pathlib.Path("/tmp/approvals.db.hmac.key"),
             "log_path": pathlib.Path("/tmp/activity.log"),
         }
-        payload = airg_cli._agent_config_payload("claude_desktop", "/tmp/ws", paths)
+        payload = airg_cli._agent_config_payload("claude_desktop", "/tmp/ws", paths, "agent-claude")
         env = payload["mcpServers"]["ai-runtime-guard"]["env"]
+        self.assertEqual(env["AIRG_AGENT_ID"], "agent-claude")
         self.assertEqual(env["AIRG_WORKSPACE"], "/tmp/ws")
         self.assertEqual(env["AIRG_POLICY_PATH"], "/tmp/policy.json")
         self.assertEqual(env["AIRG_APPROVAL_DB_PATH"], "/tmp/approvals.db")

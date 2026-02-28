@@ -88,6 +88,7 @@ Example JSON snippet:
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "claude-desktop",
         "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
         "AIRG_POLICY_PATH": "~/Library/Application Support/ai-runtime-guard/policy.json",
         "AIRG_APPROVAL_DB_PATH": "~/Library/Application Support/ai-runtime-guard/approvals.db",
