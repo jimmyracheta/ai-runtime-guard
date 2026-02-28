@@ -1113,6 +1113,7 @@ export default function App() {
     const confirmation = draftPolicy?.requires_confirmation || {}
     const approvalSecurity = confirmation?.approval_security || {}
     const execution = draftPolicy?.execution || {}
+    const shellContainment = execution?.shell_workspace_containment || {}
     const allowed = draftPolicy?.allowed || {}
     const backupAccess = draftPolicy?.backup_access || {}
     const restore = draftPolicy?.restore || {}
@@ -1147,6 +1148,18 @@ export default function App() {
       setDraftPolicy((prev) => {
         const next = deepClone(prev)
         next.execution = { ...(next.execution || {}), ...patch }
+        return next
+      })
+    }
+
+    const setShellContainment = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.execution = { ...(next.execution || {}) }
+        next.execution.shell_workspace_containment = {
+          ...(next.execution.shell_workspace_containment || {}),
+          ...patch,
+        }
         return next
       })
     }
@@ -1514,6 +1527,25 @@ export default function App() {
                 onChange={(e) => setExecution({ max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024) })}
               />
             </label>
+          </div>
+          <div className="border-t border-slate-200 pt-3 space-y-2">
+            <div className="text-xs font-semibold text-slate-600">Attempt workspace shell command containment</div>
+            <div className="text-[11px] text-slate-500">
+              Best-effort path containment for `execute_command`. In monitor mode, commands are allowed and logged; in enforce mode, commands referencing outside paths are blocked.
+            </div>
+            <div className="flex flex-wrap gap-3 text-sm">
+              {['off', 'monitor', 'enforce'].map((mode) => (
+                <label key={mode} className="flex items-center gap-2 capitalize">
+                  <input
+                    type="radio"
+                    name="shell-containment-mode"
+                    checked={(shellContainment.mode || 'off') === mode}
+                    onChange={() => setShellContainment({ mode })}
+                  />
+                  {mode}
+                </label>
+              ))}
+            </div>
           </div>
         </div>
 

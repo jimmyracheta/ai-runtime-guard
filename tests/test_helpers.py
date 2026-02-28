@@ -88,7 +88,15 @@ DEFAULT_TEST_POLICY = {
         "blocked_domains": [],
         "block_unknown_domains": False,
     },
-    "execution": {"max_command_timeout_seconds": 30, "max_output_chars": 200000},
+    "execution": {
+        "max_command_timeout_seconds": 30,
+        "max_output_chars": 200000,
+        "shell_workspace_containment": {
+            "mode": "off",
+            "exempt_commands": [],
+            "log_paths": True,
+        },
+    },
     "backup_access": {"block_agent_tools": True, "allowed_tools": ["restore_backup"]},
     "restore": {"require_dry_run_before_apply": True, "confirmation_ttl_seconds": 300},
     "audit": {

@@ -149,7 +149,7 @@ Backup behavior:
 
 ## MCP tool to action map
 - `server_info`: returns build/workspace/base metadata.
-- `execute_command`: policy-check command, track retries, optional backup, execute in constrained env (`shell=True`, `/bin/bash`, cwd=`WORKSPACE_ROOT`, 30s timeout).
+- `execute_command`: policy-check command (including optional shell workspace containment), track retries, optional backup, execute in constrained env (`shell=True`, `/bin/bash`, cwd=`WORKSPACE_ROOT`, 30s timeout).
 - `read_file`: path policy + file-size guard, then read text (`errors="replace"`).
 - `write_file`: path policy, optional pre-overwrite backup, write text.
 - `delete_file`: path policy, existence/type checks, pre-delete backup, delete file.
@@ -159,6 +159,7 @@ Backup behavior:
 Observed current gaps/risk areas:
 - network policy is enforced at command gate level (domain intent + domain allow/block + optional unknown-domain default-deny), but redirect/final-destination inspection remains limited.
 - command execution uses `shell=True`; mitigations exist but parser/shell complexity remains a core risk surface.
+- optional shell containment (`execution.shell_workspace_containment`) provides best-effort path-boundary checks for shell command arguments/redirection, but cannot guarantee full shell semantic coverage.
 - backup path extraction for command execution relies on token regex + existence checks and can miss some shell-expanded path forms.
 
 ## Policy profile baseline

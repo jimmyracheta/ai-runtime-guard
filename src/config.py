@@ -187,10 +187,22 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     execution = _ensure_dict("execution")
     execution.setdefault("max_command_timeout_seconds", 30)
     execution.setdefault("max_output_chars", 200000)
+    shell_containment = execution.setdefault("shell_workspace_containment", {})
+    if not isinstance(shell_containment, dict):
+        raise ValueError("execution.shell_workspace_containment must be an object")
+    shell_containment.setdefault("mode", "off")
+    shell_containment.setdefault("exempt_commands", [])
+    shell_containment.setdefault("log_paths", True)
     if int(execution["max_command_timeout_seconds"]) < 1:
         raise ValueError("execution.max_command_timeout_seconds must be >= 1")
     if int(execution["max_output_chars"]) < 1024:
         raise ValueError("execution.max_output_chars must be >= 1024")
+    if shell_containment["mode"] not in {"off", "monitor", "enforce"}:
+        raise ValueError("execution.shell_workspace_containment.mode must be one of: off, monitor, enforce")
+    if not isinstance(shell_containment["exempt_commands"], list):
+        raise ValueError("execution.shell_workspace_containment.exempt_commands must be an array")
+    if not isinstance(shell_containment["log_paths"], bool):
+        raise ValueError("execution.shell_workspace_containment.log_paths must be boolean")
 
     backup_access = _ensure_dict("backup_access")
     backup_access.setdefault("block_agent_tools", True)

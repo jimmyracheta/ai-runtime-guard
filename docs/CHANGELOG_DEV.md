@@ -1,5 +1,26 @@
 # CHANGELOG_DEV
 
+## 2026-02-28 (shell workspace containment for execute_command)
+- Added advanced shell containment policy under `execution.shell_workspace_containment`:
+  - `mode`: `off`, `monitor`, `enforce`
+  - `exempt_commands`: optional command-level exemptions
+  - `log_paths`: metadata toggle for path logging verbosity.
+- Implemented runtime containment checks in `execute_command`:
+  - best-effort parsing of shell segments, path-like arguments, `cd` targets, and redirection targets
+  - resolves candidate paths and checks against workspace + whitelist roots
+  - `monitor` mode logs warnings and offending paths without blocking
+  - `enforce` mode blocks with matched rule `execution.shell_workspace_containment`.
+- Exposed containment mode in GUI `Advanced Policy` page as:
+  - `Attempt workspace shell command containment` (`off`/`monitor`/`enforce`).
+- Updated policy defaults and templates:
+  - `policy.json`
+  - `src/config.py` validation/normalization defaults
+  - `src/airg_cli.py` fallback template.
+- Added tests for enforce/monitor containment behavior in `tests/test_attacker_suite.py` and updated policy fixtures.
+- Updated docs:
+  - `docs/MANUAL.md` advanced policy behavior and semantics
+  - `docs/ARCHITECTURE.md` execute_command/containment notes.
+
 ## 2026-02-28 (linux friction hardening pass)
 - Implemented runtime log path defaults to user state storage (`AIRG_LOG_PATH`, defaulting to platform state dir) instead of package/repo-local paths.
 - Updated setup/runtime bootstrap to include `AIRG_LOG_PATH` in generated env blocks and MCP snippets.

@@ -279,6 +279,10 @@ Behavior:
   - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`)
   - reset controls (`reset.window_seconds`, `reset.idle_reset_seconds`)
   - note: `cumulative_budget.audit.*` is still not exposed in GUI controls
+- Advanced Policy panel also includes shell containment for `execute_command`:
+  - `execution.shell_workspace_containment.mode` with `off` / `monitor` / `enforce`
+  - this is a best-effort path guard for shell command arguments and redirection targets
+  - `monitor` logs violations but allows execution; `enforce` blocks
 - Status badges reflect applied policy only (post-`Apply`).
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.
@@ -315,6 +319,7 @@ Linux validation note:
 ## 15. Known high-priority limitations
 - Operator endpoint authentication/authorization remains local-trust oriented and should be hardened before broad deployment.
 - `shell=True` remains in command execution path.
+- `execution.shell_workspace_containment` can reduce accidental out-of-workspace shell access, but it is heuristic and does not replace OS-level sandboxing.
 - Cumulative budget defaults may be too high to trigger in typical manual runs.
 - Per-command UI override fields are metadata only today.
 - AIRG enforcement only applies to MCP tool calls; native client shell/file tools (for example Claude Code Bash) can bypass AIRG controls.

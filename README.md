@@ -32,7 +32,7 @@ Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or 
 ## How it works
 - Python MCP server with policy-driven enforcement loaded from `policy.json`
 - Default profile is **basic protection**: severe actions blocked, everything else allowed
-- Advanced tiers available for opt-in: simulation gating, human approval workflows, cumulative budget limits
+- Advanced controls available for opt-in: simulation gating, human approval workflows, cumulative budget limits, and shell workspace containment modes (`off`/`monitor`/`enforce`)
 - Local web GUI for policy editing, approval management, and audit log review
 
 ## Important limitation

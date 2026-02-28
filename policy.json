@@ -123,7 +123,13 @@
 
   "execution": {
     "max_command_timeout_seconds": 30,
-    "max_output_chars": 200000
+    "max_output_chars": 200000,
+    "shell_workspace_containment": {
+      "_comment": "Advanced shell path guard for execute_command only. mode: off, monitor, enforce.",
+      "mode": "off",
+      "exempt_commands": [],
+      "log_paths": true
+    }
   },
 
   "backup_access": {

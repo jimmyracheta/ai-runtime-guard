@@ -17,6 +17,7 @@ from policy_engine import (
     network_policy_check,
     normalize_for_audit,
     register_retry,
+    shell_workspace_containment_check,
     simulate_blast_radius,
     truncate_output,
     is_within_workspace,
@@ -31,6 +32,8 @@ def server_info() -> str:
 
 def execute_command(command: str, retry_count: int = 0) -> str:
     network_warning = None
+    shell_containment_warning = None
+    shell_containment_paths: list[str] = []
     budget_fields: dict = {}
     simulation = None
     simulation_diagnostic: tuple[str, str] | None = None
@@ -62,12 +65,25 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         else:
             if mode == "monitor" and net_reason:
                 network_warning = net_reason
-            sim_commands = [c.lower() for c in POLICY.get("requires_simulation", {}).get("commands", [])]
-            if sim_commands:
-                simulation = simulate_blast_radius(command, sim_commands)
-            result = check_policy(command, simulation=simulation)
-            if simulation is not None:
-                simulation_diagnostic = check_simulation_tier(command, simulation=simulation)
+            containment_allowed, containment_reason, containment_paths = shell_workspace_containment_check(command)
+            if not containment_allowed:
+                result = PolicyResult(
+                    allowed=False,
+                    reason=containment_reason or "Shell workspace containment blocked command.",
+                    decision_tier="blocked",
+                    matched_rule="execution.shell_workspace_containment",
+                )
+                shell_containment_paths = containment_paths
+            else:
+                if containment_reason:
+                    shell_containment_warning = containment_reason
+                    shell_containment_paths = containment_paths
+                sim_commands = [c.lower() for c in POLICY.get("requires_simulation", {}).get("commands", [])]
+                if sim_commands:
+                    simulation = simulate_blast_radius(command, sim_commands)
+                result = check_policy(command, simulation=simulation)
+                if simulation is not None:
+                    simulation_diagnostic = check_simulation_tier(command, simulation=simulation)
 
     affected_for_budget: list[str] = []
     affected_for_limits: list[str] = []
@@ -139,6 +155,8 @@ def execute_command(command: str, retry_count: int = 0) -> str:
         server_retry_count=server_retry_count,
         affected_paths_count=len(affected_for_budget),
         **({"network_warning": network_warning} if network_warning else {}),
+        **({"shell_containment_warning": shell_containment_warning} if shell_containment_warning else {}),
+        **({"shell_containment_offending_paths": shell_containment_paths} if shell_containment_paths else {}),
         **(
             {
                 "simulation_diagnostic_message": simulation_diagnostic[0],
