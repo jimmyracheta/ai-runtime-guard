@@ -31,12 +31,14 @@ def _is_macos() -> bool:
 def _candidate_ui_dist_paths() -> list[pathlib.Path]:
     # Search both source-tree and installed-package style locations.
     here = _project_root()
+    cwd = pathlib.Path.cwd().resolve()
     env_ui_dist = os.environ.get("AIRG_UI_DIST_PATH", "").strip()
     candidates: list[pathlib.Path] = []
     if env_ui_dist:
         candidates.append(pathlib.Path(env_ui_dist).expanduser())
     return [
         *candidates,
+        cwd / "ui_v3" / "dist",
         here / "ui_v3" / "dist",
         pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui_v3" / "dist",
     ]
@@ -360,9 +362,16 @@ def _write_agent_config_outputs(agent: str, payload: dict[str, Any], out_dir: pa
 
 
 def _build_ui_assets() -> None:
-    ui_dir = _project_root() / "ui_v3"
-    if not ui_dir.exists():
-        raise SystemExit(f"[airg][error] UI source directory not found: {ui_dir}")
+    ui_dir_candidates = [
+        pathlib.Path.cwd().resolve() / "ui_v3",
+        _project_root() / "ui_v3",
+    ]
+    ui_dir = next((p for p in ui_dir_candidates if p.exists()), None)
+    if ui_dir is None:
+        raise SystemExit(
+            "[airg][error] UI source directory not found. "
+            "Run setup from the cloned repository root, or set AIRG_UI_DIST_PATH to an existing dist directory."
+        )
     if shutil.which("npm") is None:
         raise SystemExit("[airg][error] npm is required to build GUI assets, but was not found in PATH.")
 
