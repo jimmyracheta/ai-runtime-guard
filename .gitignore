@@ -33,7 +33,6 @@ tests/fixtures/simtest/
 
 # UI build/dependency artifacts
 ui_v3/node_modules/
-ui_v3/dist/
 ui_v3/.vite/
 ui_v3/package-lock.json
 ai_runtime_guard.egg-info/

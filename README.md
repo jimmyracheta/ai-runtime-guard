@@ -68,6 +68,7 @@ Runtime notes:
 
 ## Web GUI (optional)
 A local web interface is available for policy editing, approval management, and audit review.
+Prebuilt UI assets are shipped for normal installs, so no frontend build is required unless you are modifying UI source.
 
 Start it with:
 ```bash

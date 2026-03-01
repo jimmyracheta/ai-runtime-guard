@@ -1,5 +1,10 @@
 # CHANGELOG_DEV
 
+## 2026-03-01 (ship prebuilt GUI assets in repo/package)
+- Removed `ui_v3/dist` from `.gitignore` so release/source users receive prebuilt frontend assets by default.
+- Added package-data inclusion for `ui_v3/dist` in `pyproject.toml` so installed packages can serve UI without local frontend rebuild.
+- Updated docs to clarify normal `airg-ui` startup no longer requires `npm run build` unless frontend source has changed.
+
 ## 2026-02-28 (setup flag for automatic GUI build)
 - Added `--gui` flag to setup flows (`airg-setup` and `airg init --wizard`) to build Web GUI assets automatically during installation.
 - Setup now can run `npm install` and `npm run build` in `ui_v3` as part of one-command bootstrap, with explicit error output when npm/build prerequisites are missing or fail.

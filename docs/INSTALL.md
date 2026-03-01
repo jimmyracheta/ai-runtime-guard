@@ -7,7 +7,7 @@ This guide separates setup into:
 ## Requirements
 1. Python `>=3.10` (recommended `3.12+`, especially on macOS).
 2. Git.
-3. Node.js 18+ only if you plan to build or run the Web GUI frontend.
+3. Node.js 18+ only if you plan to rebuild the Web GUI frontend in dev mode.
 
 ## Runtime model (important)
 1. Install folder: where repo/package code lives.
@@ -80,20 +80,22 @@ Use this when you want:
 1. Easier policy edits (instead of editing `policy.json` manually).
 2. Human approval workflow when `requires_confirmation` is enabled.
 3. Policy pages for commands, paths, extensions, network controls, and global advanced simulation/budget settings.
+4. Prebuilt GUI assets are shipped in the repository and package. For normal installs, you can start `airg-ui` directly without rebuilding frontend assets.
 
 ### Serve mode (recommended)
-1. Build UI:
+1. Start backend:
+```bash
+airg-ui
+```
+2. Open `http://127.0.0.1:5001`
+
+Optional rebuild (only for frontend development changes):
 ```bash
 cd ui_v3
 npm install
 npm run build
 cd ..
 ```
-2. Start backend:
-```bash
-airg-ui
-```
-3. Open `http://127.0.0.1:5001`
 
 ### Dev mode (hot reload frontend)
 1. Terminal A:

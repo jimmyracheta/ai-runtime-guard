@@ -295,6 +295,7 @@ Snapshot behavior for policy actions:
 
 Serving model:
 - `ui/backend_flask.py` now serves both REST API endpoints and built frontend assets from `ui_v3/dist` when present.
+- Prebuilt `ui_v3/dist` assets are committed and packaged for normal installs; rebuilding is only needed for local frontend development changes.
 - If the frontend build is missing, backend API routes still work and `/` returns a build-missing hint.
 - Override built UI path with `AIRG_UI_DIST_PATH` when needed.
 - Legacy UI fallback is no longer used in normal flow, which prevents silent serving of stale assets.
