@@ -331,8 +331,8 @@ def _events_where(filters: dict[str, str]) -> tuple[str, list[Any]]:
     for key in ["agent_id", "source", "tool", "decision_tier", "matched_rule"]:
         val = str(filters.get(key, "")).strip()
         if val:
-            clauses.append(f"{key} = ?")
-            params.append(val)
+            clauses.append(f"LOWER({key}) LIKE ?")
+            params.append(f"%{val.lower()}%")
     if filters.get("from"):
         clauses.append("timestamp >= ?")
         params.append(filters["from"])

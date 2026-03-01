@@ -14,6 +14,10 @@ const POLICY_TABS = [
   { id: 'network', label: 'Network' },
   { id: 'advanced', label: 'Advanced Policy' },
 ]
+const REPORT_TABS = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'log', label: 'Log' },
+]
 const DEFAULT_TABS = [{ id: 'all', label: 'All Commands' }]
 const COLUMN_DEFS = [
   { key: 'allowed', label: 'Allowed', group: 'basic' },
@@ -167,9 +171,9 @@ export default function App() {
     tool: '',
     decision_tier: '',
     matched_rule: '',
-    from: '',
-    to: ''
   })
+  const [reportsTimeFilter, setReportsTimeFilter] = useState('today')
+  const [reportsCustomDay, setReportsCustomDay] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(ADVANCED_TOGGLE_KEY) === '1'
@@ -230,6 +234,27 @@ export default function App() {
       const val = String(v || '').trim()
       if (val) params.set(k, val)
     }
+    const now = new Date()
+    const toIso = now.toISOString()
+    if (reportsTimeFilter === 'last_5_min') {
+      const from = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
+      params.set('from', from)
+      params.set('to', toIso)
+    } else if (reportsTimeFilter === 'last_10_min') {
+      const from = new Date(now.getTime() - 10 * 60 * 1000).toISOString()
+      params.set('from', from)
+      params.set('to', toIso)
+    } else if (reportsTimeFilter === 'today') {
+      const start = new Date(now)
+      start.setHours(0, 0, 0, 0)
+      params.set('from', start.toISOString())
+      params.set('to', toIso)
+    } else if (reportsTimeFilter === 'custom_day' && reportsCustomDay) {
+      const start = new Date(`${reportsCustomDay}T00:00:00`)
+      const end = new Date(`${reportsCustomDay}T23:59:59.999`)
+      params.set('from', start.toISOString())
+      params.set('to', end.toISOString())
+    }
     return params.toString()
   }
 
@@ -274,9 +299,9 @@ export default function App() {
   useEffect(() => {
     if (activeRail !== 'reports') return
     fetchReports()
-    const id = setInterval(fetchReports, 5000)
+    const id = setInterval(fetchReports, 300000)
     return () => clearInterval(id)
-  }, [activeRail, reportsOffset, reportsLimit, reportsFilters])
+  }, [activeRail, reportsOffset, reportsLimit, reportsFilters, reportsTimeFilter, reportsCustomDay])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -683,24 +708,13 @@ export default function App() {
       <div className="space-y-3">
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm text-slate-700">
-              Last indexed: <span className="font-mono text-xs">{reportsStatus?.last_ingested_at || 'n/a'}</span>
+            <div>
+              <div className="text-sm text-slate-700">
+                Last indexed: <span className="font-mono text-xs">{reportsStatus?.last_ingested_at ? relativeTime(reportsStatus.last_ingested_at) : 'n/a'}</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-1">Automatic refresh runs every 5 minutes.</div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setReportsTab('dashboard')}
-                className={`px-3 py-1.5 rounded-lg text-sm ${reportsTab === 'dashboard' ? 'bg-brand text-white' : 'border border-slate-300 text-slate-700'}`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={() => setReportsTab('log')}
-                className={`px-3 py-1.5 rounded-lg text-sm ${reportsTab === 'log' ? 'bg-brand text-white' : 'border border-slate-300 text-slate-700'}`}
-              >
-                Log
-              </button>
-              <button onClick={fetchReports} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm">Refresh</button>
-            </div>
+            <button onClick={fetchReports} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm">Refresh</button>
           </div>
           {reportsError && <div className="mt-2 text-sm text-red-600">{reportsError}</div>}
           {reportsLoading && <div className="mt-2 text-xs text-slate-500">Refreshing reports...</div>}
@@ -709,7 +723,7 @@ export default function App() {
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filters</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {['agent_id', 'source', 'tool', 'decision_tier', 'matched_rule', 'from', 'to'].map((key) => (
+            {['agent_id', 'source', 'tool', 'decision_tier', 'matched_rule'].map((key) => (
               <input
                 key={key}
                 value={reportsFilters[key] || ''}
@@ -721,6 +735,30 @@ export default function App() {
                 placeholder={key}
               />
             ))}
+            <select
+              value={reportsTimeFilter}
+              onChange={(e) => {
+                setReportsOffset(0)
+                setReportsTimeFilter(e.target.value)
+              }}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-xs"
+            >
+              <option value="last_5_min">Last 5 min</option>
+              <option value="last_10_min">Last 10 min</option>
+              <option value="today">Today</option>
+              <option value="custom_day">Custom day</option>
+            </select>
+            {reportsTimeFilter === 'custom_day' && (
+              <input
+                type="date"
+                value={reportsCustomDay}
+                onChange={(e) => {
+                  setReportsOffset(0)
+                  setReportsCustomDay(e.target.value)
+                }}
+                className="border border-slate-300 rounded-lg px-3 py-2 text-xs"
+              />
+            )}
           </div>
         </div>
 
@@ -1353,6 +1391,7 @@ export default function App() {
     const backupAccess = draftPolicy?.backup_access || {}
     const restore = draftPolicy?.restore || {}
     const audit = draftPolicy?.audit || {}
+    const reportsCfg = draftPolicy?.reports || {}
     const bytesMultiplier = {
       KB: 1024,
       MB: 1024 * 1024,
@@ -1427,6 +1466,14 @@ export default function App() {
       setDraftPolicy((prev) => {
         const next = deepClone(prev)
         next.audit = { ...(next.audit || {}), ...patch }
+        return next
+      })
+    }
+
+    const setReportsConfig = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.reports = { ...(next.reports || {}), ...patch }
         return next
       })
     }
@@ -1853,6 +1900,75 @@ export default function App() {
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Reports Settings</div>
+          <div className="text-[11px] text-slate-500">
+            Controls reports ingestion cadence and retention for reports.db.
+          </div>
+          <div className="flex items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(reportsCfg.enabled)}
+                onChange={(e) => setReportsConfig({ enabled: e.target.checked })}
+              />
+              Reports enabled
+            </label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label className="text-xs text-slate-600">
+              Ingest poll interval (seconds)
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reportsCfg.ingest_poll_interval_seconds ?? 5}
+                onChange={(e) => setReportsConfig({ ingest_poll_interval_seconds: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Reconcile interval (seconds)
+              <input
+                type="number"
+                min={60}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reportsCfg.reconcile_interval_seconds ?? 3600}
+                onChange={(e) => setReportsConfig({ reconcile_interval_seconds: Math.max(60, parseInt(e.target.value, 10) || 60) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Prune interval (seconds)
+              <input
+                type="number"
+                min={300}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reportsCfg.prune_interval_seconds ?? 86400}
+                onChange={(e) => setReportsConfig({ prune_interval_seconds: Math.max(300, parseInt(e.target.value, 10) || 300) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Retention days
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reportsCfg.retention_days ?? 30}
+                onChange={(e) => setReportsConfig({ retention_days: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              />
+            </label>
+            <label className="text-xs text-slate-600">
+              Max reports DB size (MB)
+              <input
+                type="number"
+                min={10}
+                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                value={reportsCfg.max_db_size_mb ?? 200}
+                onChange={(e) => setReportsConfig({ max_db_size_mb: Math.max(10, parseInt(e.target.value, 10) || 10) })}
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Log Redaction</div>
           <label className="text-xs text-slate-600 block">
             Redact patterns (one regex per line)
@@ -1980,6 +2096,18 @@ export default function App() {
                 key={tab.id}
                 onClick={() => setActivePolicyTab(tab.id)}
                 className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${activePolicyTab === tab.id ? 'bg-brand text-white' : 'text-slate-700 hover:bg-slate-100'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </aside>
+        ) : activeRail === 'reports' ? (
+          <aside className="border-r border-slate-200 bg-white p-3 space-y-2">
+            {REPORT_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setReportsTab(tab.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${reportsTab === tab.id ? 'bg-brand text-white' : 'text-slate-700 hover:bg-slate-100'}`}
               >
                 {tab.label}
               </button>
