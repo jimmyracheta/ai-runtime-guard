@@ -86,9 +86,15 @@ def _default_workspace_path() -> pathlib.Path:
 
 
 def _policy_template() -> dict[str, Any]:
-    source = _project_root() / "policy.json"
-    if source.exists():
-        return json.loads(source.read_text())
+    candidates: list[pathlib.Path] = []
+    cwd = pathlib.Path.cwd().resolve()
+    # Prefer repository template when setup is launched from a cloned repo root.
+    if (cwd / "pyproject.toml").exists() and (cwd / "src").exists() and (cwd / "policy.json").exists():
+        candidates.append(cwd / "policy.json")
+    candidates.append(_project_root() / "policy.json")
+    for source in candidates:
+        if source.exists():
+            return json.loads(source.read_text())
     return {
         "blocked": {"commands": ["rm -rf", "mkfs", "shutdown", "reboot", "format", "dd"], "paths": [".env", ".ssh", "/etc/passwd"], "extensions": [".pem", ".key"]},
         "requires_confirmation": {"commands": [], "paths": [], "session_whitelist_enabled": True, "approval_security": {"max_failed_attempts_per_token": 5, "failed_attempt_window_seconds": 600, "token_ttl_seconds": 600}},
