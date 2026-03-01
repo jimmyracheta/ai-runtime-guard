@@ -7,12 +7,14 @@ This guide separates setup into:
 ## Requirements
 1. Python `>=3.10` (recommended `3.12+`, especially on macOS).
 2. Git.
-3. Node.js 18+ only if you plan to build or run the Web GUI frontend.
+3. Node.js 18+ only if you plan to rebuild the Web GUI frontend in dev mode.
 
 ## Runtime model (important)
 1. Install folder: where repo/package code lives.
 2. Workspace (`AIRG_WORKSPACE`): where agent actions are intended to run.
 3. Runtime state files: `policy.json`, `approvals.db`, HMAC key, backups.
+4. Reports database: `reports.db` (derived from `activity.log`).
+5. Runtime log file: `activity.log`.
 
 Do not use the install folder as the workspace.
 
@@ -34,7 +36,11 @@ pip install .
 ```
 2. Initialize runtime files:
 ```bash
-airg-setup --quickstart --yes
+airg-setup
+```
+Optional one-command non-interactive setup with GUI service:
+```bash
+airg-setup --defaults --yes --gui
 ```
 3. Create a dedicated workspace:
 ```bash
@@ -48,10 +54,13 @@ mkdir -p ~/airg-workspace
       "command": "airg-server",
       "args": [],
       "env": {
+        "AIRG_AGENT_ID": "claude-desktop",
         "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
         "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
         "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key"
+        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
+        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
+        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db"
       }
     }
   }
@@ -65,27 +74,34 @@ airg-doctor
 Notes:
 1. You do not manually start MCP server in normal use. The AI client starts `airg-server` when MCP is configured.
 2. Web GUI is not required for default/basic setup.
-3. `airg-setup` is the recommended setup entrypoint; `airg-init` remains available as a low-level initializer.
+3. `airg-setup` is the recommended setup entrypoint; `airg-init` is a low-level/manual fallback.
+4. `--defaults` uses default paths/non-interactive choices.
+5. `--gui` enables GUI service setup (`launchd` on macOS, `systemd --user` on Linux).
+6. `--no-gui` explicitly skips GUI service setup.
+7. Deployment prerequisite: disable native shell/file tools in your AI client so actions are forced through AIRG MCP tools.
 
 ## Advanced setup (MCP + Web GUI)
 Use this when you want:
 1. Easier policy edits (instead of editing `policy.json` manually).
 2. Human approval workflow when `requires_confirmation` is enabled.
 3. Policy pages for commands, paths, extensions, network controls, and global advanced simulation/budget settings.
+4. Reports dashboard/log pages sourced from `reports.db`.
+5. Prebuilt GUI assets are shipped in the repository and package. For normal installs, you can start `airg-ui` directly without rebuilding frontend assets.
 
 ### Serve mode (recommended)
-1. Build UI:
+1. Start backend:
+```bash
+airg-ui
+```
+2. Open `http://127.0.0.1:5001`
+
+Optional rebuild (only for frontend development changes):
 ```bash
 cd ui_v3
 npm install
 npm run build
 cd ..
 ```
-2. Start backend:
-```bash
-airg-ui
-```
-3. Open `http://127.0.0.1:5001`
 
 ### Dev mode (hot reload frontend)
 1. Terminal A:
@@ -111,18 +127,37 @@ airg-ui
 
 Use the same env var when running `airg-doctor` if you need deterministic path resolution.
 
+For deterministic startup and path visibility, you can run:
+```bash
+airg-ui --with-runtime-env
+```
+This prints resolved runtime paths before launching the UI backend.
+
 ## Guided setup (optional)
 Wizard:
 ```bash
 airg-setup
 ```
-Alias:
+Defaults-only (non-interactive path choices):
 ```bash
-airg init --wizard
+airg-setup --defaults --yes
 ```
-Quick non-interactive defaults:
+Defaults with GUI service enabled:
 ```bash
-airg-setup --quickstart --yes
+airg-setup --defaults --yes --gui
+```
+Defaults with GUI service disabled:
+```bash
+airg-setup --defaults --yes --no-gui
+```
+
+Service management:
+```bash
+airg-service install --workspace /absolute/path/to/airg-workspace
+airg-service start
+airg-service status
+airg-service stop
+airg-service uninstall
 ```
 
 Branch note:
@@ -144,9 +179,20 @@ Branch note:
 4. Approval is out-of-band via GUI/API; agent cannot self-approve through MCP tool surface.
 5. Blast-radius simulation, when configured, evaluates candidate targets relative to the current workspace context. Directory-depth/path checks are anchored from `AIRG_WORKSPACE`.
 6. For Claude Code users, add client-side workspace guard instructions (see `AGENT_MCP_CONFIGS.md`); this is a client-behavior mitigation, not an AIRG enforcement boundary.
+   - A sample MCP-only skill file is provided at `docs/mcp-only.md`.
+   - Save it as `<workspace>/.claude/skills/mcp-only.md` to enforce MCP-only behavior in that workspace.
 7. AIRG only enforces operations that flow through MCP tools. If the client has native shell/file tools outside MCP, those operations can bypass AIRG policy.
 8. Product scope is accidental-safety first: block severe destructive actions, keep actions inside known workspace boundaries, gate mass/wildcard operations, back up destructive/overwrite targets automatically, and keep full audit logs.
 9. Budget reset behavior is event-driven: counters are checked/reset when budgeted operations run (no background reset timer). With idle reset enabled, slow-drip patterns beyond `idle_reset_seconds` can avoid cumulative growth; budget controls are optimized for accidental burst-risk reduction during normal sessions.
+
+### Known issue: native client tools bypass MCP policy
+1. AIRG enforces only MCP tool calls routed to AIRG.
+2. Native client tools (for example Claude Code `Glob`, `Read`, `Write`, `Edit`, `Bash`) run outside AIRG policy.
+3. If these tools remain enabled, workspace boundary and path restrictions are not guaranteed.
+4. This is a deployment prerequisite: disable native shell/file tools using official client controls.
+5. For Claude Code, disable native tools in `.claude/settings.local.json` (or your official Claude config scope in use).
+6. Apply the equivalent official controls for other agents/clients.
+7. Optional: use the sample skill `docs/mcp-only.md` copied to `<workspace>/.claude/skills/mcp-only.md`.
 
 ## Post-install smoke test
 1. Confirm blocked command is denied (`rm -rf ...` test target in workspace).
@@ -154,3 +200,18 @@ Branch note:
 3. Confirm `activity.log` gets entries.
 4. If approval is enabled, confirm token appears and GUI approve/deny works.
 5. Confirm backup/restore dry-run path works for destructive file action.
+
+## Troubleshooting
+1. `claude mcp list` shows AIRG as disconnected:
+   - Use absolute command path for server in client config.
+   - Verify with `airg-doctor`.
+2. UI loads legacy/minimal page:
+   - Ensure prebuilt UI assets are present (normal package/repo flow includes them).
+   - Rebuild only if you changed frontend source: `cd ui_v3 && npm install && npm run build`.
+   - Ensure `AIRG_UI_DIST_PATH` points to `ui_v3/dist` only when custom path override is needed.
+3. Approvals loop with new token on every retry:
+   - Check HMAC key file is non-empty (`wc -c <approval_hmac_key_path>`).
+   - Restart UI and MCP client after fixing paths/secrets.
+4. Exports do not seem to apply:
+   - Env exports only affect the current shell process tree.
+   - Start `airg-ui` and your client from shells with the intended env values.

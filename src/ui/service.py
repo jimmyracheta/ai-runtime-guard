@@ -9,7 +9,7 @@ from typing import Any
 
 import config
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
+BASE_DIR = pathlib.Path(config.BASE_DIR)
 POLICY_PATH = BASE_DIR / "policy.json"
 CATALOG_PATH = pathlib.Path(__file__).resolve().parent / "catalog.json"
 CHANGE_LOG_PATH = pathlib.Path(__file__).resolve().parent / "config_changes.log"

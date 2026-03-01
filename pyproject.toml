@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-runtime-guard"
-version = "1.0"
+version = "1.2-dev"
 description = "MCP security wrapper with policy tiers, approvals, backup, and audit."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,8 +21,10 @@ airg-server = "airg_cli:main_server"
 airg-ui = "airg_cli:main_ui"
 airg-up = "airg_cli:main_up_entrypoint"
 airg-doctor = "airg_cli:main_doctor"
+airg-service = "airg_cli:main_service"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 py-modules = [
   "airg_cli",
   "server",
@@ -34,11 +36,13 @@ py-modules = [
   "executor",
   "models",
   "policy_engine",
+  "reports",
 ]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["tools*", "ui*"]
 
 [tool.setuptools.package-data]
-ui = ["catalog.json", "static/*"]
-ui_v3 = ["dist/**"]
+ui = ["catalog.json"]
+ui_v3 = ["dist/index.html", "dist/assets/*"]

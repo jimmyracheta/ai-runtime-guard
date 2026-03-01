@@ -2,17 +2,68 @@ import datetime
 import json
 import os
 import pathlib
+import platform
 import uuid
 
+
+def _module_base_dir() -> pathlib.Path:
+    here = pathlib.Path(__file__).resolve().parent
+    # In editable source layout modules live under ./src.
+    if here.name == "src" and (here.parent / "pyproject.toml").exists():
+        return here.parent
+    return here
+
+
+def _default_base_state_dir() -> pathlib.Path:
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return pathlib.Path(appdata) / "ai-runtime-guard"
+    if platform.system() == "Darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "ai-runtime-guard"
+    xdg = os.environ.get("XDG_STATE_HOME", "")
+    if xdg:
+        return pathlib.Path(xdg) / "ai-runtime-guard"
+    return pathlib.Path.home() / ".local" / "state" / "ai-runtime-guard"
+
+
+def _default_base_config_dir() -> pathlib.Path:
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return pathlib.Path(appdata) / "ai-runtime-guard"
+    if platform.system() == "Darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "ai-runtime-guard"
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if xdg:
+        return pathlib.Path(xdg) / "ai-runtime-guard"
+    return pathlib.Path.home() / ".config" / "ai-runtime-guard"
+
+
 # Startup configuration
-BASE_DIR = pathlib.Path(__file__).parent
-LOG_PATH = str(BASE_DIR / "activity.log")
+BASE_DIR = _module_base_dir()
+LOG_PATH = str(pathlib.Path(os.environ.get("AIRG_LOG_PATH", str(_default_base_state_dir() / "activity.log"))).expanduser().resolve())
+REPORTS_DB_PATH = str(
+    pathlib.Path(
+        os.environ.get(
+            "AIRG_REPORTS_DB_PATH",
+            str(pathlib.Path(os.environ.get("AIRG_APPROVAL_DB_PATH", str(_default_base_state_dir() / "approvals.db"))).expanduser().resolve().with_name("reports.db")),
+        )
+    ).expanduser().resolve()
+)
 BACKUP_DIR = str(BASE_DIR / "backups")
-POLICY_PATH = pathlib.Path(os.environ.get("AIRG_POLICY_PATH", str(BASE_DIR / "policy.json"))).expanduser().resolve()
+POLICY_PATH = pathlib.Path(
+    os.environ.get("AIRG_POLICY_PATH", str(_default_base_config_dir() / "policy.json"))
+).expanduser().resolve()
 
 
 def _load_policy() -> dict:
-    with open(POLICY_PATH) as f:
+    path = POLICY_PATH
+    if not path.exists():
+        fallback = BASE_DIR / "policy.json"
+        if fallback.exists():
+            path = fallback
+    with open(path) as f:
         return json.load(f)
 
 
@@ -144,10 +195,22 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     execution = _ensure_dict("execution")
     execution.setdefault("max_command_timeout_seconds", 30)
     execution.setdefault("max_output_chars", 200000)
+    shell_containment = execution.setdefault("shell_workspace_containment", {})
+    if not isinstance(shell_containment, dict):
+        raise ValueError("execution.shell_workspace_containment must be an object")
+    shell_containment.setdefault("mode", "off")
+    shell_containment.setdefault("exempt_commands", [])
+    shell_containment.setdefault("log_paths", True)
     if int(execution["max_command_timeout_seconds"]) < 1:
         raise ValueError("execution.max_command_timeout_seconds must be >= 1")
     if int(execution["max_output_chars"]) < 1024:
         raise ValueError("execution.max_output_chars must be >= 1024")
+    if shell_containment["mode"] not in {"off", "monitor", "enforce"}:
+        raise ValueError("execution.shell_workspace_containment.mode must be one of: off, monitor, enforce")
+    if not isinstance(shell_containment["exempt_commands"], list):
+        raise ValueError("execution.shell_workspace_containment.exempt_commands must be an array")
+    if not isinstance(shell_containment["log_paths"], bool):
+        raise ValueError("execution.shell_workspace_containment.log_paths must be boolean")
 
     backup_access = _ensure_dict("backup_access")
     backup_access.setdefault("block_agent_tools", True)
@@ -174,6 +237,26 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
         raise ValueError("audit.max_versions_per_file must be >= 1")
     _ensure_list(audit, "redact_patterns")
 
+    reports = _ensure_dict("reports")
+    reports.setdefault("enabled", True)
+    reports.setdefault("ingest_poll_interval_seconds", 5)
+    reports.setdefault("reconcile_interval_seconds", 3600)
+    reports.setdefault("retention_days", 30)
+    reports.setdefault("max_db_size_mb", 200)
+    reports.setdefault("prune_interval_seconds", 86400)
+    if not isinstance(reports["enabled"], bool):
+        raise ValueError("reports.enabled must be boolean")
+    if int(reports["ingest_poll_interval_seconds"]) < 1:
+        raise ValueError("reports.ingest_poll_interval_seconds must be >= 1")
+    if int(reports["reconcile_interval_seconds"]) < 60:
+        raise ValueError("reports.reconcile_interval_seconds must be >= 60")
+    if int(reports["retention_days"]) < 1:
+        raise ValueError("reports.retention_days must be >= 1")
+    if int(reports["max_db_size_mb"]) < 10:
+        raise ValueError("reports.max_db_size_mb must be >= 10")
+    if int(reports["prune_interval_seconds"]) < 300:
+        raise ValueError("reports.prune_interval_seconds must be >= 300")
+
     return policy
 
 
@@ -182,6 +265,7 @@ BACKUP_DIR = str(pathlib.Path(POLICY.get("audit", {}).get("backup_root", BACKUP_
 MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
 SESSION_ID: str = str(uuid.uuid4())
+AGENT_ID: str = (os.environ.get("AIRG_AGENT_ID", "").strip() or "Unknown")
 WORKSPACE_ROOT: str = os.environ.get("AIRG_WORKSPACE", str(BASE_DIR))
 SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
 

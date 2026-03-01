@@ -1,8 +1,9 @@
 import datetime
 import json
+import pathlib
 import re
 
-from config import LOG_PATH, POLICY, SESSION_ID, WORKSPACE_ROOT
+from config import AGENT_ID, LOG_PATH, POLICY, SESSION_ID, WORKSPACE_ROOT
 from models import PolicyResult
 
 
@@ -31,6 +32,7 @@ def build_log_entry(tool: str, result: PolicyResult, source: str = "ai-agent", *
     entry: dict = {
         "timestamp": timestamp,
         "source": source,
+        "agent_id": AGENT_ID,
         "session_id": SESSION_ID,
         "tool": tool,
         "workspace": WORKSPACE_ROOT,
@@ -46,6 +48,8 @@ def build_log_entry(tool: str, result: PolicyResult, source: str = "ai-agent", *
 
 
 def append_log_entry(entry: dict) -> None:
+    path = pathlib.Path(LOG_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
     with open(LOG_PATH, "a") as log_file:
         log_file.write(json.dumps(entry) + "\n")
 
@@ -66,6 +70,7 @@ def build_operator_log_entry(
     entry: dict = {
         "timestamp": timestamp,
         "source": "human-operator",
+        "agent_id": AGENT_ID,
         "session_id": session_id,
         "tool": tool,
         "event": event,

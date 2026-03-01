@@ -169,6 +169,102 @@ def network_policy_check(command: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _shell_containment_mode() -> str:
+    cfg = POLICY.get("execution", {}).get("shell_workspace_containment", {})
+    return str(cfg.get("mode", "off")).lower()
+
+
+def _shell_containment_exempt_commands() -> set[str]:
+    cfg = POLICY.get("execution", {}).get("shell_workspace_containment", {})
+    return {
+        str(value).strip().lower()
+        for value in cfg.get("exempt_commands", [])
+        if str(value).strip()
+    }
+
+
+def _looks_like_path_token(token: str) -> bool:
+    if not token:
+        return False
+    if token.startswith("-"):
+        return False
+    # Skip env var assignment tokens (e.g. FOO=bar cmd).
+    if "=" in token and "/" not in token and not token.startswith((".", "~")):
+        key = token.split("=", 1)[0]
+        if key and all(ch.isalnum() or ch == "_" for ch in key):
+            return False
+    if token.startswith(("/", "./", "../", "~/")):
+        return True
+    if "/" in token:
+        return True
+    if token.startswith("."):
+        return True
+    # File-like tokens are treated as path candidates for containment checks.
+    if "." in token:
+        return True
+    return False
+
+
+def _resolve_candidate_path(token: str) -> pathlib.Path:
+    expanded = os.path.expanduser(token)
+    if os.path.isabs(expanded):
+        return pathlib.Path(expanded).resolve()
+    return (pathlib.Path(WORKSPACE_ROOT) / expanded).resolve()
+
+
+def _extract_redirection_targets(segment: str) -> list[str]:
+    # Capture basic shell redirection operands (`>`, `>>`, `<`, `<<`).
+    matches = re.findall(r"(?:^|\s)(?:>>|>|<<|<)\s*([^\s;|&]+)", segment)
+    return [m.strip().strip("'\"") for m in matches if m.strip()]
+
+
+def shell_workspace_containment_check(command: str) -> tuple[bool, str | None, list[str]]:
+    mode = _shell_containment_mode()
+    if mode == "off":
+        return True, None, []
+
+    exempt = _shell_containment_exempt_commands()
+    offending_paths: list[str] = []
+    seen: set[str] = set()
+
+    for segment in split_shell_segments(command):
+        tokens, err = tokenize_shell_segment(segment)
+        if err or not tokens:
+            continue
+        cmd_name = str(tokens[0]).lower()
+        if cmd_name in exempt:
+            continue
+
+        candidates: list[str] = []
+        if cmd_name == "cd" and len(tokens) >= 2:
+            candidates.append(tokens[1])
+        candidates.extend(t for t in tokens[1:] if _looks_like_path_token(t))
+        candidates.extend(_extract_redirection_targets(segment))
+
+        for candidate in candidates:
+            try:
+                resolved = _resolve_candidate_path(candidate)
+            except Exception:
+                continue
+            resolved_str = str(resolved)
+            if resolved_str in seen:
+                continue
+            seen.add(resolved_str)
+            if not is_within_workspace(resolved_str):
+                offending_paths.append(resolved_str)
+
+    if not offending_paths:
+        return True, None, []
+
+    reason = (
+        "Shell workspace containment blocked command: one or more referenced paths are "
+        "outside AIRG_WORKSPACE/allowed whitelist roots"
+    )
+    if mode == "monitor":
+        return True, reason, offending_paths
+    return False, reason, offending_paths
+
+
 def command_targets_backup_storage(command: str) -> bool:
     if not POLICY.get("backup_access", {}).get("block_agent_tools", True):
         return False

@@ -123,7 +123,13 @@
 
   "execution": {
     "max_command_timeout_seconds": 30,
-    "max_output_chars": 200000
+    "max_output_chars": 200000,
+    "shell_workspace_containment": {
+      "_comment": "Advanced shell path guard for execute_command only. mode: off, monitor, enforce.",
+      "mode": "off",
+      "exempt_commands": [],
+      "log_paths": true
+    }
   },
 
   "backup_access": {
@@ -139,7 +145,7 @@
   },
 
   "audit": {
-    "_comment": "Audit and backup settings — backup_enabled is read at startup; log_level is retained for future runtime level support.",
+    "_comment": "Audit and backup settings  -  backup_enabled is read at startup; log_level is retained for future runtime level support.",
     "backup_enabled": true,
     "backup_on_content_change_only": true,
     "max_versions_per_file": 5,
@@ -151,5 +157,15 @@
       "(?i)(password\\s*[=:]\\s*)([^\\s]+)",
       "(?i)(secret\\s*[=:]\\s*)([^\\s]+)"
     ]
+  },
+
+  "reports": {
+    "_comment": "Reports ingest and retention settings for reports.db generated from activity.log.",
+    "enabled": true,
+    "ingest_poll_interval_seconds": 5,
+    "reconcile_interval_seconds": 3600,
+    "retention_days": 30,
+    "max_db_size_mb": 200,
+    "prune_interval_seconds": 86400
   }
 }

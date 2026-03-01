@@ -23,7 +23,7 @@ All notable changes to this project are documented in this file.
 ### Added
 - Root `Dockerfile` for containerized MCP runtime startup (`airg-server`).
 - Docker usage guide (`docs/DOCKER.md`) for listing/validation workflows.
-- Linux validation report (`docs/LINUX_VALIDATION.md`) with Ubuntu 24.04 + Python 3.12 test outcomes.
+- Linux validation summary (`docs/LINUX_VALIDATION_SUMMARY.md`) with Ubuntu 24.04 + Python 3.12 test outcomes.
 - Optional packaging metadata for bundled `ui_v3/dist` artifacts.
 
 ### Changed

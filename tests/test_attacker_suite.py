@@ -115,6 +115,35 @@ class AttackerTestSuite(unittest.TestCase):
         self.assertIn("[POLICY BLOCK]", blocked)
         self.assertIn("control characters", blocked)
 
+    def test_shell_workspace_containment_enforce_blocks_outside_workspace(self):
+        policy_engine.POLICY["execution"]["shell_workspace_containment"] = {
+            "mode": "enforce",
+            "exempt_commands": [],
+            "log_paths": True,
+        }
+        blocked = execute_command("ls /etc")
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn("Shell workspace containment blocked", blocked)
+
+    def test_shell_workspace_containment_monitor_allows_with_warning_logged(self):
+        policy_engine.POLICY["execution"]["shell_workspace_containment"] = {
+            "mode": "monitor",
+            "exempt_commands": [],
+            "log_paths": True,
+        }
+        output = execute_command("ls /etc")
+        # Command can still execute in monitor mode.
+        self.assertTrue(isinstance(output, str))
+
+        log_path = self.workspace / "activity.log"
+        lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        execute_entries = [entry for entry in lines if entry.get("tool") == "execute_command"]
+        self.assertTrue(execute_entries)
+        latest = execute_entries[-1]
+        self.assertEqual(latest.get("policy_decision"), "allowed")
+        self.assertIn("shell_containment_warning", latest)
+        self.assertTrue(latest.get("shell_containment_offending_paths"))
+
     def test_backup_preserves_relative_paths_and_manifest(self):
         first = self._write("dir1/a.txt", "one")
         second = self._write("dir2/a.txt", "two")

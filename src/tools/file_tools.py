@@ -121,7 +121,7 @@ def delete_file(path: str) -> str:
         if os.path.isdir(path):
             result = PolicyResult(
                 allowed=False,
-                reason=f"'{path}' is a directory — delete_file only removes individual files. Use execute_command for directory operations (note: bulk/recursive deletions are also subject to policy).",
+                reason=f"'{path}' is a directory  -  delete_file only removes individual files. Use execute_command for directory operations (note: bulk/recursive deletions are also subject to policy).",
                 decision_tier="blocked",
                 matched_rule=None,
             )
@@ -166,7 +166,7 @@ def delete_file(path: str) -> str:
         return f"Error deleting file: {e}"
 
     return f"Successfully deleted {path}. " + (
-        f"Backup saved to {backup_location} — the file can be recovered from there."
+        f"Backup saved to {backup_location}  -  the file can be recovered from there."
         if backup_location
         else "No content-change backup was needed."
     )

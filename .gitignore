@@ -5,7 +5,7 @@ venv/
 __pycache__/
 *.pyc
 
-# Runtime log (contains command history — keep off version control)
+# Runtime log (contains command history  -  keep off version control)
 activity.log
 activity.log.*
 approvals.db
@@ -25,14 +25,14 @@ approvals.db-*
 backups/
 simtest/
 tmp_test.txt
-ui/config_changes.log
+src/ui/config_changes.log
 
 # Test caches
 .pytest_cache/
+tests/fixtures/simtest/
 
 # UI build/dependency artifacts
 ui_v3/node_modules/
-ui_v3/dist/
 ui_v3/.vite/
 ui_v3/package-lock.json
 ai_runtime_guard.egg-info/
@@ -42,5 +42,10 @@ policy.json.last-applied
 
 # Setup/generated output artifacts
 out/
+build/
+documentation_review.md
+internal_archive/
 containerization.md
 todo_dev.md
+docs/packaging_todo.md
+docs/reporting_todo.md

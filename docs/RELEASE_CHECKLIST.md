@@ -63,7 +63,7 @@ git rev-parse vX.Y
 3. Confirm branch protections are still enabled on `main`.
 4. Run packaged CLI smoke checks:
 ```bash
-airg-setup --quickstart --yes
+airg-setup --defaults --yes
 airg-doctor
 airg-server   # startup smoke (Ctrl+C)
 airg-ui       # startup smoke (Ctrl+C)

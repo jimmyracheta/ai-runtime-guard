@@ -12,6 +12,7 @@ Python:
 - Exposes MCP tools: `server_info`, `execute_command`, `read_file`, `write_file`, `delete_file`, `list_directory`, `restore_backup`.
 - Applies policy from `policy.json` before side effects.
 - Logs all actions to `activity.log`.
+- Builds report views from `activity.log` into `reports.db` for dashboard and log analytics.
 - Creates backups for destructive operations in `backups/`.
 
 ### Product scope (intentional)
@@ -31,8 +32,10 @@ Before starting MCP server and UI backend, source:
 - `source scripts/setup_runtime_env.sh`
 
 This exports:
+- `AIRG_AGENT_ID`
 - `AIRG_APPROVAL_DB_PATH`
 - `AIRG_APPROVAL_HMAC_KEY_PATH`
+- `AIRG_LOG_PATH`
 
 Default locations created by the script:
 - macOS: `~/Library/Application Support/ai-runtime-guard/`
@@ -42,18 +45,22 @@ The script also enforces restrictive permissions (`700` for directories, `600` f
 
 Packaged CLI alternative:
 1. `airg-setup` (recommended)
-2. Guided setup alias: `airg init --wizard`
+2. `airg-service` (GUI service management for macOS/Linux user sessions)
 3. `airg-server` (MCP server) and/or `airg-ui` (Flask backend for control plane)
 4. `airg-up` starts Flask backend as a sidecar and then starts MCP server (stdio) in one command.
 5. `airg-doctor` runs environment, path, permission, and UI-build diagnostics.
-6. Recommended gate: run `airg-doctor` and resolve warnings before first MCP client connection.
+6. `airg-ui --with-runtime-env` initializes and prints resolved runtime paths before launching UI backend.
+7. Recommended gate: run `airg-doctor` and resolve warnings before first MCP client connection.
 
 Note:
 1. In packaged flow, `airg-setup` already performs secure runtime path setup.
 2. `scripts/setup_runtime_env.sh` is mainly for direct source/manual runs.
-3. `airg-setup`/`airg-init` seed `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
-4. `airg-setup`/`airg-init` print a ready-to-copy MCP config env block with resolved `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, and `AIRG_APPROVAL_HMAC_KEY_PATH`.
-5. `airg-setup` asks guided questions (workspace, runtime paths, optional additional workspaces, agent type), updates policy safely, writes agent-compatible MCP config snippets under `./out/mcp-configs`, then runs `airg-doctor`.
+3. `airg-setup` seeds `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
+4. `airg-setup` prints a ready-to-copy MCP config env block with resolved `AIRG_AGENT_ID`, `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, `AIRG_APPROVAL_HMAC_KEY_PATH`, `AIRG_LOG_PATH`, and `AIRG_REPORTS_DB_PATH`.
+5. `airg-init` is available as a low-level/manual bootstrap fallback.
+5. `airg-setup` asks guided questions (workspace, runtime paths, optional GUI service, agent type), updates policy safely, writes agent-compatible MCP config snippets under `./out/mcp-configs`, then runs `airg-doctor`.
+6. `airg-setup --gui` performs setup and configures/starts GUI as a user service (`launchd` on macOS, `systemd --user` on Linux).
+7. `airg-setup --defaults --yes` is unattended defaults mode; combine with `--gui` or `--no-gui` to control UI service setup.
 
 ### AIRG_WORKSPACE model
 `AIRG_WORKSPACE` defines the operational sandbox root for AI agent actions.
@@ -276,7 +283,16 @@ Behavior:
   - counting controls (`mode`, `dedupe_paths`, `include_noop_attempts`, `commands_included`)
   - reset controls (`reset.window_seconds`, `reset.idle_reset_seconds`)
   - note: `cumulative_budget.audit.*` is still not exposed in GUI controls
+- Advanced Policy panel also includes shell containment for `execute_command`:
+  - `execution.shell_workspace_containment.mode` with `off` / `monitor` / `enforce`
+  - this is a best-effort path guard for shell command arguments and redirection targets
+  - `monitor` logs violations but allows execution; `enforce` blocks
 - Status badges reflect applied policy only (post-`Apply`).
+- Reports rail now includes:
+  - `Dashboard` tab with totals, 7-day event/blocked trends, top commands/paths, blocked-by-rule.
+  - `Log` tab with paginated events and filters (`agent_id`, `source`, `tool`, `policy_decision`, `decision_tier`, `matched_rule`, `command`, `path`, `event`, time range).
+  - automatic ingestion from `activity.log` into `reports.db`, with freshness metadata (`Last indexed`).
+  - ingest sync runs on manual refresh and scheduled refresh, while filter changes query existing indexed data.
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.
 - `Apply`/`Revert`/`Reset` perform validation + atomic write and append `ui/config_changes.log`.
 - Global header no longer shows tier legend badges; it retains policy hash and unsaved-changes state.
@@ -287,8 +303,10 @@ Snapshot behavior for policy actions:
 
 Serving model:
 - `ui/backend_flask.py` now serves both REST API endpoints and built frontend assets from `ui_v3/dist` when present.
+- Prebuilt `ui_v3/dist` assets are committed and packaged for normal installs; rebuilding is only needed for local frontend development changes.
 - If the frontend build is missing, backend API routes still work and `/` returns a build-missing hint.
 - Override built UI path with `AIRG_UI_DIST_PATH` when needed.
+- Legacy UI fallback is no longer used in normal flow, which prevents silent serving of stale assets.
 
 ## 13. What is automatic vs manual in UI command catalog
 Automatic:
@@ -302,15 +320,17 @@ Manual:
 ## 14. Merge and release gates (current)
 Before merge to `main`:
 1. Unit tests must pass (`python3 -m unittest discover -s tests -p 'test_*.py'`).
-2. Manual MCP gate from `tests.md` must pass.
+2. Manual MCP gate from `TEST_PLAN.md` must pass.
 3. Approval separation gate must pass (agent cannot approve via MCP tool surface).
 
 Linux validation note:
-- Linux validation has been completed and documented (`docs/LINUX_VALIDATION.md`).
+- Linux validation summary is documented in `docs/LINUX_VALIDATION_SUMMARY.md`.
 
 ## 15. Known high-priority limitations
 - Operator endpoint authentication/authorization remains local-trust oriented and should be hardened before broad deployment.
 - `shell=True` remains in command execution path.
+- `execution.shell_workspace_containment` can reduce accidental out-of-workspace shell access, but it is heuristic and does not replace OS-level sandboxing.
 - Cumulative budget defaults may be too high to trigger in typical manual runs.
 - Per-command UI override fields are metadata only today.
 - AIRG enforcement only applies to MCP tool calls; native client shell/file tools (for example Claude Code Bash) can bypass AIRG controls.
+- For Claude Code, a sample MCP-only skill is provided at `docs/mcp-only.md`; save it as `<workspace>/.claude/skills/mcp-only.md` to guide strict MCP-only behavior.

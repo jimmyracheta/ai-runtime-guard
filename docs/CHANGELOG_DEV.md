@@ -1,5 +1,108 @@
 # CHANGELOG_DEV
 
+Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
+
+## 2026-03-01 (reports foundation: activity log -> reports db -> reports UI)
+- Added reports runtime module (`src/reports.py`) with:
+  - SQLite schema for `events`, `ingest_state`, and `meta`
+  - incremental byte-offset ingestion from `activity.log`
+  - rotation/truncation-aware offset recovery
+  - policy-driven retention and size-prune logic.
+- Added reports policy defaults/validation:
+  - `reports.enabled`
+  - `reports.ingest_poll_interval_seconds`
+  - `reports.reconcile_interval_seconds`
+  - `reports.retention_days`
+  - `reports.max_db_size_mb`
+  - `reports.prune_interval_seconds`.
+- Added runtime env support for `AIRG_REPORTS_DB_PATH` in setup output, CLI env wiring, and doctor diagnostics.
+- Added Flask reports API endpoints:
+  - `/reports/status`
+  - `/reports/overview`
+  - `/reports/events`
+  - `/reports/top-commands`
+  - `/reports/top-paths`
+  - `/reports/blocked-by-rule`
+  - `/reports/confirmations`.
+- Implemented Reports UI (replacing placeholder):
+  - `Dashboard` tab with totals, 7-day trends, top commands/paths, blocked-by-rule
+  - `Log` tab with paginated events and filters
+  - auto-refresh and freshness indicator.
+- Added tests for reports store sync/query/truncation handling (`tests/test_reports_store.py`).
+- Updated docs (`docs/INSTALL.md`, `docs/MANUAL.md`, `docs/ARCHITECTURE.md`) for reports database/runtime behavior.
+
+## 2026-03-01 (guided setup flow + GUI user service)
+- Added GUI service management for local deployments:
+  - macOS: user `launchd` agent (`com.ai-runtime-guard.ui`)
+  - Linux/Ubuntu: user `systemd` unit (`airg-ui.service`)
+  - new CLI entrypoint: `airg-service` with `install|start|stop|restart|status|uninstall`.
+- Refactored setup UX to match guided install flow:
+  - install confirmation prompt
+  - workspace-first questions (existing vs create default sibling workspace)
+  - runtime path defaults vs custom override prompts
+  - optional GUI service enable prompt
+  - final `airg-doctor` run.
+- Added unattended setup flags aligned to the new flow:
+  - `--defaults`
+  - `--yes`
+  - `--gui` / `--no-gui`.
+- Removed setup flags that no longer match the agreed flow (`--quickstart`, wizard alias behavior, `--enable-ui`, additional-workspaces prompt path).
+- Updated docs to reflect the new setup/service model (`README`, `docs/INSTALL.md`, `docs/MANUAL.md`).
+
+## 2026-03-01 (ship prebuilt GUI assets in repo/package)
+- Removed `ui_v3/dist` from `.gitignore` so release/source users receive prebuilt frontend assets by default.
+- Added package-data inclusion for `ui_v3/dist` in `pyproject.toml` so installed packages can serve UI without local frontend rebuild.
+- Updated docs to clarify normal `airg-ui` startup no longer requires `npm run build` unless frontend source has changed.
+
+## 2026-02-28 (setup flag for automatic GUI build)
+- Added `--gui` flag to setup flows (`airg-setup` and `airg init --wizard`) to build Web GUI assets automatically during installation.
+- Setup now can run `npm install` and `npm run build` in `ui_v3` as part of one-command bootstrap, with explicit error output when npm/build prerequisites are missing or fail.
+- Updated install/operator docs:
+  - `docs/INSTALL.md` one-command setup example with `--gui`
+  - `docs/MANUAL.md` packaged CLI behavior includes `airg-setup --gui`.
+
+## 2026-02-28 (shell workspace containment for execute_command)
+- Added advanced shell containment policy under `execution.shell_workspace_containment`:
+  - `mode`: `off`, `monitor`, `enforce`
+  - `exempt_commands`: optional command-level exemptions
+  - `log_paths`: metadata toggle for path logging verbosity.
+- Implemented runtime containment checks in `execute_command`:
+  - best-effort parsing of shell segments, path-like arguments, `cd` targets, and redirection targets
+  - resolves candidate paths and checks against workspace + whitelist roots
+  - `monitor` mode logs warnings and offending paths without blocking
+  - `enforce` mode blocks with matched rule `execution.shell_workspace_containment`.
+- Exposed containment mode in GUI `Advanced Policy` page as:
+  - `Attempt workspace shell command containment` (`off`/`monitor`/`enforce`).
+- Updated policy defaults and templates:
+  - `policy.json`
+  - `src/config.py` validation/normalization defaults
+  - `src/airg_cli.py` fallback template.
+- Added tests for enforce/monitor containment behavior in `tests/test_attacker_suite.py` and updated policy fixtures.
+- Updated docs:
+  - `docs/MANUAL.md` advanced policy behavior and semantics
+  - `docs/ARCHITECTURE.md` execute_command/containment notes.
+
+## 2026-02-28 (linux friction hardening pass)
+- Implemented runtime log path defaults to user state storage (`AIRG_LOG_PATH`, defaulting to platform state dir) instead of package/repo-local paths.
+- Updated setup/runtime bootstrap to include `AIRG_LOG_PATH` in generated env blocks and MCP snippets.
+- Fixed setup key-material bug: runtime init now creates non-empty approval HMAC key content instead of touching an empty file.
+- Added approval self-heal for empty HMAC key files in `approvals.py`; empty key files are regenerated and warning-audited.
+- Updated audit writer to create parent directories before appending entries to avoid first-write failures.
+- Removed legacy UI static fallback from UI dist discovery in CLI and Flask backend; v3 build is now the deterministic target.
+- Added `airg-ui --with-runtime-env` to initialize/print resolved runtime paths before launching UI backend.
+- Expanded `airg-doctor` diagnostics:
+  - prints resolved workspace/policy/db/key/log/ui paths
+  - warns on empty HMAC key files
+  - checks log file permissions and placement alongside existing runtime checks.
+- Updated docs for Linux setup and MCP env guidance:
+  - added `AIRG_LOG_PATH` to config examples
+  - documented shell env scope pitfalls and UI startup troubleshooting
+  - documented new UI startup mode (`--with-runtime-env`).
+- Added validation and execution planning docs (later archived into internal historical notes).
+- Added regression tests:
+  - setup permissions test verifies non-empty HMAC key creation
+  - approval store test verifies empty HMAC key regeneration behavior.
+
 ## 2026-02-27 (network policy precedence + default-deny toggle)
 - Updated network enforcement logic to support explicit unknown-domain policy:
   - added `network.block_unknown_domains` (`false` by default)
@@ -79,7 +182,7 @@
 - Added root `Dockerfile` for direct containerized MCP runtime (`airg-server`) and documented container usage in `docs/DOCKER.md`.
 - Extended `.gitignore` for runtime sidecar artifacts (`*.db-wal`, `*.db-shm`, `*.db-journal`, `approvals.db-*`), rotated logs (`activity.log.*`), and setup output (`out/`).
 - Completed docs reorganization by keeping only `README.md`, `CHANGELOG.md`, and `STATUS.md` at repo root and moving operational docs under `docs/`.
-- Added/updated Linux validation report (`docs/LINUX_VALIDATION.md`) and reflected validation completion in status tracking.
+- Added/updated Linux validation documentation and reflected validation completion in status tracking.
 - Improved Linux/source-install UI discovery in runtime code:
   - `airg-ui` now sets `AIRG_UI_DIST_PATH` automatically from discovered valid UI paths.
   - `airg-doctor` now checks multiple candidate UI build paths before warning.
@@ -135,7 +238,7 @@
   - approvals must come from a separate trusted channel
   - runtime must enforce caller identity/role for approval
   - regression coverage must prove no self-approval path exists
-- Added explicit approval-separation checkpoint requirements to `README.md` and `tests.md`.
+- Added explicit approval-separation checkpoint requirements to `README.md` and test-plan docs.
 - Added a Phase-1 local control-plane UI skeleton (`ui/`) for policy management (catalog tabs, tier toggles, validation, atomic apply, and change log), intended as the base for a future out-of-band approval interface.
 - Added UI v2 improvements:
   - named tier columns and legend/status semantics

@@ -16,13 +16,15 @@ Primary runtime artifacts:
 - `approvals.py`: command/restore token lifecycle and approval failure throttling.
 - `budget.py`: cumulative budget accounting and scope/reset behavior.
 - `backup.py`: backup extraction, dedupe/hash logic, retention/version pruning.
+- `reports.py`: activity-log ingestion, reports SQLite schema, query aggregations, retention pruning.
 - `audit.py`: canonical audit-log entry build + append helpers.
 - `executor.py`: constrained subprocess environment and shell execution wrapper.
 - `tools/`: tool surfaces split by concern (`command_tools.py`, `file_tools.py`, `restore_tools.py`).
 - `policy.json`: runtime policy tiers and thresholds.
 - `activity.log`: JSONL audit trail (one object per event).
+- `reports.db`: SQLite analytics store derived from `activity.log` for UI reporting.
 - `backups/`: timestamped snapshots with per-backup `manifest.json`.
-- `ui/`: local control-plane UI for policy editing (`ui/server.py`, `ui/service.py`, static frontend assets).
+- `ui/`: control-plane backend service modules (`ui/service.py`, `ui/backend_flask.py`).
 - `ui/backend_flask.py`: REST backend for policy + approvals endpoints used by control-plane UI v3.
 - `ui_v3/`: Vite React + Tailwind control-plane frontend.
 
@@ -135,6 +137,20 @@ Common extra fields by context:
 - confirmation flow: `approval_token`, `event=command_approved`
 - policy overlap: `event=policy_conflict_warning`, `matching_tiers`, `resolved_to`
 
+## Reporting pipeline
+Reporting is read-optimized and does not alter enforcement flow.
+
+Flow:
+1. MCP/runtime writes JSONL events to `activity.log` in real time.
+2. UI backend calls reports sync, which tails new log bytes into `reports.db` (`events` + `ingest_state` + `meta`).
+3. Reports UI reads analytics from `reports.db`, not from raw log lines.
+
+Design properties:
+1. `activity.log` remains source of truth.
+2. Reporting ingestion is best-effort and non-blocking for policy enforcement.
+3. Retention/pruning is policy-driven (`reports.retention_days`, `reports.max_db_size_mb`, `reports.prune_interval_seconds`).
+4. Ingested rows include `agent_id` and `session_id` for multi-agent attribution views.
+
 ## Backup and recovery model
 Backups are created for destructive/overwrite operations:
 - `execute_command`: when regex detects `rm`, `mv`, or overwrite redirect (`>` but not `>>`)
@@ -149,7 +165,7 @@ Backup behavior:
 
 ## MCP tool to action map
 - `server_info`: returns build/workspace/base metadata.
-- `execute_command`: policy-check command, track retries, optional backup, execute in constrained env (`shell=True`, `/bin/bash`, cwd=`WORKSPACE_ROOT`, 30s timeout).
+- `execute_command`: policy-check command (including optional shell workspace containment), track retries, optional backup, execute in constrained env (`shell=True`, `/bin/bash`, cwd=`WORKSPACE_ROOT`, 30s timeout).
 - `read_file`: path policy + file-size guard, then read text (`errors="replace"`).
 - `write_file`: path policy, optional pre-overwrite backup, write text.
 - `delete_file`: path policy, existence/type checks, pre-delete backup, delete file.
@@ -159,6 +175,7 @@ Backup behavior:
 Observed current gaps/risk areas:
 - network policy is enforced at command gate level (domain intent + domain allow/block + optional unknown-domain default-deny), but redirect/final-destination inspection remains limited.
 - command execution uses `shell=True`; mitigations exist but parser/shell complexity remains a core risk surface.
+- optional shell containment (`execution.shell_workspace_containment`) provides best-effort path-boundary checks for shell command arguments/redirection, but cannot guarantee full shell semantic coverage.
 - backup path extraction for command execution relies on token regex + existence checks and can miss some shell-expanded path forms.
 
 ## Policy profile baseline
@@ -176,4 +193,4 @@ The UI can store per-command editor metadata in:
 
 Current behavior:
 - metadata is persisted by UI apply flow and included in audit diffs
-- runtime enforcement is unchanged in current v1.1 baseline; these fields are planning/config scaffolding for later per-command enforcement work
+- runtime enforcement is unchanged in current stable baseline; these fields are planning/config scaffolding for later per-command enforcement work
