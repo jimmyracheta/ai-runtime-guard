@@ -76,6 +76,7 @@ Notes:
 4. `--defaults` uses default paths/non-interactive choices.
 5. `--gui` enables GUI service setup (`launchd` on macOS, `systemd --user` on Linux).
 6. `--no-gui` explicitly skips GUI service setup.
+7. Deployment prerequisite: disable native shell/file tools in your AI client so actions are forced through AIRG MCP tools.
 
 ## Advanced setup (MCP + Web GUI)
 Use this when you want:
@@ -178,6 +179,14 @@ Branch note:
 7. AIRG only enforces operations that flow through MCP tools. If the client has native shell/file tools outside MCP, those operations can bypass AIRG policy.
 8. Product scope is accidental-safety first: block severe destructive actions, keep actions inside known workspace boundaries, gate mass/wildcard operations, back up destructive/overwrite targets automatically, and keep full audit logs.
 9. Budget reset behavior is event-driven: counters are checked/reset when budgeted operations run (no background reset timer). With idle reset enabled, slow-drip patterns beyond `idle_reset_seconds` can avoid cumulative growth; budget controls are optimized for accidental burst-risk reduction during normal sessions.
+
+### Known issue: native client tools bypass MCP policy
+1. AIRG enforces only MCP tool calls routed to AIRG.
+2. Native client tools (for example Claude Code `Glob`, `Read`, `Write`, `Edit`, `Bash`) run outside AIRG policy.
+3. If these tools remain enabled, workspace boundary and path restrictions are not guaranteed.
+4. This is a deployment prerequisite: disable native shell/file tools using official client controls.
+5. For Claude Code, disable native tools in `.claude/settings.local.json` (or your official Claude config scope in use).
+6. Apply the equivalent official controls for other agents/clients.
 
 ## Post-install smoke test
 1. Confirm blocked command is denied (`rm -rf ...` test target in workspace).

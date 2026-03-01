@@ -35,10 +35,12 @@ Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or 
 - Advanced controls available for opt-in: simulation gating, human approval workflows, cumulative budget limits, and shell workspace containment modes (`off`/`monitor`/`enforce`)
 - Local web GUI for policy editing, approval management, and audit log review
 
-## Important limitation
-1. AIRG can only enforce actions that go through its MCP tools.
-2. If an AI client exposes native shell/file tools outside MCP (for example, Claude Code Bash), those tools can bypass AIRG policy enforcement.
-3. Client-side instructions to avoid native tools are a mitigation, not a guarantee.
+## Deployment prerequisite
+1. AIRG enforces policy only for actions that pass through AIRG MCP tools.
+2. Native client tools outside MCP (for example Claude Code `Glob`, `Read`, `Write`, `Edit`, `Bash`) are outside AIRG enforcement and can bypass workspace/path restrictions.
+3. For AIRG policy boundaries to be effective, operators must disable native shell/file tools in the client using official configuration methods.
+4. For Claude Code, configure this in `.claude/settings.local.json` (or equivalent official settings path for your deployment model).
+5. Treat this as a required deployment condition, not optional hardening.
 
 ## Requirements
 Python:
