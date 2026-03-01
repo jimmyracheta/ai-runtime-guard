@@ -49,7 +49,7 @@ Packaged CLI alternative:
 4. `airg-up` starts Flask backend as a sidecar and then starts MCP server (stdio) in one command.
 5. `airg-doctor` runs environment, path, permission, and UI-build diagnostics.
 6. `airg-ui --with-runtime-env` initializes and prints resolved runtime paths before launching UI backend.
-6. Recommended gate: run `airg-doctor` and resolve warnings before first MCP client connection.
+7. Recommended gate: run `airg-doctor` and resolve warnings before first MCP client connection.
 
 Note:
 1. In packaged flow, `airg-setup` already performs secure runtime path setup.
@@ -57,6 +57,7 @@ Note:
 3. `airg-setup`/`airg-init` seed `policy.audit.backup_root` to a user-local runtime state path (`<state_dir>/backups`) when creating policy files.
 4. `airg-setup`/`airg-init` print a ready-to-copy MCP config env block with resolved `AIRG_AGENT_ID`, `AIRG_POLICY_PATH`, `AIRG_APPROVAL_DB_PATH`, `AIRG_APPROVAL_HMAC_KEY_PATH`, and `AIRG_LOG_PATH`.
 5. `airg-setup` asks guided questions (workspace, runtime paths, optional additional workspaces, agent type), updates policy safely, writes agent-compatible MCP config snippets under `./out/mcp-configs`, then runs `airg-doctor`.
+6. `airg-setup --gui` performs the same setup and additionally builds Web GUI assets (`npm install` and `npm run build` in `ui_v3`).
 
 ### AIRG_WORKSPACE model
 `AIRG_WORKSPACE` defines the operational sandbox root for AI agent actions.

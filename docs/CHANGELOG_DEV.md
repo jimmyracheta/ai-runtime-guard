@@ -1,5 +1,12 @@
 # CHANGELOG_DEV
 
+## 2026-02-28 (setup flag for automatic GUI build)
+- Added `--gui` flag to setup flows (`airg-setup` and `airg init --wizard`) to build Web GUI assets automatically during installation.
+- Setup now can run `npm install` and `npm run build` in `ui_v3` as part of one-command bootstrap, with explicit error output when npm/build prerequisites are missing or fail.
+- Updated install/operator docs:
+  - `docs/INSTALL.md` one-command setup example with `--gui`
+  - `docs/MANUAL.md` packaged CLI behavior includes `airg-setup --gui`.
+
 ## 2026-02-28 (shell workspace containment for execute_command)
 - Added advanced shell containment policy under `execution.shell_workspace_containment`:
   - `mode`: `off`, `monitor`, `enforce`

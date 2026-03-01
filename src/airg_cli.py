@@ -9,6 +9,7 @@ import secrets
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -345,6 +346,22 @@ def _write_agent_config_outputs(agent: str, payload: dict[str, Any], out_dir: pa
     return out_file
 
 
+def _build_ui_assets() -> None:
+    ui_dir = _project_root() / "ui_v3"
+    if not ui_dir.exists():
+        raise SystemExit(f"[airg][error] UI source directory not found: {ui_dir}")
+    if shutil.which("npm") is None:
+        raise SystemExit("[airg][error] npm is required for --gui build, but was not found in PATH.")
+
+    print(f"[airg] Building GUI assets in {ui_dir} ...")
+    try:
+        subprocess.run(["npm", "install"], cwd=str(ui_dir), check=True)
+        subprocess.run(["npm", "run", "build"], cwd=str(ui_dir), check=True)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"[airg][error] GUI build failed (exit={exc.returncode}).") from exc
+    print("[airg] GUI build complete.")
+
+
 def _run_setup(
     *,
     quickstart: bool,
@@ -359,6 +376,7 @@ def _run_setup(
     agent_id: str,
     force_policy: bool,
     enable_ui: str,
+    gui_build: bool,
     out_dir: str,
 ) -> None:
     issues, warnings = _preflight_checks()
@@ -381,6 +399,7 @@ def _run_setup(
     selected_backup_root = backup_root.strip()
     selected_additional = [p.strip() for p in additional_workspaces.split(",") if p.strip()]
     selected_agent_id = agent_id.strip() or "Unknown"
+    selected_gui_build = bool(gui_build)
 
     if not yes and not quickstart:
         selected_workspace = _prompt_text("Primary workspace path", selected_workspace or str(pathlib.Path.home() / "airg-workspace"))
@@ -390,6 +409,8 @@ def _run_setup(
         selected_backup_root = _prompt_text("Custom backup root path (blank=default)", selected_backup_root)
         selected_enable_ui = _prompt_yes_no("Do you want to use the Policy GUI?", default=True)
         enable_ui = "yes" if selected_enable_ui else "no"
+        if selected_enable_ui:
+            selected_gui_build = _prompt_yes_no("Build GUI assets now (npm install + npm run build)?", default=True)
         if _prompt_yes_no("Add additional workspace paths to whitelist?", default=False):
             raw_extra = _prompt_text("Comma-separated absolute paths", ",".join(selected_additional))
             selected_additional = [p.strip() for p in raw_extra.split(",") if p.strip()]
@@ -418,6 +439,9 @@ def _run_setup(
         backup_override = pathlib.Path(selected_backup_root).expanduser().resolve()
         current_policy = _apply_backup_override(current_policy, str(backup_override))
     _save_policy_to_path(path_overrides["policy_path"], current_policy)
+
+    if selected_gui_build:
+        _build_ui_assets()
 
     payload = _agent_config_payload(selected_agent, str(workspace_path), path_overrides, selected_agent_id)
     output_root = pathlib.Path(out_dir).expanduser().resolve()
@@ -483,6 +507,7 @@ def main_setup_entrypoint() -> None:
     parser.add_argument("--agent-id", default="Unknown", help="Agent identifier to include in runtime logs.")
     parser.add_argument("--force-policy", action="store_true", help="Regenerate policy file from template before applying wizard updates.")
     parser.add_argument("--enable-ui", default="yes", choices=["yes", "no"], help="Whether to keep UI management workflow enabled.")
+    parser.add_argument("--gui", action="store_true", help="Build GUI assets during setup (npm install && npm run build).")
     parser.add_argument("--out-dir", default="./out/mcp-configs", help="Output directory for generated MCP config snippets.")
     args = parser.parse_args()
     _run_setup(
@@ -498,6 +523,7 @@ def main_setup_entrypoint() -> None:
         agent_id=args.agent_id,
         force_policy=args.force_policy,
         enable_ui=args.enable_ui,
+        gui_build=args.gui,
         out_dir=args.out_dir,
     )
 
@@ -695,6 +721,7 @@ def main() -> None:
     parser.add_argument("--agent", default="generic", help="Wizard mode: claude_desktop, cursor, generic.")
     parser.add_argument("--agent-id", default="Unknown", help="Wizard mode: agent identifier for logs.")
     parser.add_argument("--enable-ui", default="yes", choices=["yes", "no"], help="Wizard mode: UI workflow preference.")
+    parser.add_argument("--gui", action="store_true", help="Wizard mode: build GUI assets during setup.")
     parser.add_argument("--out-dir", default="./out/mcp-configs", help="Wizard mode: output directory for generated MCP config.")
     parser.add_argument(
         "--with-runtime-env",
@@ -717,6 +744,7 @@ def main() -> None:
             agent_id=args.agent_id,
             force_policy=args.force_policy,
             enable_ui=args.enable_ui,
+            gui_build=args.gui,
             out_dir=args.out_dir,
         )
         return

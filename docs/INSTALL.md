@@ -37,6 +37,10 @@ pip install .
 ```bash
 airg-setup --quickstart --yes
 ```
+Optional one-command setup with GUI build:
+```bash
+airg-setup --quickstart --yes --gui
+```
 3. Create a dedicated workspace:
 ```bash
 mkdir -p ~/airg-workspace
@@ -69,6 +73,7 @@ Notes:
 1. You do not manually start MCP server in normal use. The AI client starts `airg-server` when MCP is configured.
 2. Web GUI is not required for default/basic setup.
 3. `airg-setup` is the recommended setup entrypoint; `airg-init` remains available as a low-level initializer.
+4. `--gui` builds frontend assets during setup (`npm install` + `npm run build` in `ui_v3`).
 
 ## Advanced setup (MCP + Web GUI)
 Use this when you want:
