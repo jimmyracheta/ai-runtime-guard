@@ -135,11 +135,16 @@ def _report_filters() -> dict[str, str]:
     return out
 
 
+def _should_sync_reports() -> bool:
+    raw = request.args.get("sync", "").strip().lower()
+    return raw in {"1", "true", "yes"}
+
+
 @app.route("/reports/status", methods=["GET", "OPTIONS"])
 def reports_status():
     if request.method == "OPTIONS":
         return ("", 204)
-    sync = _reports_sync()
+    sync = _reports_sync() if _should_sync_reports() else {"enabled": True, "ingested": 0, "skipped": True}
     status = reports.get_status(REPORTS_DB_PATH)
     status["sync"] = sync
     status["enabled"] = bool(service.load_policy().get("reports", {}).get("enabled", True))
@@ -150,7 +155,8 @@ def reports_status():
 def reports_overview():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     data = reports.get_overview(REPORTS_DB_PATH, filters=_report_filters())
     return jsonify(data)
 
@@ -159,7 +165,8 @@ def reports_overview():
 def reports_events():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     limit = int(request.args.get("limit", "100"))
     offset = int(request.args.get("offset", "0"))
     data = reports.list_events(
@@ -175,7 +182,8 @@ def reports_events():
 def reports_top_commands():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     data = reports.get_overview(REPORTS_DB_PATH, filters=_report_filters())
     return jsonify({"top_commands": data.get("top_commands", [])})
 
@@ -184,7 +192,8 @@ def reports_top_commands():
 def reports_top_paths():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     data = reports.get_overview(REPORTS_DB_PATH, filters=_report_filters())
     return jsonify({"top_paths": data.get("top_paths", [])})
 
@@ -193,7 +202,8 @@ def reports_top_paths():
 def reports_blocked_by_rule():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     data = reports.get_overview(REPORTS_DB_PATH, filters=_report_filters())
     return jsonify({"blocked_by_rule": data.get("blocked_by_rule", [])})
 
@@ -202,7 +212,8 @@ def reports_blocked_by_rule():
 def reports_confirmations():
     if request.method == "OPTIONS":
         return ("", 204)
-    _reports_sync()
+    if _should_sync_reports():
+        _reports_sync()
     data = reports.get_overview(REPORTS_DB_PATH, filters=_report_filters())
     totals = data.get("totals", {})
     return jsonify(

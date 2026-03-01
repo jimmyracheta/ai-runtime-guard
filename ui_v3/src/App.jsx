@@ -268,11 +268,11 @@ export default function App() {
     return params.toString()
   }
 
-  async function fetchReports() {
+  async function fetchReports({ sync } = { sync: false }) {
     setReportsLoading(true)
     setReportsError('')
     try {
-      const q = buildReportQuery({ limit: reportsLimit, offset: reportsOffset })
+      const q = buildReportQuery({ limit: reportsLimit, offset: reportsOffset, sync: sync ? '1' : '' })
       const [statusRes, overviewRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE}/reports/status?${q}`),
         fetch(`${API_BASE}/reports/overview?${q}`),
@@ -308,9 +308,14 @@ export default function App() {
 
   useEffect(() => {
     if (activeRail !== 'reports') return
-    fetchReports()
-    const id = setInterval(fetchReports, 300000)
+    fetchReports({ sync: true })
+    const id = setInterval(() => fetchReports({ sync: true }), 300000)
     return () => clearInterval(id)
+  }, [activeRail])
+
+  useEffect(() => {
+    if (activeRail !== 'reports') return
+    fetchReports({ sync: false })
   }, [activeRail, reportsOffset, reportsLimit, reportsFilters, reportsTimeFilter, reportsCustomDay])
 
   useEffect(() => {
@@ -724,7 +729,7 @@ export default function App() {
               </div>
               <div className="text-[11px] text-slate-500 mt-1">Automatic refresh runs every 5 minutes.</div>
             </div>
-            <button onClick={fetchReports} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm">Refresh</button>
+            <button onClick={() => fetchReports({ sync: true })} className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm">Refresh</button>
           </div>
           {reportsError && <div className="mt-2 text-sm text-red-600">{reportsError}</div>}
           {reportsLoading && <div className="mt-2 text-xs text-slate-500">Refreshing reports...</div>}
