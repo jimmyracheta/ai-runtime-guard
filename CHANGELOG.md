@@ -2,6 +2,34 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.0] - 2026-03-01
+### Added
+- Reports subsystem with SQLite-backed indexing from `activity.log`:
+  - new runtime module `src/reports.py`
+  - retention and size-prune controls
+  - report status/overview/events/confirmations endpoints.
+- Reports UI with Dashboard and Log pages:
+  - totals, trends, top commands/paths, blocked-by-rule
+  - filterable/paginated event log
+  - auto-refresh and manual refresh controls.
+- Guided setup and UI service lifecycle improvements:
+  - simplified interactive setup flow and aligned unattended flags (`--defaults`, `--yes`, `--gui`, `--no-gui`)
+  - `airg-service` CLI for user-level service management (`install`, `start`, `stop`, `restart`, `status`, `uninstall`) on macOS (`launchd`) and Linux (`systemd`).
+- Agent identity support via `AIRG_AGENT_ID` with safe fallback (`Unknown`) and propagation into runtime audit/reporting data.
+- Advanced `execute_command` workspace containment control (`execution.shell_workspace_containment`) with `off`, `monitor`, and `enforce` modes.
+- Sample MCP-only Claude skill document (`docs/mcp-only.md`) for deployments that require strict MCP-tool-only operation.
+
+### Changed
+- Source layout refactor to `src/` package structure while preserving CLI/tool behavior.
+- Runtime defaults and setup flow now consistently place policy/state artifacts in user runtime locations.
+- UI build/discovery flow updated so prebuilt `ui_v3/dist` assets ship in repo/package for normal setup paths.
+- Reports and advanced policy controls expanded in the GUI, including improved filtering and reset behavior.
+- Documentation restructured and updated for v1.2 behavior, known boundaries, and setup expectations.
+
+### Security
+- Clarified and documented deployment requirement that AIRG enforces MCP-routed actions only; native agent tools (for example Bash/Glob/Read/Write/Edit) are outside AIRG policy control unless disabled by the operator.
+- Hardened approval and runtime path handling through stricter path/env defaults and improved diagnostics in setup/doctor workflows.
+
 ## [1.1.1] - 2026-02-27
 ### Changed
 - Network policy model clarified and hardened:
