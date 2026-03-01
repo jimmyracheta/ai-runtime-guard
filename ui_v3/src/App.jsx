@@ -36,9 +36,17 @@ const RUNTIME_PATH_LABELS = {
   AIRG_POLICY_PATH: 'Policy File',
   AIRG_APPROVAL_DB_PATH: 'Approval Database',
   AIRG_APPROVAL_HMAC_KEY_PATH: 'Approval Signing Key',
+  AIRG_LOG_PATH: 'Log Path',
   AIRG_REPORTS_DB_PATH: 'Reports Database',
   AIRG_UI_DIST_PATH: 'UI Build Path',
 }
+const REPORT_FILTER_FIELDS = [
+  { key: 'agent_id', label: 'Agent' },
+  { key: 'source', label: 'Source' },
+  { key: 'tool', label: 'Tool' },
+  { key: 'decision_tier', label: 'Decision Tier' },
+  { key: 'matched_rule', label: 'Matched Rule' },
+]
 
 const STATUS_STYLE = {
   allowed: 'bg-green-100 text-green-700 border-green-200',
@@ -236,7 +244,9 @@ export default function App() {
     }
     const now = new Date()
     const toIso = now.toISOString()
-    if (reportsTimeFilter === 'last_5_min') {
+    if (reportsTimeFilter === 'all_time') {
+      // no time bounds
+    } else if (reportsTimeFilter === 'last_5_min') {
       const from = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
       params.set('from', from)
       params.set('to', toIso)
@@ -723,16 +733,17 @@ export default function App() {
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filters</div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {['agent_id', 'source', 'tool', 'decision_tier', 'matched_rule'].map((key) => (
+            {REPORT_FILTER_FIELDS.map((field) => (
               <input
-                key={key}
-                value={reportsFilters[key] || ''}
+                key={field.key}
+                value={reportsFilters[field.key] || ''}
                 onChange={(e) => {
                   setReportsOffset(0)
-                  setReportsFilters((prev) => ({ ...prev, [key]: e.target.value }))
+                  setReportsFilters((prev) => ({ ...prev, [field.key]: e.target.value }))
                 }}
                 className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono"
-                placeholder={key}
+                placeholder={field.label}
+                title={field.label}
               />
             ))}
             <select
@@ -743,6 +754,7 @@ export default function App() {
               }}
               className="border border-slate-300 rounded-lg px-3 py-2 text-xs"
             >
+              <option value="all_time">All Time</option>
               <option value="last_5_min">Last 5 min</option>
               <option value="last_10_min">Last 10 min</option>
               <option value="today">Today</option>
@@ -851,12 +863,13 @@ export default function App() {
                     <th className="text-left px-2 py-1">Source</th>
                     <th className="text-left px-2 py-1">Tool</th>
                     <th className="text-left px-2 py-1">Decision</th>
+                    <th className="text-left px-2 py-1">Matched Rule</th>
                     <th className="text-left px-2 py-1">Command / Path</th>
                   </tr>
                 </thead>
                 <tbody>
                   {reportsEvents.length === 0 && (
-                    <tr><td colSpan={6} className="px-2 py-4 text-center text-slate-500">No events</td></tr>
+                    <tr><td colSpan={7} className="px-2 py-4 text-center text-slate-500">No events</td></tr>
                   )}
                   {reportsEvents.map((e) => (
                     <tr key={e.id} className="border-t border-slate-100">
@@ -865,6 +878,7 @@ export default function App() {
                       <td className="px-2 py-1">{e.source || '-'}</td>
                       <td className="px-2 py-1">{e.tool || '-'}</td>
                       <td className="px-2 py-1">{e.policy_decision || '-'}</td>
+                      <td className="px-2 py-1 font-mono">{e.matched_rule || '-'}</td>
                       <td className="px-2 py-1 font-mono">{e.command || e.path || '-'}</td>
                     </tr>
                   ))}
@@ -1045,6 +1059,7 @@ export default function App() {
           <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Runtime Paths (Read Only)</div>
           <div className="grid grid-cols-1 gap-2">
             {Object.entries(runtimePaths).map(([key, value]) => (
+              key === 'AIRG_AGENT_ID' ? null : (
               <div key={key} className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-2 items-center">
                 <div className="text-xs text-slate-600">{RUNTIME_PATH_LABELS[key] || key}</div>
                 <input
@@ -1053,6 +1068,7 @@ export default function App() {
                   className="border border-slate-300 rounded-lg px-3 py-2 bg-slate-100 text-slate-700 font-mono text-xs"
                 />
               </div>
+              )
             ))}
           </div>
           <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
