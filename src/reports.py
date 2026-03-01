@@ -3,6 +3,7 @@ import hashlib
 import json
 import pathlib
 import sqlite3
+from contextlib import closing
 from typing import Any
 
 from audit import append_log_entry
@@ -42,7 +43,7 @@ def _settings(policy: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def init_reports_store(db_path: pathlib.Path) -> None:
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS events (
@@ -102,6 +103,7 @@ def init_reports_store(db_path: pathlib.Path) -> None:
             """,
             (STATE_KEY,),
         )
+        conn.commit()
 
 
 def _load_state(conn: sqlite3.Connection) -> sqlite3.Row:
@@ -217,7 +219,7 @@ def sync_from_log(
     parse_errors = 0
     now = _utc_now()
 
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         st = _load_state(conn)
         offset = int(st["last_offset"])
         prev_size = int(st["log_size"])
@@ -318,7 +320,7 @@ def _query_rows(
     sql: str,
     params: tuple[Any, ...] = (),
 ) -> list[dict[str, Any]]:
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
@@ -343,7 +345,7 @@ def _events_where(filters: dict[str, str]) -> tuple[str, list[Any]]:
 
 def get_status(db_path: pathlib.Path) -> dict[str, Any]:
     init_reports_store(db_path)
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         st = _load_state(conn)
         total = conn.execute("SELECT COUNT(*) AS c FROM events").fetchone()["c"]
     return {
@@ -363,7 +365,7 @@ def get_status(db_path: pathlib.Path) -> dict[str, Any]:
 def get_overview(db_path: pathlib.Path, filters: dict[str, str] | None = None) -> dict[str, Any]:
     filters = filters or {}
     where, params = _events_where(filters)
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         by_day = conn.execute(
             f"""
             SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS count
@@ -453,7 +455,7 @@ def list_events(
     where, params = _events_where(filters)
     limit = max(1, min(int(limit), 500))
     offset = max(0, int(offset))
-    with _conn(db_path) as conn:
+    with closing(_conn(db_path)) as conn:
         total = conn.execute(f"SELECT COUNT(*) AS c FROM events {where}", tuple(params)).fetchone()["c"]
         rows = conn.execute(
             f"""
