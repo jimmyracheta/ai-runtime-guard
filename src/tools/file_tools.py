@@ -91,7 +91,8 @@ def write_file(path: str, content: str, ctx: Context | None = None) -> str:
             return f"[POLICY BLOCK] {result.reason}"
 
         backup_location = None
-        if os.path.exists(path):
+        backup_enabled = bool(POLICY.get("audit", {}).get("backup_enabled", True))
+        if backup_enabled and os.path.exists(path):
             backup_location = backup_paths([path])
             if backup_location:
                 append_log_entry(
@@ -171,7 +172,8 @@ def delete_file(path: str, ctx: Context | None = None) -> str:
             append_log_entry(log_entry)
             return f"[POLICY BLOCK] {result.reason}"
 
-        backup_location = backup_paths([path])
+        backup_enabled = bool(POLICY.get("audit", {}).get("backup_enabled", True))
+        backup_location = backup_paths([path]) if backup_enabled else ""
         if backup_location:
             log_entry["backup_location"] = backup_location
 

@@ -70,6 +70,7 @@ mkdir -p ~/airg-workspace
 ```bash
 airg-doctor
 ```
+   - Check reported `backup_root`; expected default is user runtime state (`~/.local/state/ai-runtime-guard/backups` on Linux, `~/Library/Application Support/ai-runtime-guard/backups` on macOS), not `site-packages`.
 
 Notes:
 1. You do not manually start MCP server in normal use. The AI client starts `airg-server` when MCP is configured.
@@ -215,3 +216,6 @@ Branch note:
 4. Exports do not seem to apply:
    - Env exports only affect the current shell process tree.
    - Start `airg-ui` and your client from shells with the intended env values.
+5. Backups appear under install dir or `site-packages`:
+   - Set `audit.backup_root` in runtime `policy.json` to user-local runtime state path.
+   - Re-run `airg-doctor` and confirm resolved `backup_root`.

@@ -14,8 +14,17 @@ Note: older entries in this file are preserved as historical development records
 - Updated command catalog visibility for policy transparency:
   - added `find`, `find -delete`, `find -exec rm`, `xargs`, `xargs rm`, `xargs -0 rm`, `do rm` to Linux/macOS tabs.
 - Added regression tests for policy-driven destructive wrapper blocking and non-destructive `find` allow behavior.
+- Fixed backup-root defaults for installed/runtime mode:
+  - default backup root now resolves to user runtime state (`<state_dir>/backups`) instead of module/package directory
+  - removed unsafe fallback behavior that could place backups under `site-packages`.
+- Aligned backup gating behavior:
+  - `write_file` and `delete_file` now honor `audit.backup_enabled` consistently with `execute_command`.
+- Expanded diagnostics:
+  - `airg-doctor` now prints resolved `backup_root`
+  - warns when `backup_root` is inside project directory or `site-packages`.
+- Added regression tests for backup root defaults and backup-enabled gating behavior.
 - Validation:
-  - Python unit tests pass with `PYTHONPATH=src` (`36` tests).
+  - Python unit tests pass with `PYTHONPATH=src` (`41` tests).
 
 ## 2026-03-03 (v1.3 identity/session isolation - phase 1)
 - Added runtime request/session context module (`src/runtime_context.py`) using context-local state to carry active MCP call identity.

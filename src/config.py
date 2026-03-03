@@ -51,7 +51,14 @@ REPORTS_DB_PATH = str(
         )
     ).expanduser().resolve()
 )
-BACKUP_DIR = str(BASE_DIR / "backups")
+def _default_backup_root() -> pathlib.Path:
+    env_override = os.environ.get("AIRG_BACKUP_ROOT", "").strip()
+    if env_override:
+        return pathlib.Path(env_override).expanduser().resolve()
+    return (_default_base_state_dir() / "backups").resolve()
+
+
+BACKUP_DIR = str(_default_backup_root())
 POLICY_PATH = pathlib.Path(
     os.environ.get("AIRG_POLICY_PATH", str(_default_base_config_dir() / "policy.json"))
 ).expanduser().resolve()
@@ -230,7 +237,7 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     audit.setdefault("backup_enabled", True)
     audit.setdefault("backup_on_content_change_only", True)
     audit.setdefault("max_versions_per_file", 5)
-    audit.setdefault("backup_root", str(BASE_DIR / "backups"))
+    audit.setdefault("backup_root", str(_default_backup_root()))
     audit.setdefault("backup_retention_days", 30)
     audit.setdefault("log_level", "verbose")
     if int(audit["max_versions_per_file"]) < 1:
@@ -261,7 +268,11 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
 
 
 POLICY: dict = _validate_and_normalize_policy(_load_policy())
-BACKUP_DIR = str(pathlib.Path(POLICY.get("audit", {}).get("backup_root", BACKUP_DIR)).resolve())
+BACKUP_DIR = str(
+    pathlib.Path(POLICY.get("audit", {}).get("backup_root", str(_default_backup_root())))
+    .expanduser()
+    .resolve()
+)
 MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
 SESSION_ID: str = str(uuid.uuid4())

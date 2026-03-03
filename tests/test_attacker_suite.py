@@ -221,6 +221,28 @@ class AttackerTestSuite(unittest.TestCase):
         self.assertIn("[POLICY BLOCK]", read_log)
         self.assertIn("runtime state", read_log)
 
+    def test_write_file_skips_backup_when_backup_disabled(self):
+        self._write("demo.txt", "old")
+        policy_engine.POLICY["audit"]["backup_enabled"] = False
+        result = write_file("demo.txt", "new")
+        self.assertIn("no content-change backup needed", result)
+
+        log_path = self.workspace / "activity.log"
+        lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        backup_events = [entry for entry in lines if entry.get("event") == "backup_created" and entry.get("tool") == "write_file"]
+        self.assertEqual(backup_events, [])
+
+    def test_delete_file_skips_backup_when_backup_disabled(self):
+        self._write("gone.txt", "x")
+        policy_engine.POLICY["audit"]["backup_enabled"] = False
+        result = delete_file("gone.txt")
+        self.assertIn("No content-change backup was needed", result)
+
+        log_path = self.workspace / "activity.log"
+        lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        backup_events = [entry for entry in lines if entry.get("event") == "backup_created" and entry.get("tool") == "delete_file"]
+        self.assertEqual(backup_events, [])
+
 
 if __name__ == "__main__":
     unittest.main()
