@@ -2,6 +2,19 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-03 (v1.3 approval UX + destructive command coverage)
+- Improved approval workflow context in the UI:
+  - pending approval records now store and return `agent_id`
+  - Approvals panel now shows: `Agent <agent_id> needs approval for the following command: <truncated command>`
+  - full command remains available in expandable details, with affected paths unchanged.
+- Extended blast-radius simulation to cover `find ... -delete` flows:
+  - `simulate_blast_radius` now enumerates affected targets for `find -delete` within workspace scope
+  - simulation can treat `find -delete` as destructive-equivalent when simulation rules include `rm` (or `find`).
+- Improved affected-path accounting for destructive non-`rm` shell commands that go through simulation-backed coverage, reducing undercounting in logs/budget metadata.
+- Validation:
+  - Python unit tests pass with `PYTHONPATH=src` (`32` tests).
+  - `ui_v3` production build passes.
+
 ## 2026-03-03 (v1.3 identity/session isolation - phase 1)
 - Added runtime request/session context module (`src/runtime_context.py`) using context-local state to carry active MCP call identity.
 - Tool execution paths now bind session identity per MCP call and reset automatically:

@@ -399,6 +399,66 @@ def simulate_blast_radius(command: str, sim_commands: list[str]) -> dict:
     saw_wildcard = False
     parse_error = False
 
+    def _simulate_find_delete(tokens: list[str]) -> set[str]:
+        results: set[str] = set()
+        if not tokens or tokens[0].lower() != "find":
+            return results
+        lowered = [t.lower() for t in tokens]
+        if "-delete" not in lowered:
+            return results
+
+        roots: list[str] = []
+        idx = 1
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if tok.startswith("-") or tok in {"(", ")", "!", ","}:
+                break
+            roots.append(tok)
+            idx += 1
+        if not roots:
+            roots = [WORKSPACE_ROOT]
+
+        type_filter = None
+        for i, tok in enumerate(lowered):
+            if tok == "-type" and i + 1 < len(lowered):
+                raw = lowered[i + 1]
+                if raw in {"f", "d"}:
+                    type_filter = raw
+                break
+
+        for root in roots:
+            candidate = root if os.path.isabs(root) else os.path.join(WORKSPACE_ROOT, root)
+            try:
+                resolved_root = pathlib.Path(candidate).resolve()
+            except OSError:
+                continue
+            if not resolved_root.exists():
+                continue
+            if not is_within_workspace(str(resolved_root)):
+                continue
+
+            if resolved_root.is_file():
+                if type_filter in (None, "f"):
+                    results.add(str(resolved_root))
+                continue
+
+            if not resolved_root.is_dir():
+                continue
+
+            for dirpath, dirnames, filenames in os.walk(resolved_root, followlinks=False):
+                base = pathlib.Path(dirpath)
+                if type_filter in (None, "d"):
+                    for d in dirnames:
+                        p = (base / d).resolve()
+                        if is_within_workspace(str(p)):
+                            results.add(str(p))
+                if type_filter in (None, "f"):
+                    for f in filenames:
+                        p = (base / f).resolve()
+                        if is_within_workspace(str(p)):
+                            results.add(str(p))
+        return results
+
     segments = split_shell_segments(command)
     for segment in segments:
         segment = segment.strip()
@@ -412,7 +472,13 @@ def simulate_blast_radius(command: str, sim_commands: list[str]) -> dict:
             continue
 
         op = tokens[0].lower()
-        if op not in lower_ops:
+        is_find_delete = op == "find" and any(t.lower() == "-delete" for t in tokens)
+        should_simulate_find = is_find_delete and ("find" in lower_ops or "rm" in lower_ops)
+        if op not in lower_ops and not should_simulate_find:
+            continue
+
+        if should_simulate_find:
+            affected.update(_simulate_find_delete(tokens))
             continue
 
         for token in tokens[1:]:
