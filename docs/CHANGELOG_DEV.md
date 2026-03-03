@@ -2,6 +2,25 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-03 (v1.3 identity/session isolation - phase 1)
+- Added runtime request/session context module (`src/runtime_context.py`) using context-local state to carry active MCP call identity.
+- Tool execution paths now bind session identity per MCP call and reset automatically:
+  - `execute_command`
+  - `read_file` / `write_file` / `delete_file` / `list_directory`
+  - `restore_backup`
+- Approval, policy confirmation checks, retry/budget scope, and audit log entries now use active session context instead of only process-global startup UUID.
+- Audit entries now include `agent_session_id` (with `session_id` kept as compatibility alias).
+- Reports pipeline upgraded for session-aware analytics:
+  - new `events.agent_session_id` column
+  - migration/backfill for existing `reports.db` rows
+  - filter support in backend/API and UI.
+- Reports UI updates:
+  - new `Agent Session` filter
+  - Log table now shows session column for per-session attribution.
+- Validation:
+  - Python unit tests pass with `PYTHONPATH=src` (`32` tests).
+  - `ui_v3` production build passes.
+
 ## 2026-03-01 (reports foundation: activity log -> reports db -> reports UI)
 - Added reports runtime module (`src/reports.py`) with:
   - SQLite schema for `events`, `ingest_state`, and `meta`

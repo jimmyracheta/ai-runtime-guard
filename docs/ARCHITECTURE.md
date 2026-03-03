@@ -120,7 +120,7 @@ Canonical builder: `build_log_entry(tool, PolicyResult, **kwargs)`.
 Base fields:
 - `timestamp` (UTC ISO8601 with `Z`)
 - `source` (typically `ai-agent`, with `mcp-server` for internal side-effects/warnings and `human-operator` for GUI/API approvals)
-- `session_id` (UUID4 generated at process start)
+- `session_id` (active session identity; connection-scoped during tool execution, process fallback outside tool context)
 - `tool`
 - `workspace`
 - `policy_decision` (`allowed` or `blocked`)
@@ -136,6 +136,7 @@ Common extra fields by context:
 - backup events: `backup_location`, `event=backup_created`
 - confirmation flow: `approval_token`, `event=command_approved`
 - policy overlap: `event=policy_conflict_warning`, `matching_tiers`, `resolved_to`
+- identity/session flow: `agent_id` (configured identity), `agent_session_id` (connection-scoped identity), `session_id` (alias to active session identity for compatibility)
 
 ## Reporting pipeline
 Reporting is read-optimized and does not alter enforcement flow.
@@ -149,7 +150,7 @@ Design properties:
 1. `activity.log` remains source of truth.
 2. Reporting ingestion is best-effort and non-blocking for policy enforcement.
 3. Retention/pruning is policy-driven (`reports.retention_days`, `reports.max_db_size_mb`, `reports.prune_interval_seconds`).
-4. Ingested rows include `agent_id` and `session_id` for multi-agent attribution views.
+4. Ingested rows include `agent_id`, `agent_session_id`, and `session_id` for multi-agent attribution views.
 
 ## Backup and recovery model
 Backups are created for destructive/overwrite operations:

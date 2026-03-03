@@ -3,8 +3,9 @@ import json
 import pathlib
 import re
 
-from config import AGENT_ID, LOG_PATH, POLICY, SESSION_ID, WORKSPACE_ROOT
+from config import AGENT_ID, LOG_PATH, POLICY, WORKSPACE_ROOT
 from models import PolicyResult
+from runtime_context import current_agent_session_id
 
 
 def _redact_text_for_audit(value: str) -> str:
@@ -29,11 +30,13 @@ def redact_for_audit(value):
 
 def build_log_entry(tool: str, result: PolicyResult, source: str = "ai-agent", **kwargs) -> dict:
     timestamp = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    agent_session_id = current_agent_session_id()
     entry: dict = {
         "timestamp": timestamp,
         "source": source,
         "agent_id": AGENT_ID,
-        "session_id": SESSION_ID,
+        "session_id": agent_session_id,
+        "agent_session_id": agent_session_id,
         "tool": tool,
         "workspace": WORKSPACE_ROOT,
         "policy_decision": "allowed" if result.allowed else "blocked",
@@ -67,11 +70,13 @@ def build_operator_log_entry(
     Build an audit event for explicit human operator actions (e.g. GUI approvals).
     """
     timestamp = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    agent_session_id = session_id or current_agent_session_id()
     entry: dict = {
         "timestamp": timestamp,
         "source": "human-operator",
         "agent_id": AGENT_ID,
-        "session_id": session_id,
+        "session_id": agent_session_id,
+        "agent_session_id": agent_session_id,
         "tool": tool,
         "event": event,
         "workspace": WORKSPACE_ROOT,

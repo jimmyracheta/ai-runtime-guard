@@ -290,7 +290,7 @@ Behavior:
 - Status badges reflect applied policy only (post-`Apply`).
 - Reports rail now includes:
   - `Dashboard` tab with totals, 7-day event/blocked trends, top commands/paths, blocked-by-rule.
-  - `Log` tab with paginated events and filters (`agent_id`, `source`, `tool`, `policy_decision`, `decision_tier`, `matched_rule`, `command`, `path`, `event`, time range).
+  - `Log` tab with paginated events and filters (`agent_id`, `agent_session_id`, `source`, `tool`, `policy_decision`, `decision_tier`, `matched_rule`, `command`, `path`, `event`, time range).
   - automatic ingestion from `activity.log` into `reports.db`, with freshness metadata (`Last indexed`).
   - ingest sync runs on manual refresh and scheduled refresh, while filter changes query existing indexed data.
 - Shared policy actions are available across all policy tabs: `Reload`, `Validate`, `Apply`, `Revert Last Apply`, `Reset to Defaults`.

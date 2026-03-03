@@ -42,6 +42,7 @@ const RUNTIME_PATH_LABELS = {
 }
 const REPORT_FILTER_FIELDS = [
   { key: 'agent_id', label: 'Agent' },
+  { key: 'agent_session_id', label: 'Agent Session' },
   { key: 'source', label: 'Source' },
   { key: 'tool', label: 'Tool' },
   { key: 'decision_tier', label: 'Decision Tier' },
@@ -179,6 +180,7 @@ export default function App() {
   const [reportsError, setReportsError] = useState('')
   const [reportsFilters, setReportsFilters] = useState({
     agent_id: '',
+    agent_session_id: '',
     source: '',
     tool: '',
     policy_decision: '',
@@ -736,6 +738,7 @@ export default function App() {
       setReportsExpandedEventId(null)
       setReportsFilters({
         agent_id: '',
+        agent_session_id: '',
         source: '',
         tool: '',
         policy_decision: '',
@@ -992,6 +995,7 @@ export default function App() {
                     <th className="text-left px-2 py-1"> </th>
                     <th className="text-left px-2 py-1">Time</th>
                     <th className="text-left px-2 py-1">Agent</th>
+                    <th className="text-left px-2 py-1">Session</th>
                     <th className="text-left px-2 py-1">Source</th>
                     <th className="text-left px-2 py-1">Tool</th>
                     <th className="text-left px-2 py-1">Decision</th>
@@ -1001,7 +1005,7 @@ export default function App() {
                 </thead>
                 <tbody>
                   {reportsEvents.length === 0 && (
-                    <tr><td colSpan={8} className="px-2 py-4 text-center text-slate-500">No events</td></tr>
+                    <tr><td colSpan={9} className="px-2 py-4 text-center text-slate-500">No events</td></tr>
                   )}
                   {reportsEvents.map((e) => {
                     const expanded = reportsExpandedEventId === e.id
@@ -1025,6 +1029,7 @@ export default function App() {
                           </td>
                           <td className="px-2 py-1 font-mono">{e.timestamp}</td>
                           <td className="px-2 py-1">{e.agent_id || 'Unknown'}</td>
+                          <td className="px-2 py-1 font-mono">{e.agent_session_id || e.session_id || '-'}</td>
                           <td className="px-2 py-1">{e.source || '-'}</td>
                           <td className="px-2 py-1">{e.tool || '-'}</td>
                           <td className="px-2 py-1">{e.policy_decision || '-'}</td>
@@ -1033,7 +1038,7 @@ export default function App() {
                         </tr>
                         {expanded && (
                           <tr className="bg-slate-50 border-t border-slate-100">
-                            <td colSpan={8} className="px-2 py-2">
+                            <td colSpan={9} className="px-2 py-2">
                               <pre className="text-xs font-mono whitespace-pre-wrap break-all">{prettyJson}</pre>
                             </td>
                           </tr>

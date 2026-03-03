@@ -2,8 +2,9 @@ import datetime
 import os
 import pathlib
 
-from config import POLICY, SESSION_ID, WORKSPACE_ROOT
+from config import POLICY, WORKSPACE_ROOT
 from policy_engine import command_hash, is_within_workspace, tokenize_command
+from runtime_context import current_agent_session_id
 
 CUMULATIVE_BUDGET_STATE: dict[str, dict] = {}
 
@@ -15,14 +16,15 @@ def cumulative_cfg() -> dict:
 def budget_scope_key(tool: str) -> tuple[str, str]:
     cfg = cumulative_cfg()
     scope = str(cfg.get("scope", "session")).lower()
+    agent_session_id = current_agent_session_id()
     if scope == "workspace":
         return scope, f"{WORKSPACE_ROOT}"
     if scope == "tool":
-        return scope, f"{SESSION_ID}:{tool}"
+        return scope, f"{agent_session_id}:{tool}"
     if scope == "request":
-        request_id = os.environ.get("AIRG_REQUEST_ID", SESSION_ID)
+        request_id = os.environ.get("AIRG_REQUEST_ID", agent_session_id)
         return scope, f"{request_id}:{tool}"
-    return "session", SESSION_ID
+    return "session", agent_session_id
 
 
 def estimate_paths_bytes(paths: list[str]) -> int:

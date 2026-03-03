@@ -18,9 +18,9 @@ from config import (
     BASE_DIR,
     POLICY,
     RESTORE_CONFIRMATION_TTL_SECONDS,
-    SESSION_ID,
     WORKSPACE_ROOT,
 )
+from runtime_context import current_agent_session_id
 
 APPROVAL_FAILURES: dict[str, list[datetime.datetime]] = {}
 PENDING_RESTORE_CONFIRMATIONS: dict[str, dict] = {}
@@ -77,7 +77,8 @@ def _log_security_warning(event: str, reason: str, **kwargs) -> None:
             "timestamp": _to_z(_now_utc()),
             "source": "mcp-server",
             "agent_id": AGENT_ID,
-            "session_id": SESSION_ID,
+            "session_id": current_agent_session_id(),
+            "agent_session_id": current_agent_session_id(),
             "tool": "approval_store",
             "event": event,
             "workspace": WORKSPACE_ROOT,

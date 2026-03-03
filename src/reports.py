@@ -7,9 +7,10 @@ from contextlib import closing
 from typing import Any
 
 from audit import append_log_entry
-from config import AGENT_ID, LOG_PATH, SESSION_ID
+from config import AGENT_ID, LOG_PATH
+from runtime_context import current_agent_session_id
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 STATE_KEY = "default"
 
 
@@ -53,6 +54,7 @@ def init_reports_store(db_path: pathlib.Path) -> None:
               source TEXT,
               agent_id TEXT,
               session_id TEXT,
+              agent_session_id TEXT,
               tool TEXT,
               event TEXT,
               workspace TEXT,
@@ -75,6 +77,7 @@ def init_reports_store(db_path: pathlib.Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_events_tool ON events(tool);
             CREATE INDEX IF NOT EXISTS idx_events_agent_id ON events(agent_id);
             CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_events_agent_session_id ON events(agent_session_id);
             CREATE INDEX IF NOT EXISTS idx_events_matched_rule ON events(matched_rule);
 
             CREATE TABLE IF NOT EXISTS ingest_state (
@@ -103,6 +106,23 @@ def init_reports_store(db_path: pathlib.Path) -> None:
             """,
             (STATE_KEY,),
         )
+        cols = {
+            str(row["name"]): True
+            for row in conn.execute("PRAGMA table_info(events)").fetchall()
+        }
+        if "agent_session_id" not in cols:
+            conn.execute("ALTER TABLE events ADD COLUMN agent_session_id TEXT DEFAULT ''")
+        conn.execute(
+            """
+            UPDATE events
+            SET agent_session_id = CASE
+              WHEN agent_session_id IS NULL OR agent_session_id = '' THEN COALESCE(NULLIF(session_id, ''), '')
+              ELSE agent_session_id
+            END
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_agent_session_id ON events(agent_session_id)")
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (SCHEMA_VERSION,))
         conn.commit()
 
 
@@ -126,12 +146,14 @@ def _event_key(raw_line: str) -> str:
 
 
 def _normalize_event(raw: dict[str, Any], raw_line: str) -> dict[str, Any]:
+    agent_session_id = str(raw.get("agent_session_id") or raw.get("session_id") or "")
     return {
         "event_key": _event_key(raw_line),
         "timestamp": str(raw.get("timestamp") or _iso_now()),
         "source": str(raw.get("source", "")),
         "agent_id": str(raw.get("agent_id", "Unknown")),
-        "session_id": str(raw.get("session_id", "")),
+        "session_id": agent_session_id,
+        "agent_session_id": agent_session_id,
         "tool": str(raw.get("tool", "")),
         "event": str(raw.get("event", "")),
         "workspace": str(raw.get("workspace", "")),
@@ -159,7 +181,8 @@ def _record_warning(event: str, reason: str, **extra: Any) -> None:
         "timestamp": _iso_now(),
         "source": "mcp-server",
         "agent_id": AGENT_ID,
-        "session_id": SESSION_ID,
+        "session_id": current_agent_session_id(),
+        "agent_session_id": current_agent_session_id(),
         "tool": "reports_ingest",
         "event": event,
         "workspace": "",
@@ -245,11 +268,11 @@ def sync_from_log(
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO events(
-                          event_key, timestamp, source, agent_id, session_id, tool, event, workspace,
+                          event_key, timestamp, source, agent_id, session_id, agent_session_id, tool, event, workspace,
                           policy_decision, decision_tier, matched_rule, block_reason, command,
                           normalized_command, path, approval_token, approved_via, error, raw_json, ingested_at
                         ) VALUES(
-                          :event_key, :timestamp, :source, :agent_id, :session_id, :tool, :event, :workspace,
+                          :event_key, :timestamp, :source, :agent_id, :session_id, :agent_session_id, :tool, :event, :workspace,
                           :policy_decision, :decision_tier, :matched_rule, :block_reason, :command,
                           :normalized_command, :path, :approval_token, :approved_via, :error, :raw_json, :ingested_at
                         )
@@ -328,7 +351,18 @@ def _query_rows(
 def _events_where(filters: dict[str, str]) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
-    for key in ["agent_id", "source", "tool", "policy_decision", "decision_tier", "matched_rule", "command", "path", "event"]:
+    for key in [
+        "agent_id",
+        "agent_session_id",
+        "source",
+        "tool",
+        "policy_decision",
+        "decision_tier",
+        "matched_rule",
+        "command",
+        "path",
+        "event",
+    ]:
         val = str(filters.get(key, "")).strip()
         if val:
             clauses.append(f"LOWER({key}) LIKE ?")
