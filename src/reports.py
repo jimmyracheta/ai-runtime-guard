@@ -77,7 +77,6 @@ def init_reports_store(db_path: pathlib.Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_events_tool ON events(tool);
             CREATE INDEX IF NOT EXISTS idx_events_agent_id ON events(agent_id);
             CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id);
-            CREATE INDEX IF NOT EXISTS idx_events_agent_session_id ON events(agent_session_id);
             CREATE INDEX IF NOT EXISTS idx_events_matched_rule ON events(matched_rule);
 
             CREATE TABLE IF NOT EXISTS ingest_state (
@@ -112,6 +111,7 @@ def init_reports_store(db_path: pathlib.Path) -> None:
         }
         if "agent_session_id" not in cols:
             conn.execute("ALTER TABLE events ADD COLUMN agent_session_id TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_agent_session_id ON events(agent_session_id)")
         conn.execute(
             """
             UPDATE events
@@ -121,7 +121,6 @@ def init_reports_store(db_path: pathlib.Path) -> None:
             END
             """
         )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_agent_session_id ON events(agent_session_id)")
         conn.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (SCHEMA_VERSION,))
         conn.commit()
 
