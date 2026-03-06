@@ -1,5 +1,7 @@
 import json
+import os
 import pathlib
+import sys
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -112,18 +114,38 @@ def _shared_env(paths: dict[str, pathlib.Path], workspace: str, agent_id: str) -
     }
 
 
+def _server_command() -> str:
+    explicit = str(os.environ.get("AIRG_SERVER_COMMAND", "")).strip()
+    if explicit:
+        return explicit
+
+    venv = str(os.environ.get("VIRTUAL_ENV", "")).strip()
+    if venv:
+        candidate = pathlib.Path(venv) / "bin" / "airg-server"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate.resolve())
+
+    exe_dir = pathlib.Path(sys.executable).resolve().parent
+    candidate = exe_dir / "airg-server"
+    if candidate.exists() and os.access(candidate, os.X_OK):
+        return str(candidate.resolve())
+
+    return "airg-server"
+
+
 def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str]:
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
+    server_command = _server_command()
     add_json_payload = {
         "type": "stdio",
-        "command": "airg-server",
+        "command": server_command,
         "args": [],
         "env": env,
     }
     file_payload = {
         "mcpServers": {
             "ai-runtime-guard": {
-                "command": "airg-server",
+                "command": server_command,
                 "args": [],
                 "env": env,
             }
@@ -144,8 +166,9 @@ def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]
 
 def _placeholder_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str]:
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
+    server_command = _server_command()
     server_block = {
-        "command": "airg-server",
+        "command": server_command,
         "args": [],
         "env": env,
     }

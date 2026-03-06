@@ -395,3 +395,8 @@ Note: older entries in this file are preserved as historical development records
 - `backup.backup_paths` now ignores workspace-root directory-only tokens so backup creation targets only actual destructive paths.
 - Added dedupe for resolved backup targets within one operation to avoid duplicate path processing.
 - Added regression test `test_backup_handles_workspace_root_and_file_targets_without_collision`.
+
+## 2026-03-06 (agent config generation: explicit server command path)
+- Updated generated MCP configs to prefer an explicit AIRG server command path when available.
+- Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.
+- Claude Code add-json output and saved JSON now use the resolved command path, reducing PATH-related connection failures.
