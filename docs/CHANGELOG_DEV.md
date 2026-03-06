@@ -2,6 +2,15 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-06 (v1.4 override-scope tightening)
+- Removed workspace override behavior from `agent_overrides` runtime resolution.
+  - Effective workspace now always comes from MCP/runtime env (`AIRG_WORKSPACE`).
+- Restricted per-agent override scope to enforcement sections only:
+  - `blocked`, `requires_confirmation`, `requires_simulation`, `allowed`, `network`, `execution`.
+- Made non-enforcement/global sections unavailable for per-agent overrides:
+  - `reports`, `audit`, `backup_access`, `restore`.
+- Updated policy sample and operator docs to reflect supported/unsupported override sections.
+
 ## 2026-03-06 (v1.4 per-agent policy override runtime support)
 - Added startup-time effective-policy resolution in `src/config.py`:
   - load and normalize base policy

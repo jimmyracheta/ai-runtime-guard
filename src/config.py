@@ -271,6 +271,14 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
         agent_overrides = {}
     if not isinstance(agent_overrides, dict):
         raise ValueError("policy.agent_overrides must be an object")
+    allowed_override_sections = {
+        "blocked",
+        "requires_confirmation",
+        "requires_simulation",
+        "allowed",
+        "network",
+        "execution",
+    }
     normalized_overrides: dict[str, dict] = {}
     for agent_key, override in agent_overrides.items():
         if isinstance(agent_key, str) and agent_key.startswith("_"):
@@ -279,15 +287,18 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
             raise ValueError("policy.agent_overrides keys must be non-empty strings")
         if not isinstance(override, dict):
             raise ValueError(f"policy.agent_overrides['{agent_key}'] must be an object")
-        workspace = str(override.get("workspace", "") or "").strip()
         overlay = override.get("policy", {})
         if overlay is None:
             overlay = {}
         if not isinstance(overlay, dict):
             raise ValueError(f"policy.agent_overrides['{agent_key}'].policy must be an object")
+        filtered_overlay = {
+            key: value
+            for key, value in overlay.items()
+            if key in allowed_override_sections
+        }
         normalized_overrides[agent_key.strip()] = {
-            "workspace": workspace,
-            "policy": overlay,
+            "policy": filtered_overlay,
         }
     policy["agent_overrides"] = normalized_overrides
 
@@ -304,23 +315,22 @@ def _deep_merge_dict(base: dict, overlay: dict) -> dict:
     return out
 
 
-def _resolve_effective_policy(base_policy: dict, agent_id: str) -> tuple[dict, str]:
+def _resolve_effective_policy(base_policy: dict, agent_id: str) -> dict:
     overrides = base_policy.get("agent_overrides", {})
     if not isinstance(overrides, dict):
-        return base_policy, ""
+        return base_policy
     selected = overrides.get(agent_id, {})
     if not isinstance(selected, dict):
-        return base_policy, ""
-    workspace = str(selected.get("workspace", "") or "").strip()
+        return base_policy
     overlay = selected.get("policy", {})
     if not isinstance(overlay, dict) or not overlay:
-        return base_policy, workspace
+        return base_policy
     merged = _deep_merge_dict(base_policy, overlay)
-    return merged, workspace
+    return merged
 
 
 _BASE_POLICY: dict = _validate_and_normalize_policy(_load_policy())
-_EFFECTIVE_POLICY_DOC, _WORKSPACE_OVERRIDE = _resolve_effective_policy(_BASE_POLICY, AGENT_ID)
+_EFFECTIVE_POLICY_DOC = _resolve_effective_policy(_BASE_POLICY, AGENT_ID)
 POLICY: dict = _validate_and_normalize_policy(_EFFECTIVE_POLICY_DOC)
 BACKUP_DIR = str(
     pathlib.Path(POLICY.get("audit", {}).get("backup_root", str(_default_backup_root())))
@@ -331,7 +341,7 @@ MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
 SESSION_ID: str = str(uuid.uuid4())
 _workspace_from_env = str(os.environ.get("AIRG_WORKSPACE", "") or "").strip()
-_workspace_selected = _WORKSPACE_OVERRIDE or _workspace_from_env or str(BASE_DIR)
+_workspace_selected = _workspace_from_env or str(BASE_DIR)
 WORKSPACE_ROOT: str = str(pathlib.Path(_workspace_selected).expanduser().resolve())
 SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
 

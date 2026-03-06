@@ -32,7 +32,6 @@ Primary runtime artifacts:
 Policy is resolved in two stages at startup:
 1. Load and normalize base `policy.json`.
 2. If `policy.agent_overrides.<AIRG_AGENT_ID>` exists:
-   - apply optional `workspace` override as effective runtime workspace root
    - deep-merge optional `policy` overlay onto base policy
    - normalize merged document as effective policy used by runtime modules
 
@@ -41,6 +40,7 @@ Merge behavior:
 - scalar/list fields replace base values
 
 This keeps single-policy installs backward compatible while enabling per-agent policy isolation in shared deployments.
+Workspace remains sourced from `AIRG_WORKSPACE` in MCP/runtime env, not policy overrides.
 
 ## Dependency guardrails
 The modular architecture assumes a one-way dependency direction:

@@ -43,7 +43,7 @@ Goal: support agent-specific policy context while preserving simple default oper
 ### Current implementation status
 1. Implemented:
    - runtime effective-policy resolution by `AIRG_AGENT_ID`
-   - optional `policy.agent_overrides.<agent_id>.workspace` and `.policy` overlay support
+   - optional `policy.agent_overrides.<agent_id>.policy` overlay support for enforcement sections
    - per-agent runtime guidance in operator docs
 2. Remaining:
    - first-class policy-override authoring UX in GUI

@@ -175,9 +175,8 @@
   },
 
   "agent_overrides": {
-    "_comment": "Optional per-agent policy/workspace overlay keyed by AIRG_AGENT_ID.",
+    "_comment": "Optional per-agent policy overlay keyed by AIRG_AGENT_ID. Override sections supported: blocked, requires_confirmation, requires_simulation, allowed, network, execution.",
     "example-agent-id": {
-      "workspace": "/absolute/path/for/that-agent",
       "policy": {
         "requires_confirmation": {
           "commands": ["rm", "mv"]

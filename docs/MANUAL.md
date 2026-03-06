@@ -82,11 +82,22 @@ Operational guidance:
 
 ### Agent-specific policy overrides
 Runtime supports optional per-agent overlays keyed by `AIRG_AGENT_ID`:
-1. `policy.agent_overrides.<agent_id>.workspace`:
-   - if set, this workspace replaces `AIRG_WORKSPACE` for that agent at runtime.
-2. `policy.agent_overrides.<agent_id>.policy`:
+1. `policy.agent_overrides.<agent_id>.policy`:
    - deep-merged overlay applied on top of the base policy for that agent only.
    - dictionary values merge recursively, scalar/list values replace base values.
+2. Supported per-agent override sections:
+   - `blocked`
+   - `requires_confirmation`
+   - `requires_simulation`
+   - `allowed`
+   - `network`
+   - `execution`
+3. Not supported as per-agent overrides:
+   - `reports.*`
+   - `audit.*`
+   - `backup_access.*`
+   - `restore.*`
+   - workspace path (`AIRG_WORKSPACE` remains MCP/env configured)
 
 Notes:
 1. If no override exists for current `AIRG_AGENT_ID`, base policy behavior remains unchanged.
