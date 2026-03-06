@@ -185,12 +185,7 @@ export default function App() {
   const [activeSettingsTab, setActiveSettingsTab] = useState('agents')
   const [agentProfiles, setAgentProfiles] = useState([])
   const [agentTypes, setAgentTypes] = useState([])
-  const [settingsSharedPaths, setSettingsSharedPaths] = useState({})
   const [settingsConfigsDir, setSettingsConfigsDir] = useState('')
-  const [selectedProfileId, setSelectedProfileId] = useState('')
-  const [settingsDraftProfile, setSettingsDraftProfile] = useState({ profile_id: '', name: '', agent_type: 'claude_code', workspace: '', agent_id: '' })
-  const [settingsGenerated, setSettingsGenerated] = useState(null)
-  const [settingsFileView, setSettingsFileView] = useState(null)
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [reportsFilters, setReportsFilters] = useState({
@@ -273,17 +268,6 @@ export default function App() {
     }
   }
 
-  function syncSelectedProfile(profiles, profileId) {
-    const next = profiles.find((p) => p.profile_id === profileId) || profiles[0]
-    if (!next) {
-      setSelectedProfileId('')
-      setSettingsDraftProfile(emptyProfile())
-      return
-    }
-    setSelectedProfileId(next.profile_id)
-    setSettingsDraftProfile({ ...next })
-  }
-
   async function fetchSettingsAgents() {
     setSettingsLoading(true)
     setSettingsError('')
@@ -291,12 +275,9 @@ export default function App() {
       const res = await fetch(`${API_BASE}/settings/agents`)
       if (!res.ok) throw new Error(`Settings load failed (${res.status})`)
       const payload = await res.json()
-      const profiles = payload.profiles || []
-      setAgentProfiles(profiles)
+      setAgentProfiles(payload.profiles || [])
       setAgentTypes(payload.agent_types || [])
-      setSettingsSharedPaths(payload.shared_paths || {})
       setSettingsConfigsDir(payload.configs_dir || '')
-      syncSelectedProfile(profiles, selectedProfileId)
     } catch (err) {
       setSettingsError(String(err.message || err))
     } finally {
@@ -304,101 +285,56 @@ export default function App() {
     }
   }
 
-  async function upsertSettingsProfile() {
-    setSettingsLoading(true)
-    setSettingsError('')
-    try {
-      const res = await fetch(`${API_BASE}/settings/agents/upsert`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile: settingsDraftProfile }),
-      })
-      const payload = await res.json()
-      if (!res.ok || !payload.ok) {
-        throw new Error((payload.errors || ['Save failed']).join('; '))
-      }
-      const profiles = payload.profiles || []
-      setAgentProfiles(profiles)
-      syncSelectedProfile(profiles, payload.profile?.profile_id || settingsDraftProfile.profile_id)
-      setMessage('Agent profile saved')
-    } catch (err) {
-      setSettingsError(String(err.message || err))
-    } finally {
-      setSettingsLoading(false)
+  async function upsertSettingsProfile(profile) {
+    const res = await fetch(`${API_BASE}/settings/agents/upsert`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile }),
+    })
+    const payload = await res.json()
+    if (!res.ok || !payload.ok) {
+      throw new Error((payload.errors || ['Save failed']).join('; '))
     }
+    setAgentProfiles(payload.profiles || [])
+    return payload
   }
 
-  async function deleteSettingsProfile() {
-    if (!selectedProfileId) return
-    if (!window.confirm('Delete selected agent profile?')) return
-    setSettingsLoading(true)
-    setSettingsError('')
-    try {
-      const res = await fetch(`${API_BASE}/settings/agents/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile_id: selectedProfileId }),
-      })
-      const payload = await res.json()
-      if (!res.ok || !payload.ok) {
-        throw new Error((payload.errors || ['Delete failed']).join('; '))
-      }
-      const profiles = payload.profiles || []
-      setAgentProfiles(profiles)
-      syncSelectedProfile(profiles, profiles[0]?.profile_id || '')
-      setSettingsGenerated(null)
-      setMessage('Agent profile deleted')
-    } catch (err) {
-      setSettingsError(String(err.message || err))
-    } finally {
-      setSettingsLoading(false)
+  async function generateAgentConfig(profileId, saveToFile = false) {
+    const res = await fetch(`${API_BASE}/settings/agents/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId, save_to_file: saveToFile }),
+    })
+    const payload = await res.json()
+    if (!res.ok || !payload.ok) {
+      throw new Error((payload.errors || ['Generate failed']).join('; '))
     }
+    setAgentProfiles(payload.profiles || [])
+    return payload
   }
 
-  async function generateAgentConfig(saveToFile = false) {
-    if (!selectedProfileId) return
-    setSettingsLoading(true)
-    setSettingsError('')
-    try {
-      const endpoint = `${API_BASE}/settings/agents/generate`
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile_id: selectedProfileId, save_to_file: saveToFile }),
-      })
-      const payload = await res.json()
-      if (!res.ok || !payload.ok) {
-        throw new Error((payload.errors || ['Generate failed']).join('; '))
-      }
-      const profiles = payload.profiles || []
-      setAgentProfiles(profiles)
-      syncSelectedProfile(profiles, payload.profile?.profile_id || selectedProfileId)
-      setSettingsGenerated(payload.generated || null)
-      setMessage(saveToFile ? 'Config generated and saved to runtime folder' : 'Config generated')
-    } catch (err) {
-      setSettingsError(String(err.message || err))
-    } finally {
-      setSettingsLoading(false)
+  async function openSavedConfigFile(profileId) {
+    const params = new URLSearchParams({ profile_id: profileId })
+    const res = await fetch(`${API_BASE}/settings/agents/open-file?${params.toString()}`)
+    const payload = await res.json()
+    if (!res.ok || !payload.ok) {
+      throw new Error((payload.errors || ['Open file failed']).join('; '))
     }
+    return payload
   }
 
-  async function openSavedConfigFile() {
-    if (!selectedProfileId) return
-    setSettingsLoading(true)
-    setSettingsError('')
-    try {
-      const params = new URLSearchParams({ profile_id: selectedProfileId })
-      const res = await fetch(`${API_BASE}/settings/agents/open-file?${params.toString()}`)
-      const payload = await res.json()
-      if (!res.ok || !payload.ok) {
-        throw new Error((payload.errors || ['Open file failed']).join('; '))
-      }
-      setSettingsFileView(payload)
-    } catch (err) {
-      setSettingsError(String(err.message || err))
-    } finally {
-      setSettingsLoading(false)
+  async function deleteSettingsProfile(profileId) {
+    const res = await fetch(`${API_BASE}/settings/agents/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: profileId }),
+    })
+    const payload = await res.json()
+    if (!res.ok || !payload.ok) {
+      throw new Error((payload.errors || ['Delete failed']).join('; '))
     }
+    setAgentProfiles(payload.profiles || [])
+    return payload
   }
 
   function buildReportQuery(extra = {}) {
@@ -2389,36 +2325,118 @@ export default function App() {
   }
 
   function SettingsPanel() {
-    const selectedAgentLabel = agentTypes.find((x) => x.id === settingsDraftProfile.agent_type)?.label || settingsDraftProfile.agent_type
-    const hasSavedFile = Boolean(settingsDraftProfile.last_saved_path)
-    const copyText = settingsGenerated?.command_text || JSON.stringify(settingsGenerated?.file_json || {}, null, 2)
+    const workspaceHints = Array.from(
+      new Set(
+        [runtimePaths.AIRG_WORKSPACE, ...agentProfiles.map((p) => p.workspace || '')]
+          .map((v) => String(v || '').trim())
+          .filter(Boolean)
+      )
+    )
 
-    const onCreateProfile = () => {
-      const profile = emptyProfile()
-      setAgentProfiles((prev) => [...prev, profile])
-      setSelectedProfileId(profile.profile_id)
-      setSettingsDraftProfile(profile)
-      setSettingsGenerated(null)
-      setSettingsFileView(null)
-      setMessage('New agent profile created. Fill details and click Save Profile.')
+    const updateProfile = (profileId, patch) => {
+      setAgentProfiles((prev) =>
+        prev.map((item) => (item.profile_id === profileId ? { ...item, ...patch } : item))
+      )
     }
 
-    const onSelectProfile = (profileId) => {
-      setSelectedProfileId(profileId)
-      const picked = agentProfiles.find((p) => p.profile_id === profileId)
-      if (picked) {
-        setSettingsDraftProfile({ ...picked })
-        setSettingsGenerated(null)
-        setSettingsFileView(null)
+    const addProfileRow = () => {
+      setAgentProfiles((prev) => [...prev, emptyProfile()])
+    }
+
+    const saveRow = async (profile) => {
+      setSettingsLoading(true)
+      setSettingsError('')
+      try {
+        await upsertSettingsProfile(profile)
+        const payload = await generateAgentConfig(profile.profile_id, true)
+        setMessage('Profile saved and config generated')
+      } catch (err) {
+        setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
       }
     }
 
-    const onCopy = async () => {
+    const copyJson = async (profile) => {
+      setSettingsLoading(true)
+      setSettingsError('')
       try {
-        await navigator.clipboard.writeText(copyText)
-        setMessage('Copied generated MCP config command to clipboard')
+        await upsertSettingsProfile(profile)
+        const payload = await generateAgentConfig(profile.profile_id, false)
+        await navigator.clipboard.writeText(JSON.stringify(payload.generated?.file_json || {}, null, 2))
+        setMessage('Configuration JSON copied to clipboard')
       } catch (err) {
         setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
+      }
+    }
+
+    const copyCli = async (profile) => {
+      setSettingsLoading(true)
+      setSettingsError('')
+      try {
+        await upsertSettingsProfile(profile)
+        const payload = await generateAgentConfig(profile.profile_id, false)
+        await navigator.clipboard.writeText(String(payload.generated?.command_text || ''))
+        setMessage('CLI command copied to clipboard')
+      } catch (err) {
+        setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
+      }
+    }
+
+    const openConfig = async (profile) => {
+      setSettingsLoading(true)
+      setSettingsError('')
+      try {
+        const opened = await openSavedConfigFile(profile.profile_id)
+        const blob = new Blob([opened.file_content || ''], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const win = window.open(url, '_blank', 'noopener,noreferrer')
+        if (!win) {
+          const a = document.createElement('a')
+          a.href = url
+          a.download = opened.file_path.split('/').pop() || 'airg-mcp-config.json'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+        }
+        setTimeout(() => URL.revokeObjectURL(url), 5000)
+        setMessage('Opened configuration file')
+      } catch (err) {
+        setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
+      }
+    }
+
+    const showInfo = async (profile) => {
+      setSettingsLoading(true)
+      setSettingsError('')
+      try {
+        await upsertSettingsProfile(profile)
+        const payload = await generateAgentConfig(profile.profile_id, false)
+        window.alert(payload.generated?.instructions || 'No instructions available.')
+      } catch (err) {
+        setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
+      }
+    }
+
+    const deleteRow = async (profile) => {
+      if (!window.confirm(`Delete profile "${profile.name || profile.agent_id || profile.profile_id}"?`)) return
+      setSettingsLoading(true)
+      setSettingsError('')
+      try {
+        await deleteSettingsProfile(profile.profile_id)
+        setMessage('Profile deleted')
+      } catch (err) {
+        setSettingsError(String(err.message || err))
+      } finally {
+        setSettingsLoading(false)
       }
     }
 
@@ -2433,216 +2451,130 @@ export default function App() {
 
     return (
       <div className="space-y-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="text-sm font-semibold text-slate-800">Agent MCP Configuration</div>
-              <div className="text-xs text-slate-500">Manage agent profiles, generate MCP config, save files in runtime state folder.</div>
+              <div className="text-sm font-semibold text-slate-800">Configured Agents</div>
+              <div className="text-xs text-slate-500">Save generates and stores MCP config in runtime state.</div>
             </div>
-            <button
-              onClick={onCreateProfile}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white hover:bg-slate-50"
-            >
-              Add Agent
-            </button>
+            <button onClick={addProfileRow} className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white hover:bg-slate-50">Add Agent</button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <label className="text-xs text-slate-600">
-              Configured profiles
-              <select
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={selectedProfileId}
-                onChange={(e) => onSelectProfile(e.target.value)}
-              >
-                {!agentProfiles.length && <option value="">No profiles yet</option>}
-                {agentProfiles.map((p) => (
-                  <option key={p.profile_id} value={p.profile_id}>
-                    {(p.name || p.agent_id || p.profile_id)} ({p.agent_type})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs text-slate-600">
-              Agent type
-              <select
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={settingsDraftProfile.agent_type || 'claude_code'}
-                onChange={(e) => setSettingsDraftProfile((p) => ({ ...p, agent_type: e.target.value }))}
-              >
-                {agentTypes.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs text-slate-600">
-              Profile name (optional)
-              <input
-                type="text"
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
-                value={settingsDraftProfile.name || ''}
-                onChange={(e) => setSettingsDraftProfile((p) => ({ ...p, name: e.target.value }))}
-              />
-            </label>
-            <label className="text-xs text-slate-600">
-              Agent ID
-              <input
-                type="text"
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
-                value={settingsDraftProfile.agent_id || ''}
-                onChange={(e) => setSettingsDraftProfile((p) => ({ ...p, agent_id: e.target.value }))}
-              />
-            </label>
-            <label className="text-xs text-slate-600 md:col-span-2">
-              Workspace
-              <input
-                type="text"
-                className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono"
-                value={settingsDraftProfile.workspace || ''}
-                onChange={(e) => setSettingsDraftProfile((p) => ({ ...p, workspace: e.target.value }))}
-              />
-            </label>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                  <th className="py-2 pr-2">Agent Type</th>
+                  <th className="py-2 px-2">Profile Name</th>
+                  <th className="py-2 px-2">Agent ID</th>
+                  <th className="py-2 px-2">Workspace</th>
+                  <th className="py-2 px-2 text-center">💾</th>
+                  <th className="py-2 px-2 text-center">📂</th>
+                  <th className="py-2 px-2 text-center">📋 JSON</th>
+                  <th className="py-2 px-2 text-center">⌨️ CLI</th>
+                  <th className="py-2 px-2 text-center">ℹ️</th>
+                  <th className="py-2 pl-3 text-center border-l-2 border-slate-300">🗑️</th>
+                </tr>
+              </thead>
+              <tbody>
+                {agentProfiles.map((profile) => {
+                  const configured = Boolean(profile.last_saved_path)
+                  return (
+                    <tr key={profile.profile_id} className={`border-b border-slate-100 ${configured ? 'bg-slate-50' : 'bg-white'}`}>
+                      <td className="py-2 pr-2">
+                        <select
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                          value={profile.agent_type || 'claude_code'}
+                          onChange={(e) => updateProfile(profile.profile_id, { agent_type: e.target.value })}
+                        >
+                          {agentTypes.map((opt) => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-2 px-2">
+                        <input
+                          type="text"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                          value={profile.name || ''}
+                          onChange={(e) => updateProfile(profile.profile_id, { name: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-2 px-2">
+                        <input
+                          type="text"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-mono"
+                          value={profile.agent_id || ''}
+                          onChange={(e) => updateProfile(profile.profile_id, { agent_id: e.target.value })}
+                        />
+                      </td>
+                      <td className="py-2 px-2">
+                        <div className="flex gap-1">
+                          <input
+                            list={`workspace-hints-${profile.profile_id}`}
+                            type="text"
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-mono"
+                            value={profile.workspace || ''}
+                            onChange={(e) => updateProfile(profile.profile_id, { workspace: e.target.value })}
+                          />
+                          <datalist id={`workspace-hints-${profile.profile_id}`}>
+                            {workspaceHints.map((hint) => <option key={hint} value={hint} />)}
+                          </datalist>
+                          <button
+                            title="Use current AIRG workspace"
+                            className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50"
+                            onClick={() => updateProfile(profile.profile_id, { workspace: runtimePaths.AIRG_WORKSPACE || profile.workspace || '' })}
+                          >
+                            ↺
+                          </button>
+                        </div>
+                        {profile.last_generated_at && (
+                          <div className="text-[10px] text-slate-500 mt-1">Last generated {relativeTime(profile.last_generated_at)}</div>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <button className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50" onClick={() => saveRow(profile)} title="Save + generate + store">
+                          💾
+                        </button>
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <button className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-50" onClick={() => openConfig(profile)} disabled={!profile.last_saved_path} title="Open configuration file">
+                          📂
+                        </button>
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <button className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50" onClick={() => copyJson(profile)} title="Copy JSON to clipboard">
+                          📋
+                        </button>
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <button className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50" onClick={() => copyCli(profile)} title="Copy CLI command to clipboard">
+                          ⌨️
+                        </button>
+                      </td>
+                      <td className="py-2 px-2 text-center">
+                        <button className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50" onClick={() => showInfo(profile)} title="Show instructions">
+                          ℹ️
+                        </button>
+                      </td>
+                      <td className="py-2 pl-3 text-center border-l-2 border-slate-300">
+                        <button className="px-2 py-1 border border-red-300 text-red-700 rounded bg-red-50 hover:bg-red-100" onClick={() => deleteRow(profile)} title="Delete profile">
+                          🗑️
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              onClick={upsertSettingsProfile}
-              disabled={settingsLoading || !settingsDraftProfile.profile_id}
-              className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm disabled:opacity-50"
-            >
-              Save Profile
-            </button>
-            <button
-              onClick={() => generateAgentConfig(false)}
-              disabled={settingsLoading || !selectedProfileId}
-              className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm disabled:opacity-50"
-            >
-              Generate Config
-            </button>
-            <button
-              onClick={() => generateAgentConfig(true)}
-              disabled={settingsLoading || !selectedProfileId}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white disabled:opacity-50"
-            >
-              Save to File
-            </button>
-            <button
-              onClick={onCopy}
-              disabled={settingsLoading || !settingsGenerated}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white disabled:opacity-50"
-            >
-              Copy to Clipboard
-            </button>
-            <button
-              onClick={openSavedConfigFile}
-              disabled={settingsLoading || !hasSavedFile}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 text-sm bg-white disabled:opacity-50"
-            >
-              Open Configuration File
-            </button>
-            <button
-              onClick={deleteSettingsProfile}
-              disabled={settingsLoading || !selectedProfileId}
-              className="px-3 py-1.5 rounded-lg border border-red-300 text-red-700 text-sm bg-red-50 disabled:opacity-50"
-            >
-              Delete Profile
-            </button>
-          </div>
-
-          <div className="text-xs text-slate-500">
-            Runtime output folder: <span className="font-mono">{settingsConfigsDir || '-'}</span>
-          </div>
-          {settingsDraftProfile.last_generated_at && (
-            <div className="text-xs text-slate-500">
-              Last generated: {relativeTime(settingsDraftProfile.last_generated_at)} ({settingsDraftProfile.last_generated_at})
-            </div>
+          {!agentProfiles.length && (
+            <div className="text-sm text-slate-500 py-6 text-center">No configured agents yet. Click Add Agent to create one.</div>
           )}
-          {settingsDraftProfile.last_saved_path && (
-            <div className="text-xs text-slate-500 break-all">
-              Last saved config file: <span className="font-mono">{settingsDraftProfile.last_saved_path}</span>
-            </div>
-          )}
-          {settingsError && <div className="text-sm text-red-600">{settingsError}</div>}
-        </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-          <div className="text-sm font-semibold text-slate-800">Generated Output ({selectedAgentLabel})</div>
-          {settingsGenerated ? (
-            <>
-              <div className="text-xs text-slate-500 break-all">
-                Command output: <span className="font-mono">{settingsGenerated.command_text}</span>
-              </div>
-              {settingsGenerated.saved_json_path && (
-                <div className="text-xs text-slate-500 break-all">
-                  Saved JSON: <span className="font-mono">{settingsGenerated.saved_json_path}</span>
-                </div>
-              )}
-              <label className="text-xs text-slate-600 block">
-                JSON payload
-                <textarea
-                  readOnly
-                  className="mt-1 w-full h-48 border border-slate-300 rounded-lg p-3 font-mono text-xs bg-slate-50"
-                  value={JSON.stringify(settingsGenerated.file_json || {}, null, 2)}
-                />
-              </label>
-              <label className="text-xs text-slate-600 block">
-                Instructions
-                <textarea
-                  readOnly
-                  className="mt-1 w-full h-28 border border-slate-300 rounded-lg p-3 text-xs bg-slate-50"
-                  value={settingsGenerated.instructions || ''}
-                />
-              </label>
-              {settingsGenerated.placeholder && (
-                <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                  Command generation is a placeholder for this agent type. JSON output is still saved for manual insertion.
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="text-sm text-slate-500">No generated config yet. Save a profile and click Generate Config.</div>
-          )}
-        </div>
-
-        {settingsFileView && (
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Saved Configuration File</div>
-              <button
-                onClick={() => setSettingsFileView(null)}
-                className="px-2 py-1 text-xs border border-slate-300 rounded bg-white"
-              >
-                Close
-              </button>
-            </div>
-            <div className="text-xs text-slate-500 break-all">Path: <span className="font-mono">{settingsFileView.file_path}</span></div>
-            <textarea
-              readOnly
-              className="w-full h-44 border border-slate-300 rounded-lg p-3 font-mono text-xs bg-slate-50"
-              value={settingsFileView.file_content || ''}
-            />
-            {settingsFileView.instructions_content && (
-              <textarea
-                readOnly
-                className="w-full h-28 border border-slate-300 rounded-lg p-3 text-xs bg-slate-50"
-                value={settingsFileView.instructions_content}
-              />
-            )}
+          <div className="text-xs text-slate-500 mt-3">
+            Profile Storage Location: <span className="font-mono">{settingsConfigsDir || '-'}</span>
           </div>
-        )}
-
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-2">
-          <div className="text-sm font-semibold text-slate-800">Shared Runtime Paths</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-600">
-            {Object.entries(settingsSharedPaths).map(([k, v]) => (
-              <div key={k} className="border border-slate-200 rounded p-2 bg-slate-50 break-all">
-                <div className="font-semibold text-slate-700">{k}</div>
-                <div className="font-mono">{String(v)}</div>
-              </div>
-            ))}
-          </div>
+          {settingsError && <div className="text-sm text-red-600 mt-2">{settingsError}</div>}
         </div>
       </div>
     )
