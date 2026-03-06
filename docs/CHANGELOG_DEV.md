@@ -2,6 +2,17 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-06 (agent config generation: explicit server command path)
+- Updated generated MCP configs to prefer an explicit AIRG server command path when available.
+- Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.
+- Claude Code add-json output and saved JSON now use the resolved command path, reducing PATH-related connection failures.
+
+## 2026-03-06 (backup collision fix for confirmation retry commands)
+- Fixed backup capture for shell commands that include workspace-root context tokens (for example `cd /workspace && rm ...`).
+- `backup.backup_paths` now ignores workspace-root directory-only tokens so backup creation targets only actual destructive paths.
+- Added dedupe for resolved backup targets within one operation to avoid duplicate path processing.
+- Added regression test `test_backup_handles_workspace_root_and_file_targets_without_collision`.
+
 ## 2026-03-06 (v1.4 override-scope tightening)
 - Removed workspace override behavior from `agent_overrides` runtime resolution.
   - Effective workspace now always comes from MCP/runtime env (`AIRG_WORKSPACE`).
@@ -15,15 +26,12 @@ Note: older entries in this file are preserved as historical development records
 - Added startup-time effective-policy resolution in `src/config.py`:
   - load and normalize base policy
   - resolve `policy.agent_overrides.<AIRG_AGENT_ID>`
-  - apply optional workspace override and deep-merge optional policy overlay
+  - apply deep-merge policy overlay for supported enforcement sections
   - re-normalize merged policy before runtime modules consume it.
 - Added policy schema validation for `policy.agent_overrides`:
   - enforce object shape
   - enforce non-empty string keys
-  - validate per-agent `workspace` and `policy` overlay fields.
-- Updated runtime workspace selection:
-  - effective workspace now prefers per-agent override workspace when configured
-  - falls back to `AIRG_WORKSPACE` and then module base dir as before.
+  - validate/normalize per-agent `policy` overlay fields.
 - Updated policy templates:
   - root `policy.json` now includes documented `agent_overrides` example
   - fallback template in `airg_cli.py` now includes empty `agent_overrides`.
@@ -389,14 +397,3 @@ Note: older entries in this file are preserved as historical development records
 - Added/expanded file tools (`read_file`, `write_file`, `delete_file`, `list_directory`) with policy-first checks and backup support.
 - Backed destructive operations with timestamped backups and manifests to improve recovery.
 - Added attacker-focused tests and retry clamp checks to validate high-risk control paths.
-
-## 2026-03-06 (backup collision fix for confirmation retry commands)
-- Fixed backup capture for shell commands that include workspace-root context tokens (for example `cd /workspace && rm ...`).
-- `backup.backup_paths` now ignores workspace-root directory-only tokens so backup creation targets only actual destructive paths.
-- Added dedupe for resolved backup targets within one operation to avoid duplicate path processing.
-- Added regression test `test_backup_handles_workspace_root_and_file_targets_without_collision`.
-
-## 2026-03-06 (agent config generation: explicit server command path)
-- Updated generated MCP configs to prefer an explicit AIRG server command path when available.
-- Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.
-- Claude Code add-json output and saved JSON now use the resolved command path, reducing PATH-related connection failures.

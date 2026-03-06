@@ -33,8 +33,8 @@ Goal: support agent-specific policy context while preserving simple default oper
 
 ### Scope
 1. Add per-agent policy context model:
-   - workspace binding per agent
    - optional per-agent policy overlay
+   - keep workspace binding in MCP/env configuration (`AIRG_WORKSPACE`)
 2. Resolve effective policy by `AIRG_AGENT_ID` in runtime decision flow.
 3. Update reports UI/API for first-class per-agent filtering and views.
 4. Add operator guidance for multi-agent deployments.
@@ -44,6 +44,7 @@ Goal: support agent-specific policy context while preserving simple default oper
 1. Implemented:
    - runtime effective-policy resolution by `AIRG_AGENT_ID`
    - optional `policy.agent_overrides.<agent_id>.policy` overlay support for enforcement sections
+   - workspace source remains MCP/env (`AIRG_WORKSPACE`) by design
    - per-agent runtime guidance in operator docs
 2. Remaining:
    - first-class policy-override authoring UX in GUI

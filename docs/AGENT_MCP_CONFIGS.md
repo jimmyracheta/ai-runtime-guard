@@ -15,14 +15,15 @@ Always set these explicitly in agent MCP config:
 7. `AIRG_REPORTS_DB_PATH`
 
 Server command:
-1. `airg-server`
+1. Preferred: absolute path to installed binary (example `/home/<user>/ai-runtime-guard/venv/bin/airg-server`).
+2. `airg-server` works only when the launching client process has PATH access to that binary.
 
 Minimal MCP server block:
 ```json
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "airg-server",
+      "command": "/absolute/path/to/airg-server",
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",
@@ -69,7 +70,7 @@ codex mcp add ai-runtime-guard \
   --env AIRG_APPROVAL_HMAC_KEY_PATH=/absolute/path/to/approvals.db.hmac.key \
   --env AIRG_LOG_PATH=/absolute/path/to/activity.log \
   --env AIRG_REPORTS_DB_PATH=/absolute/path/to/reports.db \
-  -- airg-server
+  -- /absolute/path/to/airg-server
 ```
 
 Useful Codex MCP commands:
@@ -80,7 +81,7 @@ Useful Codex MCP commands:
 Example `config.toml` entry:
 ```toml
 [mcp_servers.ai-runtime-guard]
-command = "airg-server"
+command = "/absolute/path/to/airg-server"
 args = []
 cwd = "/absolute/path/to/ai-runtime-guard"
 
@@ -111,7 +112,7 @@ Sample JSON (AIRG-focused, sanitized):
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "airg-server",
+      "command": "/absolute/path/to/airg-server",
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",
@@ -146,7 +147,7 @@ claude mcp add ai-runtime-guard \
   -e AIRG_APPROVAL_HMAC_KEY_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db.hmac.key \
   -e AIRG_LOG_PATH=/home/$USER/.local/state/ai-runtime-guard/activity.log \
   -e AIRG_REPORTS_DB_PATH=/home/$USER/.local/state/ai-runtime-guard/reports.db \
-  -- airg-server
+  -- /absolute/path/to/airg-server
 ```
 
 Useful commands:
@@ -195,7 +196,7 @@ Use a JSON MCP block similar to Claude-style MCP config (no `preferences` sectio
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "airg-server",
+      "command": "/absolute/path/to/airg-server",
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",

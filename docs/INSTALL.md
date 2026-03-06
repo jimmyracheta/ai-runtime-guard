@@ -51,7 +51,7 @@ mkdir -p ~/airg-workspace
 {
   "mcpServers": {
     "ai-runtime-guard": {
-      "command": "airg-server",
+      "command": "/absolute/path/to/airg-server",
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "claude-desktop",
@@ -66,6 +66,7 @@ mkdir -p ~/airg-workspace
   }
 }
 ```
+   - Recommended on Linux/macOS source installs: `<install_dir>/venv/bin/airg-server`.
 5. Run diagnostics once:
 ```bash
 airg-doctor
@@ -213,9 +214,12 @@ Branch note:
 3. Approvals loop with new token on every retry:
    - Check HMAC key file is non-empty (`wc -c <approval_hmac_key_path>`).
    - Restart UI and MCP client after fixing paths/secrets.
-4. Exports do not seem to apply:
+4. Agent override in repo `policy.json` is ignored:
+   - AIRG reads runtime policy from `AIRG_POLICY_PATH` (default `~/.config/ai-runtime-guard/policy.json` on Linux).
+   - Edit runtime policy file or copy updated repo policy into that runtime location.
+5. Exports do not seem to apply:
    - Env exports only affect the current shell process tree.
    - Start `airg-ui` and your client from shells with the intended env values.
-5. Backups appear under install dir or `site-packages`:
+6. Backups appear under install dir or `site-packages`:
    - Set `audit.backup_root` in runtime `policy.json` to user-local runtime state path.
    - Re-run `airg-doctor` and confirm resolved `backup_root`.
