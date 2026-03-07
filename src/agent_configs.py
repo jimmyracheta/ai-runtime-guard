@@ -367,6 +367,26 @@ def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_
     }
 
 
+def bootstrap_default_profile(
+    paths: dict[str, pathlib.Path],
+    *,
+    workspace: str,
+    agent_id: str,
+    agent_type: str = "claude_code",
+) -> dict[str, Any]:
+    profile = {
+        "profile_id": "default-agent",
+        "name": "Default Agent",
+        "agent_type": agent_type,
+        "workspace": workspace,
+        "agent_id": agent_id,
+    }
+    upsert = upsert_profile(paths, profile, create_workspace=True)
+    if not upsert.get("ok"):
+        return upsert
+    return generate_config(paths, "default-agent", save_to_file=True)
+
+
 def open_saved_file(paths: dict[str, pathlib.Path], profile_id: str) -> dict[str, Any]:
     registry = load_registry(paths)
     profiles = [_normalize_profile(p) for p in registry.get("profiles", [])]

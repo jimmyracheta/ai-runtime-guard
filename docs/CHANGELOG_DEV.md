@@ -52,6 +52,17 @@ Note: older entries in this file are preserved as historical development records
   - fallback: `<python> -m airg_cli server`.
 - Updated setup/doctor MCP snippet output to emit resolved command/args and include `AIRG_SERVER_COMMAND` in env guidance.
 
+## 2026-03-07 (default profile bootstrap in setup/service flows)
+- Added automatic default agent profile bootstrap into runtime `mcp-configs` registry:
+  - during `airg-setup`
+  - during `airg-service install`.
+- Default profile characteristics:
+  - stable `profile_id`: `default-agent`
+  - default name: `Default Agent`
+  - workspace and `agent_id` sourced from setup/service inputs
+  - generated config artifacts saved immediately.
+- Normalized default runtime identity to `agent_id=default` in setup/service defaults and doctor output fallback.
+
 ## 2026-03-06 (agent config generation: explicit server command path)
 - Updated generated MCP configs to prefer an explicit AIRG server command path when available.
 - Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.

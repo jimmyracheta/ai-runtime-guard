@@ -293,7 +293,7 @@ def _init_runtime(
                 "command": server_cmd,
                 "args": server_args,
                 "env": {
-                    "AIRG_AGENT_ID": os.environ.get("AIRG_AGENT_ID", "unknown-agent"),
+                    "AIRG_AGENT_ID": os.environ.get("AIRG_AGENT_ID", "default"),
                     "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
                     "AIRG_POLICY_PATH": str(paths["policy_path"]),
                     "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
@@ -400,7 +400,7 @@ def _apply_backup_override(policy: dict[str, Any], backup_root: str) -> dict[str
 def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.Path], agent_id: str) -> dict[str, Any]:
     reports_db_path = paths.get("reports_db_path", paths["approval_db_path"].with_name("reports.db"))
     env_block = {
-        "AIRG_AGENT_ID": agent_id.strip() or "Unknown",
+        "AIRG_AGENT_ID": agent_id.strip() or "default",
         "AIRG_WORKSPACE": workspace,
         "AIRG_POLICY_PATH": str(paths["policy_path"]),
         "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
@@ -423,6 +423,15 @@ def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.P
         "args": [],
         "env": env_block,
     }
+
+
+def _agent_profile_type_for_setup(agent: str) -> str:
+    mapped = (agent or "").strip().lower()
+    if mapped == "generic":
+        return "claude_code"
+    if mapped in {"claude_code", "claude_desktop", "cursor", "codex", "custom"}:
+        return mapped
+    return "claude_code"
 
 
 def _write_agent_config_outputs(agent: str, payload: dict[str, Any], out_dir: pathlib.Path) -> pathlib.Path:
@@ -462,7 +471,7 @@ def _runtime_env_for_process(
     agent_id: str,
 ) -> dict[str, str]:
     return {
-        "AIRG_AGENT_ID": agent_id.strip() or "Unknown",
+        "AIRG_AGENT_ID": agent_id.strip() or "default",
         "AIRG_WORKSPACE": str(workspace.resolve()),
         "AIRG_POLICY_PATH": str(paths["policy_path"]),
         "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
@@ -630,7 +639,7 @@ def _run_setup(
     selected_db_path = approval_db_path.strip()
     selected_key_path = approval_hmac_key_path.strip()
     selected_backup_root = backup_root.strip()
-    selected_agent_id = agent_id.strip() or "Unknown"
+    selected_agent_id = agent_id.strip() or "default"
     default_workspace = _default_workspace_path()
     selected_use_gui = use_gui
 
@@ -702,6 +711,21 @@ def _run_setup(
     payload = _agent_config_payload(selected_agent, str(workspace_path), path_overrides, selected_agent_id)
     output_root = pathlib.Path(out_dir).expanduser().resolve()
     output_path = _write_agent_config_outputs(selected_agent, payload, output_root)
+    try:
+        import agent_configs  # type: ignore
+
+        bootstrap = agent_configs.bootstrap_default_profile(
+            path_overrides,
+            workspace=str(workspace_path),
+            agent_id=selected_agent_id or "default",
+            agent_type=_agent_profile_type_for_setup(selected_agent),
+        )
+        if not bootstrap.get("ok"):
+            print(f"[airg][warn] Could not bootstrap default Settings profile: {'; '.join(bootstrap.get('errors', []))}")
+        else:
+            print("[airg] Default agent profile bootstrapped in Settings.")
+    except Exception as exc:
+        print(f"[airg][warn] Failed to bootstrap default Settings profile: {exc}")
 
     print(f"[airg] workspace={workspace_path}")
     print(f"[airg] policy={path_overrides['policy_path']}")
@@ -770,7 +794,7 @@ def main_setup_entrypoint() -> None:
     parser.add_argument("--approval-hmac-key-path", default="", help="Override AIRG_APPROVAL_HMAC_KEY_PATH.")
     parser.add_argument("--backup-root", default="", help="Override audit.backup_root.")
     parser.add_argument("--agent", default="generic", help="Agent target: claude_desktop, cursor, generic.")
-    parser.add_argument("--agent-id", default="Unknown", help="Agent identifier to include in runtime logs.")
+    parser.add_argument("--agent-id", default="default", help="Agent identifier to include in runtime logs.")
     parser.add_argument("--force-policy", action="store_true", help="Regenerate policy file from template before applying wizard updates.")
     parser.add_argument("--gui", action="store_true", help="Enable GUI service setup (install/start user service).")
     parser.add_argument("--no-gui", action="store_true", help="Disable GUI service setup.")
@@ -893,7 +917,7 @@ def main_doctor() -> None:
     print(f"[airg] reports_db_path={paths['reports_db_path']}")
     print(f"[airg] backup_root={backup_root}")
     print(f"[airg] workspace={pathlib.Path(os.environ.get('AIRG_WORKSPACE', str(_project_root()))).expanduser().resolve()}")
-    print(f"[airg] agent_id={os.environ.get('AIRG_AGENT_ID', 'Unknown')}")
+    print(f"[airg] agent_id={os.environ.get('AIRG_AGENT_ID', 'default')}")
 
     # Policy file
     if not paths["policy_path"].exists():
@@ -1094,7 +1118,7 @@ def main_service() -> None:
     parser = argparse.ArgumentParser(description="Manage ai-runtime-guard GUI user service")
     parser.add_argument("action", choices=["install", "start", "stop", "restart", "status", "uninstall"])
     parser.add_argument("--workspace", default=str(_default_workspace_path()), help="Workspace path used by GUI service.")
-    parser.add_argument("--agent-id", default=os.environ.get("AIRG_AGENT_ID", "Unknown"), help="Agent identifier used by GUI service.")
+    parser.add_argument("--agent-id", default=os.environ.get("AIRG_AGENT_ID", "default"), help="Agent identifier used by GUI service.")
     parser.add_argument("--policy-path", default="", help="Override AIRG_POLICY_PATH for service env.")
     parser.add_argument("--approval-db-path", default="", help="Override AIRG_APPROVAL_DB_PATH for service env.")
     parser.add_argument("--approval-hmac-key-path", default="", help="Override AIRG_APPROVAL_HMAC_KEY_PATH for service env.")
@@ -1113,6 +1137,19 @@ def main_service() -> None:
 
     if args.action == "install":
         _service_install(paths, workspace, args.agent_id)
+        try:
+            import agent_configs  # type: ignore
+
+            bootstrap = agent_configs.bootstrap_default_profile(
+                paths,
+                workspace=str(workspace),
+                agent_id=args.agent_id.strip() or "default",
+                agent_type="claude_code",
+            )
+            if not bootstrap.get("ok"):
+                print(f"[airg][warn] Could not bootstrap default Settings profile: {'; '.join(bootstrap.get('errors', []))}")
+        except Exception as exc:
+            print(f"[airg][warn] Failed to bootstrap default Settings profile: {exc}")
         return
     if args.action == "start":
         _service_start()
