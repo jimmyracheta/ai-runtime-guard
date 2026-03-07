@@ -405,15 +405,17 @@ export default function App() {
     }
   }
 
-  async function upsertSettingsProfile(profile) {
+  async function upsertSettingsProfile(profile, { createWorkspace = false } = {}) {
     const res = await fetch(`${API_BASE}/settings/agents/upsert`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile }),
+      body: JSON.stringify({ profile, create_workspace: createWorkspace }),
     })
     const payload = await res.json()
     if (!res.ok || !payload.ok) {
-      throw new Error((payload.errors || ['Save failed']).join('; '))
+      const err = new Error((payload.errors || ['Save failed']).join('; '))
+      err.payload = payload
+      throw err
     }
     setAgentProfiles(payload.profiles || [])
     return payload
@@ -2991,7 +2993,24 @@ export default function App() {
         const payload = await generateAgentConfig(profile.profile_id, true)
         setMessage('Profile saved and config generated')
       } catch (err) {
-        setSettingsError(String(err.message || err))
+        const payload = err?.payload
+        if (payload?.workspace_missing && payload?.workspace) {
+          const ok = window.confirm(`Workspace does not exist:\n${payload.workspace}\n\nCreate this directory now?`)
+          if (ok) {
+            try {
+              await upsertSettingsProfile(profile, { createWorkspace: true })
+              await generateAgentConfig(profile.profile_id, true)
+              setMessage('Profile saved, workspace created, and config generated')
+              setSettingsError('')
+            } catch (innerErr) {
+              setSettingsError(String(innerErr.message || innerErr))
+            }
+          } else {
+            setSettingsError(String(err.message || err))
+          }
+        } else {
+          setSettingsError(String(err.message || err))
+        }
       } finally {
         setSettingsLoading(false)
       }

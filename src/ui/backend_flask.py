@@ -390,6 +390,7 @@ def settings_agents_upsert():
         return ("", 204)
     payload = request.get_json(silent=True) or {}
     profile = payload.get("profile")
+    create_workspace = bool(payload.get("create_workspace", False))
     if not isinstance(profile, dict):
         return jsonify({"ok": False, "errors": ["Expected JSON payload with 'profile' object"]}), 400
     paths = {
@@ -401,7 +402,7 @@ def settings_agents_upsert():
         "log_path": pathlib.Path(os.environ.get("AIRG_LOG_PATH", config.LOG_PATH)).expanduser().resolve(),
         "reports_db_path": REPORTS_DB_PATH,
     }
-    result = agent_configs.upsert_profile(paths, profile)
+    result = agent_configs.upsert_profile(paths, profile, create_workspace=create_workspace)
     if not result.get("ok"):
         return jsonify(result), 400
     return jsonify(result)

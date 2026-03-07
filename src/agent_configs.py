@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import sys
@@ -17,6 +18,7 @@ AGENT_TYPES = [
     {"id": "custom", "label": "Custom"},
 ]
 _ALLOWED_AGENT_TYPES = {item["id"] for item in AGENT_TYPES}
+_AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _now_iso() -> str:
@@ -91,6 +93,10 @@ def _validate_profile(profile: dict[str, Any], *, existing: list[dict[str, Any]]
             errors.append("Workspace must be an absolute path")
     if not normalized["agent_id"]:
         errors.append("Agent ID is required")
+    elif not _AGENT_ID_PATTERN.fullmatch(normalized["agent_id"]):
+        errors.append(
+            "Agent ID must be 1-64 chars and use only letters, numbers, '.', '_' or '-' (no spaces)"
+        )
 
     this_profile_id = normalized["profile_id"]
     for item in existing:
@@ -242,12 +248,36 @@ def list_profiles(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
     }
 
 
-def upsert_profile(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> dict[str, Any]:
+def upsert_profile(paths: dict[str, pathlib.Path], profile: dict[str, Any], *, create_workspace: bool = False) -> dict[str, Any]:
     registry = load_registry(paths)
     profiles = registry["profiles"]
     ok, errors, normalized = _validate_profile(profile, existing=profiles)
     if not ok:
         return {"ok": False, "errors": errors}
+
+    workspace_path = pathlib.Path(normalized["workspace"]).expanduser()
+    if not workspace_path.exists():
+        if create_workspace:
+            try:
+                workspace_path.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "errors": [f"Failed to create workspace directory: {workspace_path} ({exc})"],
+                }
+        else:
+            return {
+                "ok": False,
+                "workspace_missing": True,
+                "workspace": str(workspace_path),
+                "errors": [f"Workspace does not exist: {workspace_path}"],
+            }
+    elif not workspace_path.is_dir():
+        return {
+            "ok": False,
+            "errors": [f"Workspace path is not a directory: {workspace_path}"],
+        }
+    normalized["workspace"] = str(workspace_path.resolve())
 
     replaced = False
     next_profiles: list[dict[str, Any]] = []

@@ -32,6 +32,16 @@ Note: older entries in this file are preserved as historical development records
   - opens full CLI command/JSON in a modal
   - provides one-click `Select All` for manual copy in restricted browser contexts.
 
+## 2026-03-07 (agent profile validation + workspace create-on-save)
+- Added stricter `agent_id` validation in agent profile registry:
+  - allowed: letters, numbers, `.`, `_`, `-`
+  - length: 1-64 characters
+  - spaces and other symbols rejected with clear error.
+- Added workspace existence handling on profile save:
+  - backend returns structured `workspace_missing` response when target folder does not exist
+  - GUI prompts operator to confirm creating the missing workspace directory
+  - on confirmation, save retries with `create_workspace=true` and proceeds with config generation.
+
 ## 2026-03-06 (agent config generation: explicit server command path)
 - Updated generated MCP configs to prefer an explicit AIRG server command path when available.
 - Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.
