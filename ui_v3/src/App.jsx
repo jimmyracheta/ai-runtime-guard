@@ -279,7 +279,6 @@ export default function App() {
   const pollRef = useRef(null)
   const [overrideAgentId, setOverrideAgentId] = useState('')
   const [overrideExpanded, setOverrideExpanded] = useState({})
-  const [overrideDraftSections, setOverrideDraftSections] = useState({})
   const [overrideListInputs, setOverrideListInputs] = useState({})
 
   const unsaved = useMemo(() => {
@@ -308,21 +307,6 @@ export default function App() {
       setOverrideAgentId(knownAgentIds[0] || '')
     }
   }, [knownAgentIds, overrideAgentId])
-
-  useEffect(() => {
-    if (!overrideAgentId) {
-      setOverrideDraftSections({})
-      return
-    }
-    const policyByAgent = draftPolicy?.agent_overrides?.[overrideAgentId]?.policy || {}
-    const nextDraft = {}
-    AGENT_OVERRIDE_SECTIONS.forEach((section) => {
-      if (Object.prototype.hasOwnProperty.call(policyByAgent, section)) {
-        nextDraft[section] = deepMerge(draftPolicy?.[section] || {}, policyByAgent[section] || {})
-      }
-    })
-    setOverrideDraftSections(nextDraft)
-  }, [overrideAgentId, draftPolicy?.agent_overrides])
 
   async function fetchPolicy() {
     const res = await fetch(`${API_BASE}/policy`)
@@ -2412,15 +2396,9 @@ export default function App() {
         else out[section] = diff
         return out
       })
-      setOverrideDraftSections((prev) => {
-        const out = { ...prev }
-        if (diff === undefined) delete out[section]
-        else out[section] = value
-        return out
-      })
     }
 
-    const sectionValue = (section) => overrideDraftSections[section] || deepMerge(draftPolicy?.[section] || {}, selectedPolicy[section] || {})
+    const sectionValue = (section) => deepMerge(draftPolicy?.[section] || {}, selectedPolicy[section] || {})
     const isSectionOverridden = (section) => Object.prototype.hasOwnProperty.call(selectedPolicy || {}, section)
 
     const updateListField = (section, field, transform = (v) => v) => {
@@ -2455,11 +2433,6 @@ export default function App() {
         delete out[section]
         return out
       })
-      setOverrideDraftSections((prev) => {
-        const out = { ...prev }
-        delete out[section]
-        return out
-      })
     }
 
     const setOverride = (section) => {
@@ -2471,7 +2444,6 @@ export default function App() {
       if (!overrideAgentId) return
       if (!window.confirm(`Reset all override sections to inherited for "${overrideAgentId}"?`)) return
       setAgentOverridePolicy(overrideAgentId, () => ({}))
-      setOverrideDraftSections({})
       setMessage(`All sections reset to inherited for ${overrideAgentId}`)
     }
 
