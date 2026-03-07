@@ -223,6 +223,13 @@ export default function App() {
   const [hasRevertSnapshot, setHasRevertSnapshot] = useState(false)
   const [hasDefaultSnapshot, setHasDefaultSnapshot] = useState(false)
   const [commandModal, setCommandModal] = useState({ open: false, command: '' })
+  const [commandEditModal, setCommandEditModal] = useState({
+    open: false,
+    original: '',
+    command: '',
+    description: '',
+    tabIds: [],
+  })
   const [newCommand, setNewCommand] = useState('')
   const [newComment, setNewComment] = useState('')
   const [newCommandTabs, setNewCommandTabs] = useState([])
@@ -726,6 +733,105 @@ export default function App() {
     setMessage(`Command "${command}" added`)
   }
 
+  function openCommandEditModal(cmd) {
+    const contextLabels = contexts[cmd] || []
+    const categoryTabIds = tabDefs
+      .filter((tab) => tab.id !== 'all' && contextLabels.includes(tab.label))
+      .map((tab) => tab.id)
+    setCommandEditModal({
+      open: true,
+      original: cmd,
+      command: cmd,
+      description: descriptions[cmd] || '',
+      tabIds: categoryTabIds,
+    })
+  }
+
+  function saveCommandEdit() {
+    const original = String(commandEditModal.original || '').trim()
+    const updated = normalizeCommandName(commandEditModal.command)
+    const updatedDescription = String(commandEditModal.description || '').trim()
+    const selectedTabIds = (commandEditModal.tabIds || []).filter((id) => id !== 'all' && tabDefs.some((t) => t.id === id))
+
+    if (!original) {
+      setMessage('Original command is missing')
+      return
+    }
+    if (!updated) {
+      setMessage('Command text is required')
+      return
+    }
+    if (updated !== original && allCommands.includes(updated)) {
+      setMessage(`Command "${updated}" already exists`)
+      return
+    }
+
+    setDraftPolicy((prev) => {
+      const next = deepClone(prev)
+      const priorTier = tierFor(next, original)
+      const remove = (arr = []) => arr.filter((x) => x !== original)
+      next.blocked.commands = remove(next.blocked?.commands)
+      next.requires_confirmation.commands = remove(next.requires_confirmation?.commands)
+      next.requires_simulation.commands = remove(next.requires_simulation?.commands)
+      if (priorTier === 'blocked') next.blocked.commands = Array.from(new Set([...(next.blocked.commands || []), updated])).sort()
+      if (priorTier === 'requires_confirmation') next.requires_confirmation.commands = Array.from(new Set([...(next.requires_confirmation.commands || []), updated])).sort()
+      if (priorTier === 'requires_simulation') next.requires_simulation.commands = Array.from(new Set([...(next.requires_simulation.commands || []), updated])).sort()
+
+      next.ui_catalog = next.ui_catalog || {}
+      next.ui_catalog.tabs = Array.isArray(next.ui_catalog.tabs) ? next.ui_catalog.tabs : []
+      for (const tab of next.ui_catalog.tabs) {
+        tab.commands = Array.isArray(tab.commands) ? tab.commands.filter((c) => c !== original) : []
+        tab.descriptions = typeof tab.descriptions === 'object' && tab.descriptions ? tab.descriptions : {}
+        delete tab.descriptions[original]
+      }
+      for (const tabId of selectedTabIds) {
+        const tabLabel = tabDefs.find((t) => t.id === tabId)?.label || tabId
+        ensureUiCatalogTab(next, tabId, tabLabel)
+        const tab = next.ui_catalog.tabs.find((t) => t.id === tabId)
+        if (!tab.commands.includes(updated)) {
+          tab.commands.push(updated)
+          tab.commands.sort()
+        }
+        if (updatedDescription) tab.descriptions[updated] = updatedDescription
+      }
+      return next
+    })
+
+    setAllCommands((prev) => {
+      const next = prev.filter((c) => c !== original)
+      next.push(updated)
+      return Array.from(new Set(next)).sort()
+    })
+    setDescriptions((prev) => {
+      const next = { ...prev }
+      delete next[original]
+      if (updatedDescription) next[updated] = updatedDescription
+      return next
+    })
+    setContexts((prev) => {
+      const next = { ...prev }
+      delete next[original]
+      next[updated] = selectedTabIds.map((id) => tabDefs.find((t) => t.id === id)?.label || id)
+      return next
+    })
+    setTabCommands((prev) => {
+      const next = { ...prev }
+      Object.keys(next).forEach((tabId) => {
+        next[tabId] = (next[tabId] || []).filter((c) => c !== original)
+      })
+      for (const tabId of selectedTabIds) {
+        const cur = new Set(next[tabId] || [])
+        cur.add(updated)
+        next[tabId] = Array.from(cur).sort()
+      }
+      next.all = Array.from(new Set([...(next.all || []).filter((c) => c !== original), updated])).sort()
+      return next
+    })
+
+    setCommandEditModal({ open: false, original: '', command: '', description: '', tabIds: [] })
+    setMessage(`Command "${original}" updated`)
+  }
+
   function pathTierFor(policy, path) {
     if ((policy?.blocked?.paths || []).includes(path)) return 'blocked'
     if ((policy?.requires_confirmation?.paths || []).includes(path)) return 'requires_confirmation'
@@ -829,6 +935,14 @@ export default function App() {
               title="View command details"
             >
               ⓘ
+            </button>
+            <button
+              type="button"
+              className="text-slate-400 hover:text-slate-600"
+              onClick={() => openCommandEditModal(cmd)}
+              title="Edit command metadata"
+            >
+              ✎
             </button>
             <span className={`px-2 py-0.5 rounded-full border text-xs ${STATUS_STYLE[appliedTier]}`}>{STATUS_LABEL[appliedTier]}</span>
           </div>
@@ -1530,6 +1644,23 @@ export default function App() {
       setNewExtensionValue('')
       setMessage(`Extension "${val}" added to blocked list`)
     }
+    const onEdit = (oldExt) => {
+      const nextVal = window.prompt('Edit extension value', oldExt)
+      if (nextVal === null) return
+      const val = String(nextVal || '').trim()
+      if (!val) {
+        setMessage('Extension value is required')
+        return
+      }
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        const list = (next.blocked?.extensions || []).filter((e) => e !== oldExt)
+        list.push(val)
+        next.blocked.extensions = Array.from(new Set(list)).sort()
+        return next
+      })
+      setMessage(`Extension "${oldExt}" updated`)
+    }
     return (
       <div className="space-y-3">
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-2">
@@ -1547,14 +1678,20 @@ export default function App() {
           <div className="text-xs text-slate-500">Example: <span className="font-mono">*.pem</span></div>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm overflow-auto">
-          <div className="grid grid-cols-[minmax(320px,1fr)_100px] gap-2 text-xs font-semibold text-slate-500 border-b border-slate-200 pb-2">
+          <div className="grid grid-cols-[minmax(320px,1fr)_140px] gap-2 text-xs font-semibold text-slate-500 border-b border-slate-200 pb-2">
             <div>Extension</div>
             <div className="text-center">Actions</div>
           </div>
           {blockedExt.map((ext) => (
-            <div key={ext} className="grid grid-cols-[minmax(320px,1fr)_100px] gap-2 items-center border-b border-slate-200 py-2 text-sm">
+            <div key={ext} className="grid grid-cols-[minmax(320px,1fr)_140px] gap-2 items-center border-b border-slate-200 py-2 text-sm">
               <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-white">{ext}</div>
-              <div className="flex justify-center">
+              <div className="flex justify-center gap-2">
+                <button
+                  onClick={() => onEdit(ext)}
+                  className="px-2 py-1 rounded border border-slate-300 text-slate-700 text-xs"
+                >
+                  Edit
+                </button>
                 <button
                   onClick={() => setDraftPolicy((prev) => {
                     const next = deepClone(prev)
@@ -3076,6 +3213,73 @@ export default function App() {
     )
   }
 
+  function CommandEditModal() {
+    if (!commandEditModal.open) return null
+    const nonAllTabs = tabDefs.filter((t) => t.id !== 'all')
+    return (
+      <div className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4" onClick={() => setCommandEditModal({ open: false, original: '', command: '', description: '', tabIds: [] })}>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-lg w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div className="font-semibold text-slate-800">Edit Command</div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={() => setCommandEditModal({ open: false, original: '', command: '', description: '', tabIds: [] })}>✕</button>
+          </div>
+          <div className="p-4 space-y-3 text-sm">
+            <label className="block">
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Command</div>
+              <input
+                value={commandEditModal.command}
+                onChange={(e) => setCommandEditModal((prev) => ({ ...prev, command: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 font-mono text-xs"
+              />
+            </label>
+            <label className="block">
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Description</div>
+              <input
+                value={commandEditModal.description}
+                onChange={(e) => setCommandEditModal((prev) => ({ ...prev, description: e.target.value }))}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                placeholder="Description/comment shown in info modal"
+              />
+            </label>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Categories</div>
+              <div className="flex flex-wrap gap-2">
+                {nonAllTabs.map((tab) => (
+                  <label key={tab.id} className="text-xs border border-slate-300 rounded px-2 py-1 bg-slate-50 flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={commandEditModal.tabIds.includes(tab.id)}
+                      onChange={(e) => {
+                        setCommandEditModal((prev) => ({
+                          ...prev,
+                          tabIds: e.target.checked
+                            ? Array.from(new Set([...(prev.tabIds || []), tab.id]))
+                            : (prev.tabIds || []).filter((x) => x !== tab.id),
+                        }))
+                      }}
+                    />
+                    <span>{tab.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="px-4 py-3 border-t border-slate-200 flex justify-end gap-2">
+            <button
+              className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700"
+              onClick={() => setCommandEditModal({ open: false, original: '', command: '', description: '', tabIds: [] })}
+            >
+              Cancel
+            </button>
+            <button className="px-3 py-1.5 rounded-lg bg-brand text-white" onClick={saveCommandEdit}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#f0f1f3] text-slate-800 font-[system-ui]">
       <div className="border-b border-slate-200 bg-white/80 backdrop-blur px-5 py-4 sticky top-0 z-10">
@@ -3150,6 +3354,7 @@ export default function App() {
         </main>
       </div>
       {CommandInfoModal()}
+      {CommandEditModal()}
     </div>
   )
 }
