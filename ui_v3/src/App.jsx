@@ -275,6 +275,13 @@ export default function App() {
   })
   const [reportsTimeFilter, setReportsTimeFilter] = useState('today')
   const [reportsCustomDay, setReportsCustomDay] = useState('')
+  const [validateButtonState, setValidateButtonState] = useState('idle')
+  const [applyButtonState, setApplyButtonState] = useState('idle')
+  const [validationErrorModal, setValidationErrorModal] = useState({
+    open: false,
+    title: '',
+    details: '',
+  })
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(ADVANCED_TOGGLE_KEY) === '1'
@@ -287,6 +294,8 @@ export default function App() {
   const [overrideAgentId, setOverrideAgentId] = useState('')
   const [overrideExpanded, setOverrideExpanded] = useState({})
   const [overrideListInputs, setOverrideListInputs] = useState({})
+  const validateTimerRef = useRef(null)
+  const applyTimerRef = useRef(null)
 
   const unsaved = useMemo(() => {
     if (!appliedPolicy || !draftPolicy) return false
@@ -314,6 +323,13 @@ export default function App() {
       setOverrideAgentId(knownAgentIds[0] || '')
     }
   }, [knownAgentIds, overrideAgentId])
+
+  useEffect(() => {
+    return () => {
+      if (validateTimerRef.current) clearTimeout(validateTimerRef.current)
+      if (applyTimerRef.current) clearTimeout(applyTimerRef.current)
+    }
+  }, [])
 
   async function fetchPolicy() {
     const res = await fetch(`${API_BASE}/policy`)
@@ -575,9 +591,29 @@ export default function App() {
     const res = await fetch(`${API_BASE}/policy/validate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policy: draftPolicy })
     })
-    const payload = await res.json()
-    if (res.ok) setMessage('Validation passed')
-    else setMessage(payload.error || 'Validation failed')
+    const payload = await res.json().catch(() => ({}))
+    if (res.ok) {
+      setMessage('Validation passed')
+      setValidateButtonState('success')
+      if (validateTimerRef.current) clearTimeout(validateTimerRef.current)
+      validateTimerRef.current = setTimeout(() => setValidateButtonState('idle'), 2000)
+    } else {
+      const details = payload?.error
+        ? String(payload.error)
+        : `Validation failed (${res.status})`
+      const payloadDump = (() => {
+        try {
+          return JSON.stringify(payload, null, 2)
+        } catch {
+          return String(payload || '')
+        }
+      })()
+      setValidationErrorModal({
+        open: true,
+        title: 'Validation Failed',
+        details: payloadDump && payloadDump !== '{}' ? `${details}\n\n${payloadDump}` : details,
+      })
+    }
   }
 
   async function onApply() {
@@ -585,13 +621,16 @@ export default function App() {
     const res = await fetch(`${API_BASE}/policy/apply`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Actor': 'control-plane-v3' }, body: JSON.stringify({ policy: draftPolicy })
     })
-    const payload = await res.json()
+    const payload = await res.json().catch(() => ({}))
     if (!res.ok) {
       setMessage(payload.error || 'Apply failed')
       return
     }
     await fetchPolicy()
     setMessage('Policy applied')
+    setApplyButtonState('success')
+    if (applyTimerRef.current) clearTimeout(applyTimerRef.current)
+    applyTimerRef.current = setTimeout(() => setApplyButtonState('idle'), 2000)
   }
 
   async function onReload() {
@@ -2869,8 +2908,18 @@ export default function App() {
       <>
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm mb-3 flex flex-wrap items-center justify-end gap-2">
           <button onClick={onReload} className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700">Reload</button>
-          <button onClick={onValidate} className="px-4 py-2 rounded-lg bg-blue-600 text-white">Validate</button>
-          <button onClick={onApply} className="px-4 py-2 rounded-lg bg-brand text-white">Apply</button>
+          <button
+            onClick={onValidate}
+            className={`px-4 py-2 rounded-lg text-white ${validateButtonState === 'success' ? 'bg-green-600' : 'bg-blue-600'}`}
+          >
+            {validateButtonState === 'success' ? 'OK' : 'Validate'}
+          </button>
+          <button
+            onClick={onApply}
+            className={`px-4 py-2 rounded-lg text-white ${applyButtonState === 'success' ? 'bg-green-600' : 'bg-brand'}`}
+          >
+            {applyButtonState === 'success' ? 'Applied' : 'Apply'}
+          </button>
           <button
             onClick={onRevertLastApply}
             disabled={!hasRevertSnapshot}
@@ -2904,7 +2953,6 @@ export default function App() {
             />
           )}
           {jsonError && <div className="mt-2 text-sm text-red-600">{jsonError}</div>}
-          {message && <div className="mt-2 text-sm text-slate-700">{message}</div>}
         </div>
       </>
     )
@@ -3280,13 +3328,34 @@ export default function App() {
     )
   }
 
+  function ValidationErrorModal() {
+    if (!validationErrorModal.open) return null
+    return (
+      <div
+        className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4"
+        onClick={() => setValidationErrorModal({ open: false, title: '', details: '' })}
+      >
+        <div className="bg-white rounded-xl border border-slate-200 shadow-lg w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div className="font-semibold text-red-700">{validationErrorModal.title || 'Validation Error'}</div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={() => setValidationErrorModal({ open: false, title: '', details: '' })}>✕</button>
+          </div>
+          <div className="p-4">
+            <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-slate-50 border border-slate-200 rounded p-3">
+              {validationErrorModal.details || 'No details returned from backend.'}
+            </pre>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#f0f1f3] text-slate-800 font-[system-ui]">
       <div className="border-b border-slate-200 bg-white/80 backdrop-blur px-5 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">Policy Control Plane</h1>
-            <div className="text-xs text-slate-500 mt-1">Policy hash: <span className="font-mono">{policyHash || '-'}</span></div>
           </div>
           <div className="flex items-center gap-2">
             {unsaved && <span className="text-xs text-amber-700 font-medium flex items-center gap-1 ml-2"><span className="w-2 h-2 rounded-full bg-amber-500" /> Unsaved changes</span>}
@@ -3346,6 +3415,11 @@ export default function App() {
         )}
 
         <main className="p-4">
+          {message && (
+            <div className="mb-3 px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-700">
+              {message}
+            </div>
+          )}
           {!loaded && <div className="text-slate-500">Loading...</div>}
           {loaded && activeRail === 'approvals' && ApprovalsPanel()}
           {loaded && activeRail === 'policy' && PolicyPanel()}
@@ -3355,6 +3429,7 @@ export default function App() {
       </div>
       {CommandInfoModal()}
       {CommandEditModal()}
+      {ValidationErrorModal()}
     </div>
   )
 }
