@@ -2448,19 +2448,6 @@ export default function App() {
       setOverrideExpanded((prev) => ({ ...prev, [section]: !prev[section] }))
     }
 
-    const removeAgent = () => {
-      if (!overrideAgentId) return
-      if (!window.confirm(`Delete all overrides for agent "${overrideAgentId}"?`)) return
-      setDraftPolicy((prev) => {
-        const next = deepClone(prev)
-        if (next.agent_overrides && Object.prototype.hasOwnProperty.call(next.agent_overrides, overrideAgentId)) {
-          delete next.agent_overrides[overrideAgentId]
-        }
-        return next
-      })
-      setMessage(`Agent override profile "${overrideAgentId}" removed`)
-    }
-
     const setInherit = (section) => {
       if (!overrideAgentId) return
       setAgentOverridePolicy(overrideAgentId, (policy) => {
@@ -2493,6 +2480,76 @@ export default function App() {
       window.alert(`${AGENT_OVERRIDE_SECTION_LABELS[section]} baseline\n\n${formatHuman(baseline)}`)
     }
 
+    const listDelta = (baseList, effectiveList) => {
+      const b = Array.isArray(baseList) ? baseList : []
+      const e = Array.isArray(effectiveList) ? effectiveList : []
+      return {
+        added: e.filter((x) => !b.includes(x)),
+        removed: b.filter((x) => !e.includes(x)),
+      }
+    }
+
+    const summarizeQuickDiff = () => {
+      if (!overrideAgentId) return
+      const lines = [`Agent policy diff for ${overrideAgentId}`]
+
+      const addListLine = (label, delta) => {
+        if (delta.added.length) lines.push(`${label}: added ${delta.added.length} (${delta.added.join(', ')})`)
+        if (delta.removed.length) lines.push(`${label}: removed ${delta.removed.length} (${delta.removed.join(', ')})`)
+      }
+      const addScalarLine = (label, baseValue, effectiveValue) => {
+        if (JSON.stringify(baseValue) !== JSON.stringify(effectiveValue)) {
+          lines.push(`${label}: ${String(baseValue)} -> ${String(effectiveValue)}`)
+        }
+      }
+
+      const blockedBase = draftPolicy?.blocked || {}
+      const blockedEff = sectionValue('blocked')
+      addListLine('Blocked commands', listDelta(blockedBase.commands, blockedEff.commands))
+      addListLine('Blocked paths', listDelta(blockedBase.paths, blockedEff.paths))
+      addListLine('Blocked extensions', listDelta(blockedBase.extensions, blockedEff.extensions))
+
+      const confirmBase = draftPolicy?.requires_confirmation || {}
+      const confirmEff = sectionValue('requires_confirmation')
+      addListLine('Requires confirmation commands', listDelta(confirmBase.commands, confirmEff.commands))
+      addListLine('Requires confirmation paths', listDelta(confirmBase.paths, confirmEff.paths))
+
+      const simBase = draftPolicy?.requires_simulation || {}
+      const simEff = sectionValue('requires_simulation')
+      addListLine('Requires simulation commands', listDelta(simBase.commands, simEff.commands))
+      addScalarLine('Bulk file threshold', simBase.bulk_file_threshold, simEff.bulk_file_threshold)
+      addScalarLine('Simulation max retries', simBase.max_retries, simEff.max_retries)
+
+      const allowedBase = draftPolicy?.allowed || {}
+      const allowedEff = sectionValue('allowed')
+      addListLine('Allowed paths whitelist', listDelta(allowedBase.paths_whitelist, allowedEff.paths_whitelist))
+      addScalarLine('Allowed max files/operation', allowedBase.max_files_per_operation, allowedEff.max_files_per_operation)
+      addScalarLine('Allowed max file size MB', allowedBase.max_file_size_mb, allowedEff.max_file_size_mb)
+      addScalarLine('Allowed max directory depth', allowedBase.max_directory_depth, allowedEff.max_directory_depth)
+
+      const netBase = draftPolicy?.network || {}
+      const netEff = sectionValue('network')
+      addScalarLine('Network enforcement mode', netBase.enforcement_mode, netEff.enforcement_mode)
+      addScalarLine('Network block unknown domains', netBase.block_unknown_domains, netEff.block_unknown_domains)
+      addListLine('Network commands', listDelta(netBase.commands, netEff.commands))
+      addListLine('Network allowlist', listDelta(netBase.allowed_domains, netEff.allowed_domains))
+      addListLine('Network blocklist', listDelta(netBase.blocked_domains, netEff.blocked_domains))
+
+      const exeBase = draftPolicy?.execution || {}
+      const exeEff = sectionValue('execution')
+      addScalarLine('Execution timeout seconds', exeBase.max_command_timeout_seconds, exeEff.max_command_timeout_seconds)
+      addScalarLine('Execution max output chars', exeBase.max_output_chars, exeEff.max_output_chars)
+      addScalarLine('Containment mode', exeBase?.shell_workspace_containment?.mode, exeEff?.shell_workspace_containment?.mode)
+      addScalarLine('Containment log_paths', exeBase?.shell_workspace_containment?.log_paths, exeEff?.shell_workspace_containment?.log_paths)
+      addListLine(
+        'Containment exempt commands',
+        listDelta(exeBase?.shell_workspace_containment?.exempt_commands, exeEff?.shell_workspace_containment?.exempt_commands)
+      )
+
+      if (lines.length === 1) lines.push('No differences from baseline.')
+      window.alert(lines.join('\n'))
+    }
+
     return (
       <div className="space-y-3">
         <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm space-y-3">
@@ -2519,18 +2576,18 @@ export default function App() {
             </div>
             <div className="flex gap-2 justify-end">
               <button
+                onClick={summarizeQuickDiff}
+                disabled={!overrideAgentId}
+                className="px-3 py-1.5 rounded-lg border border-blue-300 text-blue-700 bg-blue-50 text-sm disabled:opacity-50"
+              >
+                Quick Diff
+              </button>
+              <button
                 onClick={resetAgentOverrides}
                 disabled={!overrideAgentId}
                 className="px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 bg-amber-50 text-sm disabled:opacity-50"
               >
                 Reset to Inherited
-              </button>
-              <button
-                onClick={removeAgent}
-                disabled={!overrideAgentId}
-                className="px-3 py-1.5 rounded-lg border border-red-300 text-red-700 bg-red-50 text-sm disabled:opacity-50"
-              >
-                Delete Agent
               </button>
             </div>
           </div>
