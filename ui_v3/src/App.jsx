@@ -282,6 +282,11 @@ export default function App() {
     title: '',
     details: '',
   })
+  const [copyAssistModal, setCopyAssistModal] = useState({
+    open: false,
+    title: '',
+    content: '',
+  })
   const [showAdvanced, setShowAdvanced] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(ADVANCED_TOGGLE_KEY) === '1'
@@ -296,6 +301,7 @@ export default function App() {
   const [overrideListInputs, setOverrideListInputs] = useState({})
   const validateTimerRef = useRef(null)
   const applyTimerRef = useRef(null)
+  const copyAssistRef = useRef(null)
 
   const unsaved = useMemo(() => {
     if (!appliedPolicy || !draftPolicy) return false
@@ -2991,39 +2997,17 @@ export default function App() {
       }
     }
 
-    const copyToClipboard = async (text) => {
-      const value = String(text || '')
-      if (!value) return
-      if (navigator?.clipboard?.writeText) {
-        try {
-          await navigator.clipboard.writeText(value)
-          return
-        } catch {
-          // Fall through to legacy copy path.
-        }
-      }
-      const el = document.createElement('textarea')
-      el.value = value
-      el.setAttribute('readonly', '')
-      el.style.position = 'fixed'
-      el.style.opacity = '0'
-      el.style.pointerEvents = 'none'
-      document.body.appendChild(el)
-      el.focus()
-      el.select()
-      const ok = document.execCommand('copy')
-      document.body.removeChild(el)
-      if (!ok) throw new Error('Clipboard write failed in this browser context')
-    }
-
     const copyJson = async (profile) => {
       setSettingsLoading(true)
       setSettingsError('')
       try {
         await upsertSettingsProfile(profile)
         const payload = await generateAgentConfig(profile.profile_id, false)
-        await copyToClipboard(JSON.stringify(payload.generated?.file_json || {}, null, 2))
-        setMessage('Configuration JSON copied to clipboard')
+        setCopyAssistModal({
+          open: true,
+          title: 'Copy JSON Configuration',
+          content: JSON.stringify(payload.generated?.file_json || {}, null, 2),
+        })
       } catch (err) {
         setSettingsError(String(err.message || err))
       } finally {
@@ -3037,8 +3021,11 @@ export default function App() {
       try {
         await upsertSettingsProfile(profile)
         const payload = await generateAgentConfig(profile.profile_id, false)
-        await copyToClipboard(String(payload.generated?.command_text || ''))
-        setMessage('CLI command copied to clipboard')
+        setCopyAssistModal({
+          open: true,
+          title: 'Copy CLI Command',
+          content: String(payload.generated?.command_text || ''),
+        })
       } catch (err) {
         setSettingsError(String(err.message || err))
       } finally {
@@ -3375,6 +3362,44 @@ export default function App() {
     )
   }
 
+  function CopyAssistModal() {
+    if (!copyAssistModal.open) return null
+    const onSelectAll = () => {
+      if (!copyAssistRef.current) return
+      copyAssistRef.current.focus()
+      copyAssistRef.current.select()
+    }
+    return (
+      <div
+        className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4"
+        onClick={() => setCopyAssistModal({ open: false, title: '', content: '' })}
+      >
+        <div className="bg-white rounded-xl border border-slate-200 shadow-lg w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div className="font-semibold text-slate-800">{copyAssistModal.title || 'Copy Content'}</div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={() => setCopyAssistModal({ open: false, title: '', content: '' })}>✕</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <textarea
+              ref={copyAssistRef}
+              readOnly
+              value={copyAssistModal.content || ''}
+              className="w-full h-72 border border-slate-300 rounded-lg p-3 font-mono text-xs"
+            />
+            <div className="flex justify-end gap-2">
+              <button className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700" onClick={onSelectAll}>
+                Select All
+              </button>
+              <button className="px-3 py-1.5 rounded-lg bg-brand text-white" onClick={() => setCopyAssistModal({ open: false, title: '', content: '' })}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#f0f1f3] text-slate-800 font-[system-ui]">
       <div className="border-b border-slate-200 bg-white/80 backdrop-blur px-5 py-4 sticky top-0 z-10">
@@ -3450,6 +3475,7 @@ export default function App() {
       {CommandInfoModal()}
       {CommandEditModal()}
       {ValidationErrorModal()}
+      {CopyAssistModal()}
     </div>
   )
 }

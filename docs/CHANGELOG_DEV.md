@@ -28,7 +28,9 @@ Note: older entries in this file are preserved as historical development records
 - Hardened explicit `AIRG_SERVER_COMMAND=airg-server` handling:
   - unresolved bare value no longer leaks into generated config
   - generator falls through to deterministic absolute command fallback.
-- Added clipboard fallback in GUI Settings agent actions for environments where `navigator.clipboard` is denied by browser context.
+- Replaced direct clipboard writes in GUI Settings agent actions with a copy-assist modal:
+  - opens full CLI command/JSON in a modal
+  - provides one-click `Select All` for manual copy in restricted browser contexts.
 
 ## 2026-03-06 (agent config generation: explicit server command path)
 - Updated generated MCP configs to prefer an explicit AIRG server command path when available.
