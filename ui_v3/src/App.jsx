@@ -676,15 +676,7 @@ export default function App() {
       return
     }
     const selectedTabs = newCommandTabs
-    if (!selectedTabs.length) {
-      setMessage('Select at least one category')
-      return
-    }
     const validTabs = selectedTabs.filter((id) => id !== 'all' && tabDefs.some((t) => t.id === id))
-    if (!validTabs.length) {
-      setMessage('Select at least one valid non-All category')
-      return
-    }
 
     setDraftPolicy((prev) => {
       let next = deepClone(prev)
@@ -1291,6 +1283,9 @@ export default function App() {
                 <span>{tab.label}</span>
               </label>
             ))}
+          </div>
+          <div className="text-xs text-slate-500">
+            Category selection is optional. If none is selected, the command is added as uncategorized.
           </div>
           <button onClick={onAddCommand} className="px-3 py-1.5 rounded-lg bg-brand text-white text-sm">Add command</button>
         </div>
