@@ -19,6 +19,13 @@ Note: older entries in this file are preserved as historical development records
 - Kept baseline policy authoritative; effective per-agent policy remains baseline + overlay merge at runtime.
 - Rebuilt `ui_v3/dist` for the updated Agent Overrides workflow.
 
+## 2026-03-07 (agent config generation: guaranteed runnable server command)
+- Updated generated agent MCP configs to avoid bare `airg-server` fallback when not resolvable from environment/PATH.
+- New fallback now emits:
+  - `command`: current Python interpreter path
+  - `args`: `["-m", "airg_cli", "server"]`
+- `AIRG_SERVER_COMMAND` now supports explicit command+args parsing, preserving operator overrides.
+
 ## 2026-03-06 (agent config generation: explicit server command path)
 - Updated generated MCP configs to prefer an explicit AIRG server command path when available.
 - Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.
