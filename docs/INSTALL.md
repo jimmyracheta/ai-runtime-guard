@@ -38,9 +38,9 @@ pip install .
 ```bash
 airg-setup
 ```
-Optional one-command non-interactive setup with GUI service:
+Optional one-command fully unattended setup with GUI service:
 ```bash
-airg-setup --defaults --yes --gui
+airg-setup --silent
 ```
 3. Create a dedicated workspace:
 ```bash
@@ -81,6 +81,7 @@ Notes:
 5. `--gui` enables GUI service setup (`launchd` on macOS, `systemd --user` on Linux).
 6. `--no-gui` explicitly skips GUI service setup.
 7. Deployment prerequisite: disable native shell/file tools in your AI client so actions are forced through AIRG MCP tools.
+8. If `--agent-id` is omitted, AIRG auto-generates an ID like `unknown-482901`.
 
 ## Advanced setup (MCP + Web GUI)
 Use this when you want:
@@ -140,6 +141,10 @@ Wizard:
 ```bash
 airg-setup
 ```
+Fully unattended bootstrap (defaults + yes + gui):
+```bash
+airg-setup --silent
+```
 Defaults-only (non-interactive path choices):
 ```bash
 airg-setup --defaults --yes
@@ -155,7 +160,7 @@ airg-setup --defaults --yes --no-gui
 
 Service management:
 ```bash
-airg-service install --workspace /absolute/path/to/airg-workspace
+airg-service install --workspace /absolute/path/to/airg-workspace --agent-id claude-code-1
 airg-service start
 airg-service status
 airg-service stop

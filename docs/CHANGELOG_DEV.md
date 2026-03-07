@@ -72,6 +72,14 @@ Note: older entries in this file are preserved as historical development records
   - `Unsaved changes for this profile`
   - `MCP reconfiguration required for this agent after profile changes` (for previously configured profiles changed and saved).
 
+## 2026-03-07 (setup matrix + agent-id defaults)
+- Added `airg-setup --silent` unattended mode (`--defaults --yes --gui`).
+- Expanded setup agent type handling to include `claude_code`, `codex`, and `custom` options.
+- If no `--agent-id` is provided, setup/service now auto-generate an ID like `unknown-<6 digits>`.
+- Updated setup completion messaging:
+  - GUI path points users to `Settings -> Agents` for MCP config copy
+  - no-GUI path prints runtime MCP config artifact location.
+
 ## 2026-03-06 (agent config generation: explicit server command path)
 - Updated generated MCP configs to prefer an explicit AIRG server command path when available.
 - Resolution order: `AIRG_SERVER_COMMAND` env override, then `$VIRTUAL_ENV/bin/airg-server`, then `dirname(sys.executable)/airg-server`, fallback to `airg-server`.

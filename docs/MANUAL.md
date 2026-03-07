@@ -60,6 +60,8 @@ Note:
 7. `airg-setup` asks guided questions (workspace, runtime paths, optional GUI service, agent type), updates policy safely, writes agent-compatible MCP config snippets under `./out/mcp-configs`, then runs `airg-doctor`.
 8. `airg-setup --gui` performs setup and configures/starts GUI as a user service (`launchd` on macOS, `systemd --user` on Linux).
 9. `airg-setup --defaults --yes` is unattended defaults mode; combine with `--gui` or `--no-gui` to control UI service setup.
+10. `airg-setup --silent` is fully unattended bootstrap (`--defaults --yes --gui`) with one default Settings agent profile created automatically.
+11. If `--agent-id` is omitted, AIRG auto-generates an ID like `unknown-482901`.
 
 Backup-root diagnostics:
 1. `airg-doctor` prints resolved `backup_root`.

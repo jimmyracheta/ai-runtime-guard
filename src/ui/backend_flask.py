@@ -135,7 +135,7 @@ def get_policy():
             "tab_commands": service.tab_command_map(catalog),
             "runtime_paths": {
                 "AIRG_WORKSPACE": str(WORKSPACE_PATH),
-                "AIRG_AGENT_ID": str(os.environ.get("AIRG_AGENT_ID", "Unknown")),
+                "AIRG_AGENT_ID": str(os.environ.get("AIRG_AGENT_ID", "default")),
                 "AIRG_POLICY_PATH": str(POLICY_PATH),
                 "AIRG_APPROVAL_DB_PATH": str(APPROVAL_DB_PATH),
                 "AIRG_APPROVAL_HMAC_KEY_PATH": str(
