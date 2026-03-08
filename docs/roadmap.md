@@ -66,6 +66,16 @@ Goal: make PyPI distribution the primary host installation channel and prepare o
 4. Verify parity of `airg-setup`, `airg-service`, `airg-doctor`, and runtime path defaults in package installs.
 5. Introduce CLI scaffolding for future orchestrator commands (for example `airg add <agent>`, `airg verify`) without enabling agent-specific adapters yet.
 
+### Current implementation status
+1. Implemented:
+   - package metadata expansion (`keywords`, `classifiers`, project URLs)
+   - CI packaging validation includes `twine check`
+   - Trusted Publishing workflow for TestPyPI/PyPI
+   - packaged UI dist path detection and runtime default normalization (`~/airg-workspace` fallback)
+   - TestPyPI/Linux and TestPyPI/macOS installation + MCP smoke validation.
+2. Remaining:
+   - execute stable publish from `main` (`v1.5.0`) and final post-publish smoke checks on PyPI artifacts.
+
 ### Acceptance gates
 1. Build/install smoke checks pass in clean environments.
 2. Release checklist includes package validation and rollback notes.

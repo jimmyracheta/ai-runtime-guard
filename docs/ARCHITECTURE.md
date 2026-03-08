@@ -27,6 +27,7 @@ Primary runtime artifacts:
 - `ui/`: control-plane backend service modules (`ui/service.py`, `ui/backend_flask.py`).
 - `ui/backend_flask.py`: REST backend for policy + approvals endpoints used by control-plane UI v3.
 - `ui_v3/`: Vite React + Tailwind control-plane frontend.
+- `agent_configs.py`: profile registry and MCP config generation engine for `Settings -> Agents`.
 
 ## Effective policy resolution
 Policy is resolved in two stages at startup:
@@ -41,6 +42,11 @@ Merge behavior:
 
 This keeps single-policy installs backward compatible while enabling per-agent policy isolation in shared deployments.
 Workspace remains sourced from `AIRG_WORKSPACE` in MCP/runtime env, not policy overrides.
+
+Authoring model:
+1. Base policy remains the source of truth.
+2. Agent overrides are saved as diff overlays under `agent_overrides.<agent_id>.policy`.
+3. Effective policy at runtime is base + overlay merge for the active `AIRG_AGENT_ID`.
 
 ## Dependency guardrails
 The modular architecture assumes a one-way dependency direction:
@@ -186,6 +192,16 @@ Backup behavior:
 - `write_file`: path policy, optional pre-overwrite backup, write text.
 - `delete_file`: path policy, existence/type checks, pre-delete backup, delete file.
 - `list_directory`: path policy, existence/type/depth checks, return formatted listing with type/size/mtime.
+
+## Agent profile/config architecture
+Settings agent management persists runtime-scoped profile metadata and generated config artifacts:
+1. Registry path: `<state_dir>/mcp-configs/agents.json`
+2. Generated artifacts: `<state_dir>/mcp-configs/*.json` and instruction files
+3. Shared runtime paths (`policy/db/log/reports`) are common across profiles; profile-specific values are `agent_id` and `workspace`.
+4. Server command generation is deterministic:
+   - explicit `AIRG_SERVER_COMMAND` if valid/resolvable
+   - venv/sibling `airg-server`
+   - fallback `<python> -m airg_cli server`
 
 ## Trust boundaries and notable gaps
 Observed current gaps/risk areas:

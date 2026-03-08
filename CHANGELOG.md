@@ -2,10 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.4-dev] - 2026-03-08
-### Notes
-- This is an integration snapshot intended for `dev`/pre-release validation.
-- Latest public stable release remains `1.3.0`.
+## [1.5.0] - 2026-03-08
 
 ### Added
 - Policy -> Agent Overrides GUI editor with section-based controls and baseline info views.
@@ -15,6 +12,9 @@ All notable changes to this project are documented in this file.
 - Setup matrix extensions:
   - `airg-setup --silent`
   - auto-generated fallback `agent_id` values (`unknown-<random>`).
+- PyPI publish workflow with Trusted Publishing support:
+  - manual TestPyPI/PyPI publish targets
+  - stable-tag (`vX.Y.Z`) publish path.
 
 ### Changed
 - Per-agent override persistence now stores diff-style overlay values rather than baseline-copied section payloads.
@@ -26,11 +26,16 @@ All notable changes to this project are documented in this file.
   - optional create-on-save for missing workspaces
   - runtime reconfigure path for default profile updates
   - copy-assist modal for CLI/JSON in restricted clipboard contexts.
+- Package validation now includes `twine check dist/*` in CI/release flow.
+- Packaged runtime defaults and diagnostics are now aligned:
+  - workspace fallback defaults to `~/airg-workspace` when unset
+  - UI dist discovery supports installed-package paths.
 
 ### Fixed
 - Multiple MCP config generation failures caused by unresolved bare `airg-server` command outputs.
 - Runtime env propagation gaps where UI/service-generated profile artifacts could miss server-command context.
 - Agent Overrides UI synchronization issues between baseline policy changes and section editor state.
+- Packaged UI asset detection/serving in TestPyPI installs (no manual frontend build required in normal flow).
 
 ## [1.3.0] - 2026-03-03
 ### Added

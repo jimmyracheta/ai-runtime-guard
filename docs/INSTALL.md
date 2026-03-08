@@ -24,6 +24,25 @@ Default runtime state locations:
    - config: `${XDG_CONFIG_HOME:-~/.config}/ai-runtime-guard/`
    - state: `${XDG_STATE_HOME:-~/.local/state}/ai-runtime-guard/`
 
+## Package install (PyPI/TestPyPI)
+Install from package index instead of repo clone:
+```bash
+python3 -m venv .venv-airg
+source .venv-airg/bin/activate
+python -m pip install --upgrade pip
+python -m pip install ai-runtime-guard
+```
+
+TestPyPI validation install:
+```bash
+python3 -m venv .venv-airg-test
+source .venv-airg-test/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --index-url https://test.pypi.org/simple --extra-index-url https://pypi.org/simple ai-runtime-guard==<test-version>
+```
+Note:
+1. TestPyPI installs typically require `--extra-index-url https://pypi.org/simple` for dependencies.
+
 ## Basic setup (MCP server only)
 1. Clone and install:
 ```bash
@@ -67,6 +86,7 @@ mkdir -p ~/airg-workspace
 }
 ```
    - Recommended on Linux/macOS source installs: `<install_dir>/venv/bin/airg-server`.
+   - In package installs, use the absolute venv path shown by `which airg-server`.
 5. Run diagnostics once:
 ```bash
 airg-doctor

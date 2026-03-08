@@ -62,6 +62,7 @@ Note:
 9. `airg-setup --defaults --yes` is unattended defaults mode; combine with `--gui` or `--no-gui` to control UI service setup.
 10. `airg-setup --silent` is fully unattended bootstrap (`--defaults --yes --gui`) with one default Settings agent profile created automatically.
 11. If `--agent-id` is omitted, AIRG auto-generates an ID like `unknown-482901`.
+12. Setup/profile-generated MCP config includes `AIRG_SERVER_COMMAND` for deterministic startup across shells/services.
 
 Backup-root diagnostics:
 1. `airg-doctor` prints resolved `backup_root`.
@@ -105,6 +106,8 @@ Notes:
 1. If no override exists for current `AIRG_AGENT_ID`, base policy behavior remains unchanged.
 2. Effective policy is resolved at startup, so restart MCP server after editing override entries.
 3. This feature enables per-agent guardrails without maintaining separate policy files.
+4. UI authoring path is available under `Policy -> Agent Overrides` with section-based editors and baseline info cards.
+5. Saved overrides are diff-style overlays, not full copies of baseline sections.
 
 ### Current capabilities and caveats snapshot
 Capabilities:
@@ -113,6 +116,7 @@ Capabilities:
 3. Approvals are out-of-band (GUI/API), not agent-invokable via MCP tools.
 4. Runtime includes audit logging, backup/restore flows, normalization, and path/workspace hardening.
 5. GUI supports policy editing, plus adding custom commands and custom categories.
+6. GUI `Settings -> Agents` supports profile-based MCP config generation and copy-assist modal flows for CLI/JSON.
 
 Caveats:
 1. Runtime policy reload is startup-based; after policy changes, restart MCP server (and usually reconnect agent client).
@@ -120,6 +124,12 @@ Caveats:
 3. Redaction and obfuscation defenses are pattern-based and not exhaustive.
 4. Some blast-radius/target inference for complex shell patterns is heuristic.
 5. Cumulative budget efficacy depends on threshold tuning.
+
+### Packaged UI/runtime path behavior
+For package installs (PyPI/TestPyPI):
+1. UI dist is served from installed package paths (for example `<venv>/ui_v3/dist`) when source-tree paths are not present.
+2. Default workspace fallback (when `AIRG_WORKSPACE` is unset) is `~/airg-workspace`.
+3. `airg-doctor` should not report workspace under `site-packages`; if it does, treat it as misconfiguration/regression.
 
 ## 2. Policy tier order (most important)
 Command checks run in strict precedence:

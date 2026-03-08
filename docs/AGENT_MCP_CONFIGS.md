@@ -40,7 +40,7 @@ Minimal MCP server block:
 ```
 
 Tip:
-1. Run `airg-setup` and copy the printed env block.
+1. Run `airg-setup` and then open GUI `Settings -> Agents` to copy generated CLI/JSON MCP config for each profile.
 2. Use `airg-init` only as a low-level/manual bootstrap fallback.
 
 ## Codex

@@ -1,6 +1,6 @@
 # STATUS
 
-Last updated: 2026-03-08
+Last updated: 2026-03-08 (v1.5 prep)
 
 ## Current branch
 1. Active integration branch: `dev`
@@ -8,7 +8,7 @@ Last updated: 2026-03-08
 
 ## Current release state
 1. Latest stable release is `v1.3` from `main`.
-2. `dev` currently carries post-`1.3` integration work tagged as `v1.4-dev` (pre-release snapshot).
+2. `dev` currently carries `v1.5.0` release-prep and packaging hardening work.
 3. Stable release notes are in `CHANGELOG.md`.
 4. In-progress development notes are in `docs/CHANGELOG_DEV.md`.
 
@@ -28,8 +28,8 @@ Last updated: 2026-03-08
    - no in-band MCP self-approval tool is exposed.
 
 ## Active workstreams
-1. Packaging channel hardening (PyPI and container).
-2. Setup/onboarding simplification for package installs and multi-agent operations.
+1. Final PyPI/TestPyPI publish validation and release execution.
+2. Container channel hardening (path model + persistence + CI checks).
 3. SSE/transport expansion planning after policy isolation is complete.
 4. Documentation simplification and public-release hygiene.
 
