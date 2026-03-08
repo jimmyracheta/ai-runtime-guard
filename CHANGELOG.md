@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.4-dev] - 2026-03-08
+### Notes
+- This is an integration snapshot intended for `dev`/pre-release validation.
+- Latest public stable release remains `1.3.0`.
+
+### Added
+- Policy -> Agent Overrides GUI editor with section-based controls and baseline info views.
+- Agent profile bootstrap during setup/service install:
+  - default profile creation
+  - generated MCP config artifacts in runtime state.
+- Setup matrix extensions:
+  - `airg-setup --silent`
+  - auto-generated fallback `agent_id` values (`unknown-<random>`).
+
+### Changed
+- Per-agent override persistence now stores diff-style overlay values rather than baseline-copied section payloads.
+- Generated MCP server command resolution is now deterministic across macOS/Linux install variants:
+  - explicit `AIRG_SERVER_COMMAND` support (including args parsing)
+  - safe fallback to `<python> -m airg_cli server` when needed.
+- Settings -> Agents flow improved:
+  - stricter `agent_id` validation
+  - optional create-on-save for missing workspaces
+  - runtime reconfigure path for default profile updates
+  - copy-assist modal for CLI/JSON in restricted clipboard contexts.
+
+### Fixed
+- Multiple MCP config generation failures caused by unresolved bare `airg-server` command outputs.
+- Runtime env propagation gaps where UI/service-generated profile artifacts could miss server-command context.
+- Agent Overrides UI synchronization issues between baseline policy changes and section editor state.
+
 ## [1.3.0] - 2026-03-03
 ### Added
 - Connection-scoped identity/session context in runtime and logs:

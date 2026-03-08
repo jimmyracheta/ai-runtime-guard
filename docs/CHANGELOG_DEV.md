@@ -2,6 +2,16 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-08 (v1.4-dev tag prep, release notes, and docs reconciliation)
+- Bumped package version to `1.4.dev0` to reflect integration-train status.
+- Prepared `dev` for integration tag `v1.4-dev` while keeping latest public stable release at `1.3.0`.
+- Updated root `CHANGELOG.md` with a dedicated `1.4-dev` snapshot section.
+- Reconciled roadmap/status/release docs against completed v1.4 scope:
+  - per-agent override runtime + GUI authoring is now tracked as implemented
+  - v1.5 remains packaging hardening and publish readiness
+  - v1.6 remains container/transport parity preparation.
+- Updated release guidance to explicitly separate integration tags (`vX.Y-dev`) from public stable tags (`vX.Y.Z`).
+
 ## 2026-03-07 (v1.4 agent override editor: structured controls + diff-only persistence)
 - Reworked the Policy -> Agent Overrides UI to remove raw JSON editing and expose section-specific controls.
 - Added human-friendly section cards with:

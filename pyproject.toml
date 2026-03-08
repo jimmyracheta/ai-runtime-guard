@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-runtime-guard"
-version = "1.3.0"
+version = "1.4.dev0"
 description = "MCP security wrapper with policy tiers, approvals, backup, and audit."
 readme = "README.md"
 requires-python = ">=3.10"

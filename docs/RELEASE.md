@@ -16,8 +16,9 @@ This document defines the release workflow for `ai-runtime-guard`.
 ## Versioning
 Use semantic versions:
 1. `vX.Y.Z` for release tags on `main`.
-2. Patch tags for stabilization updates.
-3. Minor/major bumps for feature and compatibility changes.
+2. `vX.Y-dev` for integration snapshots from `dev` (pre-release; not public stable).
+3. Patch tags for stabilization updates.
+4. Minor/major bumps for feature and compatibility changes.
 
 ## Pre-release checklist (run on `dev`)
 1. Confirm clean working tree.
@@ -51,6 +52,15 @@ Use semantic versions:
    - upgrade notes
    - known limitations
 5. Attach CI artifacts as needed (`python-dist`, `ui-dist`).
+
+## Integration-tag steps (`dev`)
+1. Confirm `dev` branch changelog/docs are reconciled.
+2. Create annotated integration tag:
+   - `git tag -a vX.Y-dev -m "vX.Y-dev"`
+3. Push `dev` and tag:
+   - `git push origin dev`
+   - `git push origin vX.Y-dev`
+4. Keep public stable version unchanged until the next `vX.Y.Z` tag is cut on `main`.
 
 ## Packaging validation
 Use a fresh virtual environment:

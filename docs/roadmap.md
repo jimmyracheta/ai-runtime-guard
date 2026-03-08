@@ -5,7 +5,7 @@ This roadmap tracks next milestones after `v1.2.0`, aligned to current implement
 ## Current reality snapshot
 1. Reporting foundation is implemented (`reports.db`, ingest pipeline, reports API, dashboard/log UI).
 2. Connection-scoped identity/session fields are implemented in runtime logs/reports (`agent_id`, `agent_session_id`).
-3. Remaining architecture work is per-agent policy isolation, packaging hardening, and container/transport expansion.
+3. Per-agent policy overlays and GUI authoring are implemented; next focus is packaging hardening and container/transport expansion.
 
 ## Guiding principles
 1. Keep one core enforcement engine across all deployment channels.
@@ -28,7 +28,7 @@ Goal: complete connection-scoped identity/session model and remove process-globa
 2. Approval and budget state are isolated per connection/session by design.
 3. Backward-compatible defaults remain valid for single-agent setups.
 
-## v1.4 - Per-agent policy and reporting segmentation
+## v1.4 - Per-agent policy and reporting segmentation (implemented)
 Goal: support agent-specific policy context while preserving simple default operation and setting the foundation for orchestrator workflows.
 
 ### Scope
@@ -45,10 +45,10 @@ Goal: support agent-specific policy context while preserving simple default oper
    - runtime effective-policy resolution by `AIRG_AGENT_ID`
    - optional `policy.agent_overrides.<agent_id>.policy` overlay support for enforcement sections
    - workspace source remains MCP/env (`AIRG_WORKSPACE`) by design
-   - per-agent runtime guidance in operator docs
-2. Remaining:
-   - first-class policy-override authoring UX in GUI
-   - additional multi-agent validation and acceptance test coverage
+   - first-class policy-override authoring UX in GUI (section-based editor with baseline info and diff-style persistence)
+   - multi-agent operator workflow improvements through Settings -> Agents MCP config generation and profile management.
+2. Ongoing validation:
+   - expanded concurrent-agent scenario testing and release hardening coverage.
 
 ### Acceptance gates
 1. Per-agent policy boundaries are enforceable and test-covered.
