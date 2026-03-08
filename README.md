@@ -6,20 +6,21 @@ AI agents with filesystem and shell access can delete files, leak credentials, o
 
 `ai-runtime-guard` is an MCP server that sits between your AI agent and your system, enforcing a policy layer before any file or shell action takes effect. No retraining, no prompt engineering, no changes to your agent or workflow, just install, configure once, and your agent operates within the boundaries you set.
 
+## What it does
+1. **Blocks dangerous operations**: `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.
+2. **Gates risky commands behind human approval (optional)**: configurable commands require explicit operator sign-off via a web GUI before the agent can proceed.
+3. **Simulates blast radius**: wildcard operations like `rm *.tmp` are evaluated against real files before running, and blocked if they exceed a safe threshold.
+4. **Controls network behavior**: configure command-level network policy with monitor-only mode, domain allowlist/denylist, and optional unknown-domain blocking.
+5. **Supports multi-agent policy isolation**: apply per-agent policy overrides keyed by `AIRG_AGENT_ID` while keeping shared runtime controls.
+6. **Backs up before it acts**: destructive or overwrite operations create automatic backups with full restore support.
+7. **Provides robust logging and reporting**: all allowed/blocked actions are logged to `activity.log` and indexed into `reports.db` for dashboard/log views.
+
 ## Current state
 1. Policy management is available in the local GUI (commands, paths, extensions, network, advanced policy).
 2. Agent management is available in the GUI (`Settings -> Agents`), including profile-based MCP config generation.
 3. Per-agent policy overrides are supported and enforced by `AIRG_AGENT_ID`.
 4. Full runtime visibility is available through `activity.log` and reports/dashboard views (`reports.db`).
 5. Stable release notes are tracked in `CHANGELOG.md`, with in-progress work in `docs/CHANGELOG_DEV.md`.
-
-## What it does
-1. **Blocks dangerous operations**: `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.
-2. **Gates risky commands behind human approval**: configurable commands require explicit operator sign-off via a web GUI before the agent can proceed.
-3. **Simulates blast radius**: wildcard operations like `rm *.tmp` are evaluated against real files before running, and blocked if they exceed a safe threshold.
-4. **Backs up before it acts**: destructive or overwrite operations create automatic backups with full restore support.
-
-All actions, allowed and blocked, are logged to a full audit trail.
 
 ## Who it is for
 Developers and power users running AI agents (Claude Desktop, Cursor, Codex, or any MCP-compatible client) who want guardrails on what the agent can actually do to their system.
