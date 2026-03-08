@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist for every release (`vX.Y`).
+Use this checklist for every stable release (`vX.Y.Z`).
 
 ## 1. Prepare on `dev`
 1. Confirm working tree is clean:
@@ -26,6 +26,8 @@ cd ..
 ```bash
 python3 -m pip install --upgrade build
 python3 -m build
+python3 -m pip install --upgrade twine
+twine check dist/*
 ```
 6. Push `dev`:
 ```bash
@@ -44,20 +46,33 @@ git push origin dev
 git checkout main
 git pull origin main
 ```
-2. Create annotated tag:
+2. Create annotated stable tag:
 ```bash
-git tag -a vX.Y -m "Release vX.Y"
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
 ```
 3. Push tag:
 ```bash
-git push origin vX.Y
+git push origin vX.Y.Z
+```
+
+## 3b. Optional TestPyPI preflight (recommended)
+1. Trigger workflow dispatch:
+   - workflow: `Publish Package`
+   - input: `target=testpypi`
+2. Validate install from TestPyPI in clean venv:
+```bash
+python3 -m venv .venv-testpypi
+source .venv-testpypi/bin/activate
+python -m pip install --index-url https://test.pypi.org/simple --extra-index-url https://pypi.org/simple ai-runtime-guard
+airg-setup --defaults --yes
+airg-doctor
 ```
 
 ## 4. Post-release verification
 1. Confirm tag points to `main` HEAD:
 ```bash
 git rev-parse main
-git rev-parse vX.Y
+git rev-parse vX.Y.Z
 ```
 2. Confirm GitHub release/tag is visible.
 3. Confirm branch protections are still enabled on `main`.
@@ -76,16 +91,16 @@ airg-ui       # startup smoke (Ctrl+C)
 ## 5. If tag was created before PR merge (re-tag fix)
 1. Delete local tag:
 ```bash
-git tag -d vX.Y
+git tag -d vX.Y.Z
 ```
 2. Delete remote tag:
 ```bash
-git push origin :refs/tags/vX.Y
+git push origin :refs/tags/vX.Y.Z
 ```
 3. Recreate tag on current `main` HEAD and push again:
 ```bash
 git checkout main
 git pull origin main
-git tag -a vX.Y -m "Release vX.Y"
-git push origin vX.Y
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```

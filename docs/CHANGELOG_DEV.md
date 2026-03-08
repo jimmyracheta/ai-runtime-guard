@@ -2,6 +2,24 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-08 (PyPI packaging hardening: metadata, CI validation, publish workflow)
+- Expanded `pyproject.toml` package metadata for PyPI presentation:
+  - added `keywords`
+  - added classifiers for status/audience/topic/python versions
+  - added project URLs (homepage/repository/issues/changelog).
+- Updated CI package workflow (`ci-package.yml`):
+  - install `twine`
+  - run `twine check dist/*` after build.
+- Added new publish workflow (`publish-pypi.yml`) with Trusted Publishing-compatible flow:
+  - publish to TestPyPI via `workflow_dispatch` (`target=testpypi`)
+  - publish to PyPI on stable tag push (`vX.Y.Z`) or manual dispatch (`target=pypi`)
+  - artifact build and reuse between build/publish jobs.
+- Updated release/docs runbooks:
+  - `docs/RELEASE.md` now includes Trusted Publishing setup and TestPyPI dry-run process
+  - `docs/RELEASE_CHECKLIST.md` now includes `twine check`, stable-tag format (`vX.Y.Z`), and optional TestPyPI preflight.
+- Updated `docs/PACKAGING_TODO.md` to reflect completed automation and remaining operator-side Trusted Publisher verification.
+- Minor README state wording refresh to remove stale integration train reference.
+
 ## 2026-03-08 (v1.4-dev tag prep, release notes, and docs reconciliation)
 - Bumped package version to `1.4.dev0` to reflect integration-train status.
 - Prepared `dev` for integration tag `v1.4-dev` while keeping latest public stable release at `1.3.0`.

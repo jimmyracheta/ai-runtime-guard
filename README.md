@@ -8,7 +8,7 @@ AI agents with filesystem and shell access can delete files, leak credentials, o
 
 ## Current state
 1. Stable release lives on `main` (latest tagged release).
-2. Ongoing integration work happens on `dev` (currently `1.2-dev` train).
+2. Ongoing integration work happens on `dev` (current integration-train branch).
 3. Stable release notes are in `CHANGELOG.md`.
 4. In-progress dev notes are in `docs/CHANGELOG_DEV.md`.
 

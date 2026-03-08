@@ -29,6 +29,8 @@ Use semantic versions:
 4. Build package artifacts:
    - `python3 -m pip install --upgrade build`
    - `python3 -m build`
+   - `python3 -m pip install --upgrade twine`
+   - `twine check dist/*`
 5. Validate setup-first packaged behavior:
    - `airg-setup --defaults --yes`
    - `airg-doctor`
@@ -38,6 +40,7 @@ Use semantic versions:
    - `README.md`, `docs/INSTALL.md`, `docs/MANUAL.md`, `docs/AGENT_MCP_CONFIGS.md`
 8. Verify CI workflow green:
    - `.github/workflows/ci-package.yml`
+   - `.github/workflows/publish-pypi.yml` (build job on dispatch/tag runs)
 
 ## Release steps
 1. Merge `dev` into `main`.
@@ -53,6 +56,15 @@ Use semantic versions:
    - known limitations
 5. Attach CI artifacts as needed (`python-dist`, `ui-dist`).
 
+## Trusted Publishing setup (one-time)
+1. In PyPI and TestPyPI, configure Trusted Publisher for this GitHub repository/workflow:
+   - repository: `jimmyracheta/ai-runtime-guard`
+   - workflow: `.github/workflows/publish-pypi.yml`
+2. In GitHub, create environments:
+   - `testpypi`
+   - `pypi`
+3. Keep publish approvals scoped to maintainers as needed by environment protection rules.
+
 ## Integration-tag steps (`dev`)
 1. Confirm `dev` branch changelog/docs are reconciled.
 2. Create annotated integration tag:
@@ -61,6 +73,19 @@ Use semantic versions:
    - `git push origin dev`
    - `git push origin vX.Y-dev`
 4. Keep public stable version unchanged until the next `vX.Y.Z` tag is cut on `main`.
+
+## TestPyPI dry-run flow
+1. Run workflow manually:
+   - `Publish Package` -> `target=testpypi`
+2. Validate install in a clean environment:
+   - `python3 -m venv .venv-testpypi`
+   - `source .venv-testpypi/bin/activate`
+   - `python -m pip install --index-url https://test.pypi.org/simple --extra-index-url https://pypi.org/simple ai-runtime-guard`
+3. Run smoke checks:
+   - `airg-setup --defaults --yes`
+   - `airg-doctor`
+   - `airg-server` (startup smoke, Ctrl+C)
+   - `airg-ui` (startup smoke, Ctrl+C)
 
 ## Packaging validation
 Use a fresh virtual environment:
@@ -80,6 +105,7 @@ Use a fresh virtual environment:
 1. Update `STATUS.md` current snapshot if needed.
 2. Open next milestone work on `dev`.
 3. Track regressions and hotfix candidates.
+4. If a bad artifact is published, yank on PyPI and issue a patched release tag.
 
 ## Public-ready criteria
 1. CI passes on `dev` and `main`.

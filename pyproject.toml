@@ -8,10 +8,29 @@ version = "1.4.dev0"
 description = "MCP security wrapper with policy tiers, approvals, backup, and audit."
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["mcp", "ai-safety", "agent-security", "policy-enforcement", "audit"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Topic :: Security",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "License :: Other/Proprietary License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
 dependencies = [
   "mcp>=1.0,<2.0",
   "flask>=3.0,<4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jimmyracheta/ai-runtime-guard"
+Repository = "https://github.com/jimmyracheta/ai-runtime-guard"
+Issues = "https://github.com/jimmyracheta/ai-runtime-guard/issues"
+Changelog = "https://github.com/jimmyracheta/ai-runtime-guard/blob/main/CHANGELOG.md"
 
 [project.scripts]
 airg = "airg_cli:main"
