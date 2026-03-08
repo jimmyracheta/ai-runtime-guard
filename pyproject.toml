@@ -67,3 +67,7 @@ include = ["tools*", "ui*"]
 [tool.setuptools.package-data]
 ui = ["catalog.json"]
 ui_v3 = ["dist/index.html", "dist/assets/*"]
+
+[tool.setuptools.data-files]
+"ui_v3/dist" = ["ui_v3/dist/index.html"]
+"ui_v3/dist/assets" = ["ui_v3/dist/assets/*"]

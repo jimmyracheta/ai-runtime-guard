@@ -2,6 +2,19 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-08 (PyPI packaging fixes: installed UI dist, workspace fallback, setup MCP consistency)
+- Fixed installed-package UI dist discovery and packaging path handling:
+  - added `sys.prefix/ui_v3/dist` lookup in CLI and Flask backend
+  - added setuptools `data-files` entries so `ui_v3/dist` and assets are shipped with package installs.
+- Fixed workspace fallback in packaged runtime:
+  - when `AIRG_WORKSPACE` is unset, runtime now defaults to `~/airg-workspace` instead of module `site-packages`.
+  - `airg-doctor` and overlap warnings now use workspace default logic aligned with setup/runtime expectations.
+- Fixed setup output consistency for MCP config generation:
+  - setup now pins `AIRG_AGENT_ID`/`AIRG_WORKSPACE` into process env before initial runtime init output
+  - generated setup snippets now resolve deterministic server command/args and include `AIRG_SERVER_COMMAND` in env block.
+- Hardened server command env resolution:
+  - unresolved bare `airg-server` values now fall through to deterministic interpreter/module fallback instead of emitting fragile command values.
+
 ## 2026-03-08 (PyPI packaging hardening: metadata, CI validation, publish workflow)
 - Expanded `pyproject.toml` package metadata for PyPI presentation:
   - added `keywords`

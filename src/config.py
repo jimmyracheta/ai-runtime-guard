@@ -41,6 +41,10 @@ def _default_base_config_dir() -> pathlib.Path:
     return pathlib.Path.home() / ".config" / "ai-runtime-guard"
 
 
+def _default_workspace_root() -> pathlib.Path:
+    return (pathlib.Path.home() / "airg-workspace").resolve()
+
+
 # Startup configuration
 BASE_DIR = _module_base_dir()
 AGENT_ID: str = (os.environ.get("AIRG_AGENT_ID", "").strip() or "Unknown")
@@ -341,7 +345,7 @@ MAX_RETRIES: int = POLICY.get("requires_simulation", {}).get("max_retries", 3)
 
 SESSION_ID: str = str(uuid.uuid4())
 _workspace_from_env = str(os.environ.get("AIRG_WORKSPACE", "") or "").strip()
-_workspace_selected = _workspace_from_env or str(BASE_DIR)
+_workspace_selected = _workspace_from_env or str(_default_workspace_root())
 WORKSPACE_ROOT: str = str(pathlib.Path(_workspace_selected).expanduser().resolve())
 SERVER_BUILD = "2026-02-23T22:10Z-simfix-check"
 

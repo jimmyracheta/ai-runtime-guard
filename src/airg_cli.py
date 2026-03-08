@@ -42,6 +42,7 @@ def _candidate_ui_dist_paths() -> list[pathlib.Path]:
         *candidates,
         cwd / "ui_v3" / "dist",
         here / "ui_v3" / "dist",
+        pathlib.Path(sys.prefix) / "ui_v3" / "dist",
         pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui_v3" / "dist",
     ]
 
@@ -317,7 +318,19 @@ def _looks_executable(command: str) -> bool:
 def _resolve_server_command_for_env() -> str:
     explicit = str(os.environ.get("AIRG_SERVER_COMMAND", "")).strip()
     if explicit:
-        return explicit
+        parts = shlex.split(explicit)
+        if parts:
+            cmd = parts[0]
+            args = parts[1:]
+            if os.path.isabs(cmd):
+                return explicit
+            resolved = shutil.which(cmd)
+            if resolved:
+                full = [str(pathlib.Path(resolved).resolve()), *args]
+                return " ".join(shlex.quote(p) for p in full)
+            # Avoid emitting a fragile unresolved bare command.
+            if cmd != "airg-server":
+                return explicit
     venv = str(os.environ.get("VIRTUAL_ENV", "")).strip()
     if venv:
         candidate = pathlib.Path(venv) / "bin" / "airg-server"
@@ -406,6 +419,9 @@ def _apply_backup_override(policy: dict[str, Any], backup_root: str) -> dict[str
 
 def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.Path], agent_id: str) -> dict[str, Any]:
     reports_db_path = paths.get("reports_db_path", paths["approval_db_path"].with_name("reports.db"))
+    server_parts = shlex.split(_resolve_server_command_for_env())
+    server_cmd = server_parts[0] if server_parts else "airg-server"
+    server_args = server_parts[1:] if len(server_parts) > 1 else []
     env_block = {
         "AIRG_AGENT_ID": agent_id.strip() or "default",
         "AIRG_WORKSPACE": workspace,
@@ -414,20 +430,21 @@ def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.P
         "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
         "AIRG_LOG_PATH": str(paths["log_path"]),
         "AIRG_REPORTS_DB_PATH": str(reports_db_path),
+        "AIRG_SERVER_COMMAND": _resolve_server_command_for_env(),
     }
     if agent in {"claude_desktop", "cursor", "generic"}:
         return {
             "mcpServers": {
                 "ai-runtime-guard": {
-                    "command": "airg-server",
-                    "args": [],
+                    "command": server_cmd,
+                    "args": server_args,
                     "env": env_block,
                 }
             }
         }
     return {
-        "command": "airg-server",
-        "args": [],
+        "command": server_cmd,
+        "args": server_args,
         "env": env_block,
     }
 
@@ -685,6 +702,8 @@ def _run_setup(
         alt = _prompt_text("Alternative workspace path", str(pathlib.Path.home() / "airg-workspace"))
         workspace_path = pathlib.Path(alt).expanduser().resolve()
     workspace_path.mkdir(parents=True, exist_ok=True)
+    os.environ["AIRG_AGENT_ID"] = selected_agent_id
+    os.environ["AIRG_WORKSPACE"] = str(workspace_path)
 
     path_overrides = _init_runtime(
         force_policy=force_policy,
@@ -693,7 +712,6 @@ def _run_setup(
         approval_hmac_key_path=selected_key_path,
         force_env=True,
     )
-    os.environ["AIRG_WORKSPACE"] = str(workspace_path)
 
     # Q2: runtime path defaults vs custom
     if not defaults:
@@ -710,6 +728,7 @@ def _run_setup(
                 approval_hmac_key_path=selected_key_path,
                 force_env=True,
             )
+            os.environ["AIRG_AGENT_ID"] = selected_agent_id
             os.environ["AIRG_WORKSPACE"] = str(workspace_path)
 
     if not defaults:
@@ -778,7 +797,7 @@ def _run_setup(
 
 
 def _warn_if_paths_inside_unsafe_roots(paths: dict[str, pathlib.Path]) -> None:
-    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(_project_root()))).expanduser().resolve()
+    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(_default_workspace_path()))).expanduser().resolve()
     project_root = _project_root()
     checks = [
         ("policy_path", paths["policy_path"]),
@@ -945,7 +964,7 @@ def main_doctor() -> None:
     print(f"[airg] log_path={paths['log_path']}")
     print(f"[airg] reports_db_path={paths['reports_db_path']}")
     print(f"[airg] backup_root={backup_root}")
-    print(f"[airg] workspace={pathlib.Path(os.environ.get('AIRG_WORKSPACE', str(_project_root()))).expanduser().resolve()}")
+    print(f"[airg] workspace={pathlib.Path(os.environ.get('AIRG_WORKSPACE', str(_default_workspace_path()))).expanduser().resolve()}")
     print(f"[airg] agent_id={os.environ.get('AIRG_AGENT_ID', 'default')}")
 
     # Policy file
@@ -977,7 +996,7 @@ def main_doctor() -> None:
         )
 
     # Workspace overlap check
-    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(_project_root()))).expanduser().resolve()
+    workspace = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(_default_workspace_path()))).expanduser().resolve()
     for p, label in [
         (paths["policy_path"], "policy_path"),
         (paths["approval_db_path"], "approval_db_path"),

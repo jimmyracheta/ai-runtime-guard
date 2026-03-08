@@ -25,7 +25,7 @@ REPORTS_DB_PATH = pathlib.Path(
     )
 ).expanduser().resolve()
 CATALOG_PATH = pathlib.Path(os.environ.get("AIRG_CATALOG_PATH", str(pathlib.Path(__file__).resolve().parent / "catalog.json")))
-WORKSPACE_PATH = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(BASE_DIR)))
+WORKSPACE_PATH = pathlib.Path(os.environ.get("AIRG_WORKSPACE", str(config.WORKSPACE_ROOT)))
 
 
 def _candidate_ui_dist_paths() -> list[pathlib.Path]:
@@ -36,6 +36,7 @@ def _candidate_ui_dist_paths() -> list[pathlib.Path]:
     candidates.extend(
         [
             BASE_DIR / "ui_v3" / "dist",
+            pathlib.Path(sys.prefix) / "ui_v3" / "dist",
             pathlib.Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "ui_v3" / "dist",
         ]
     )
