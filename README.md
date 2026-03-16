@@ -150,3 +150,5 @@ Workspace model:
 3. Does the agent only work inside one workspace?
    - By default, yes, it is anchored to `AIRG_WORKSPACE`.
    - Additional allowed roots can be configured with `policy.allowed.paths_whitelist`.
+
+[![ai-runtime-guard MCP server](https://glama.ai/mcp/servers/jimmyracheta/ai-runtime-guard/badges/card.svg)](https://glama.ai/mcp/servers/jimmyracheta/ai-runtime-guard)
