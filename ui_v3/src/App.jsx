@@ -256,6 +256,20 @@ function relativeTime(iso) {
   }
 }
 
+function ensureScriptSentinelPolicy(policy) {
+  const next = deepClone(policy || {})
+  const current = isPlainObject(next.script_sentinel) ? next.script_sentinel : {}
+  next.script_sentinel = {
+    enabled: Boolean(current.enabled),
+    mode: ['match_original', 'block', 'requires_confirmation'].includes(String(current.mode || '').trim())
+      ? String(current.mode).trim()
+      : 'match_original',
+    max_scan_bytes: Math.max(1024, Number.parseInt(String(current.max_scan_bytes ?? '1048576'), 10) || 1048576),
+    include_wrappers: current.include_wrappers === undefined ? true : Boolean(current.include_wrappers),
+  }
+  return next
+}
+
 export default function App() {
   const [activeRail, setActiveRail] = useState('approvals')
   const [activeApprovalsTab, setActiveApprovalsTab] = useState('pending')
@@ -459,9 +473,10 @@ export default function App() {
     setPolicyHash(payload.hash || '')
     setHasRevertSnapshot(Boolean(payload.has_revert_snapshot))
     setHasDefaultSnapshot(Boolean(payload.has_default_snapshot))
-    setAppliedPolicy(payload.policy)
-    setDraftPolicy(deepClone(payload.policy))
-    setJsonText(JSON.stringify(payload.policy, null, 2))
+    const normalizedPolicy = ensureScriptSentinelPolicy(payload.policy || {})
+    setAppliedPolicy(normalizedPolicy)
+    setDraftPolicy(deepClone(normalizedPolicy))
+    setJsonText(JSON.stringify(normalizedPolicy, null, 2))
     setDescriptions(payload.descriptions || {})
     setContexts(payloadContexts)
     setRuntimePaths(payload.runtime_paths || {})
@@ -865,7 +880,7 @@ export default function App() {
       // Bidirectional sync: valid JSON edits replace table-backed draft state.
       // Invalid JSON is tolerated in textarea without destroying current table state.
       const parsed = JSON.parse(next)
-      setDraftPolicy(parsed)
+      setDraftPolicy(ensureScriptSentinelPolicy(parsed))
       setJsonError('')
     } catch (e) {
       setJsonError('Invalid JSON. Table state remains unchanged until valid parse.')
@@ -2420,6 +2435,7 @@ export default function App() {
     const restore = draftPolicy?.restore || {}
     const audit = draftPolicy?.audit || {}
     const reportsCfg = draftPolicy?.reports || {}
+    const scriptSentinel = draftPolicy?.script_sentinel || {}
     const bytesMultiplier = {
       KB: 1024,
       MB: 1024 * 1024,
@@ -2502,6 +2518,14 @@ export default function App() {
       setDraftPolicy((prev) => {
         const next = deepClone(prev)
         next.reports = { ...(next.reports || {}), ...patch }
+        return next
+      })
+    }
+
+    const setScriptSentinel = (patch) => {
+      setDraftPolicy((prev) => {
+        const next = deepClone(prev)
+        next.script_sentinel = { ...(next.script_sentinel || {}), ...patch }
         return next
       })
     }
@@ -2994,6 +3018,60 @@ export default function App() {
               />
             </label>
           </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm space-y-3">
+          <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Script Sentinel</div>
+          <div className="text-[11px] text-slate-500">
+            Policy-intent continuity for script-mediated execution. Content written via <span className="font-mono">write_file</span> is scanned for blocked/approval-gated patterns.
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(scriptSentinel.enabled)}
+                onChange={(e) => setScriptSentinel({ enabled: e.target.checked })}
+              />
+              Enabled
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(scriptSentinel.include_wrappers)}
+                onChange={(e) => setScriptSentinel({ include_wrappers: e.target.checked })}
+              />
+              Include common wrapper signatures
+            </label>
+          </div>
+          <div className="space-y-2">
+            <div className="text-xs text-slate-600">Mode</div>
+            <div className="flex flex-wrap gap-3 text-sm">
+              {['match_original', 'block', 'requires_confirmation'].map((mode) => (
+                <label key={mode} className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="script-sentinel-mode"
+                    checked={(scriptSentinel.mode || 'match_original') === mode}
+                    onChange={() => setScriptSentinel({ mode })}
+                  />
+                  <span className="font-mono">{mode}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="text-xs text-slate-600 block">
+            Max scan bytes per write
+            <input
+              type="number"
+              min={1024}
+              className="mt-1 w-full border border-slate-300 rounded-[10px] px-3 py-2 text-sm"
+              value={scriptSentinel.max_scan_bytes ?? 1048576}
+              onChange={(e) => setScriptSentinel({ max_scan_bytes: Math.max(1024, parseInt(e.target.value, 10) || 1024) })}
+            />
+            <div className="mt-1 text-[11px] text-slate-500">
+              Files larger than this limit are skipped for write-time scanning.
+            </div>
+          </label>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm space-y-3">

@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import platform
+import threading
 import uuid
 
 
@@ -71,13 +72,18 @@ POLICY_PATH = pathlib.Path(
 
 
 def _load_policy() -> dict:
+    path = _policy_source_path()
+    with open(path) as f:
+        return json.load(f)
+
+
+def _policy_source_path() -> pathlib.Path:
     path = POLICY_PATH
     if not path.exists():
         fallback = BASE_DIR / "policy.json"
         if fallback.exists():
             path = fallback
-    with open(path) as f:
-        return json.load(f)
+    return path
 
 
 def _validate_and_normalize_policy(policy: dict) -> dict:
@@ -347,6 +353,13 @@ def _resolve_effective_policy(base_policy: dict, agent_id: str) -> dict:
     return merged
 
 
+_POLICY_LOCK = threading.RLock()
+_POLICY_SOURCE_PATH: pathlib.Path = _policy_source_path()
+try:
+    _POLICY_SOURCE_MTIME_NS = _POLICY_SOURCE_PATH.stat().st_mtime_ns
+except OSError:
+    _POLICY_SOURCE_MTIME_NS = -1
+
 _BASE_POLICY: dict = _validate_and_normalize_policy(_load_policy())
 _EFFECTIVE_POLICY_DOC = _resolve_effective_policy(_BASE_POLICY, AGENT_ID)
 POLICY: dict = _validate_and_normalize_policy(_EFFECTIVE_POLICY_DOC)
@@ -370,3 +383,45 @@ APPROVAL_TTL_SECONDS: int = POLICY.get("requires_confirmation", {}).get(
 RESTORE_CONFIRMATION_TTL_SECONDS: int = POLICY.get("restore", {}).get(
     "confirmation_ttl_seconds", 300
 )
+
+
+def _apply_runtime_policy(effective_policy: dict) -> None:
+    global BACKUP_DIR, MAX_RETRIES, APPROVAL_TTL_SECONDS, RESTORE_CONFIRMATION_TTL_SECONDS
+    normalized = _validate_and_normalize_policy(copy.deepcopy(effective_policy))
+    POLICY.clear()
+    POLICY.update(normalized)
+    BACKUP_DIR = str(
+        pathlib.Path(POLICY.get("audit", {}).get("backup_root", str(_default_backup_root())))
+        .expanduser()
+        .resolve()
+    )
+    MAX_RETRIES = int(POLICY.get("requires_simulation", {}).get("max_retries", 3))
+    APPROVAL_TTL_SECONDS = int(
+        POLICY.get("requires_confirmation", {}).get("approval_security", {}).get("token_ttl_seconds", 600)
+    )
+    RESTORE_CONFIRMATION_TTL_SECONDS = int(
+        POLICY.get("restore", {}).get("confirmation_ttl_seconds", 300)
+    )
+
+
+def refresh_policy_if_changed(*, force: bool = False) -> bool:
+    global _POLICY_SOURCE_PATH, _POLICY_SOURCE_MTIME_NS
+    with _POLICY_LOCK:
+        source = _policy_source_path()
+        try:
+            mtime_ns = source.stat().st_mtime_ns
+        except OSError:
+            return False
+        unchanged = (
+            source == _POLICY_SOURCE_PATH
+            and int(mtime_ns) == int(_POLICY_SOURCE_MTIME_NS)
+        )
+        if unchanged and not force:
+            return False
+
+        loaded = _validate_and_normalize_policy(_load_policy())
+        effective = _resolve_effective_policy(loaded, AGENT_ID)
+        _apply_runtime_policy(effective)
+        _POLICY_SOURCE_PATH = source
+        _POLICY_SOURCE_MTIME_NS = int(mtime_ns)
+        return True

@@ -11,7 +11,7 @@ from approvals import issue_or_reuse_approval_token
 from audit import append_log_entry, build_log_entry
 from backup import MODIFYING_COMMAND_RE, backup_paths, extract_paths
 from budget import check_and_record_cumulative_budget
-from config import AGENT_ID, MAX_RETRIES, POLICY, SERVER_BUILD, WORKSPACE_ROOT
+from config import AGENT_ID, MAX_RETRIES, POLICY, SERVER_BUILD, WORKSPACE_ROOT, refresh_policy_if_changed
 from executor import run_shell_command
 from models import PolicyResult
 from policy_engine import (
@@ -43,6 +43,7 @@ def server_info(ctx: Context | None = None) -> str:
 
 def execute_command(command: str, retry_count: int = 0, ctx: Context | None = None) -> str:
     context_tokens = activate_runtime_context(ctx)
+    refresh_policy_if_changed()
     network_warning = None
     shell_containment_warning = None
     shell_containment_paths: list[str] = []

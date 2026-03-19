@@ -11,7 +11,7 @@ else:
 from audit import append_log_entry, build_log_entry
 from backup import backup_paths
 from budget import check_and_record_cumulative_budget
-from config import AGENT_ID, POLICY, WORKSPACE_ROOT
+from config import AGENT_ID, POLICY, WORKSPACE_ROOT, refresh_policy_if_changed
 from models import PolicyResult
 from policy_engine import check_path_policy, relative_depth
 from runtime_context import activate_runtime_context, reset_runtime_context
@@ -23,6 +23,7 @@ def read_file(path: str, ctx: Context | None = None) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     try:
+        refresh_policy_if_changed()
         path_check = check_path_policy(path, tool="read_file")
         if path_check:
             result = PolicyResult(allowed=False, reason=path_check[0], decision_tier="blocked", matched_rule=path_check[1])
@@ -63,6 +64,7 @@ def write_file(path: str, content: str, ctx: Context | None = None) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     try:
+        refresh_policy_if_changed()
         path_check = check_path_policy(path, tool="write_file")
         if path_check:
             result = PolicyResult(allowed=False, reason=path_check[0], decision_tier="blocked", matched_rule=path_check[1])
@@ -141,6 +143,7 @@ def delete_file(path: str, ctx: Context | None = None) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     try:
+        refresh_policy_if_changed()
         path_check = check_path_policy(path, tool="delete_file")
         if path_check:
             result = PolicyResult(allowed=False, reason=path_check[0], decision_tier="blocked", matched_rule=path_check[1])
@@ -214,6 +217,7 @@ def list_directory(path: str, ctx: Context | None = None) -> str:
     path = str(pathlib.Path(WORKSPACE_ROOT) / path) if not os.path.isabs(path) else path
 
     try:
+        refresh_policy_if_changed()
         path_check = check_path_policy(path, tool="list_directory")
         if path_check:
             result = PolicyResult(allowed=False, reason=path_check[0], decision_tier="blocked", matched_rule=path_check[1])
