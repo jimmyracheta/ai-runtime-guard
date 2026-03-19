@@ -46,7 +46,7 @@ Note:
 ## Basic setup (MCP server only)
 1. Clone and install:
 ```bash
-git clone --branch main https://github.com/jimmyracheta/ai-runtime-guard.git
+git clone --branch main https://github.com/runtimeguard/runtime-guard.git
 cd ai-runtime-guard
 python3 -m venv venv
 source venv/bin/activate

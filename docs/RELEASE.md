@@ -58,7 +58,7 @@ Use semantic versions:
 
 ## Trusted Publishing setup (one-time)
 1. In PyPI and TestPyPI, configure Trusted Publisher for this GitHub repository/workflow:
-   - repository: `jimmyracheta/ai-runtime-guard`
+   - repository: `runtimeguard/runtime-guard`
    - workflow: `.github/workflows/publish-pypi.yml`
 2. In GitHub, create environments:
    - `testpypi`

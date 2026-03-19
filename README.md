@@ -6,7 +6,7 @@ AI agents with filesystem and shell access can delete files, leak credentials, o
 
 `ai-runtime-guard` is an MCP server that sits between your AI agent and your system, enforcing a policy layer before any file or shell action takes effect. No retraining, no prompt engineering, no changes to your agent or workflow, just install, configure once, and your agent operates within the boundaries you set.
 
-[![Glama Score](https://glama.ai/mcp/servers/jimmyracheta/ai-runtime-guard/badges/score.svg)](https://glama.ai/mcp/servers/jimmyracheta/ai-runtime-guard)
+[![Glama Score](https://glama.ai/mcp/servers/runtimeguard/runtime-guard/badges/score.svg)](https://glama.ai/mcp/servers/runtimeguard/runtime-guard)
 
 ## What it does
 1. **Blocks dangerous operations**: `rm -rf`, sensitive file access, privilege escalation, and more are denied before execution.

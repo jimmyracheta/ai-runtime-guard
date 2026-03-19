@@ -27,10 +27,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jimmyracheta/ai-runtime-guard"
-Repository = "https://github.com/jimmyracheta/ai-runtime-guard"
-Issues = "https://github.com/jimmyracheta/ai-runtime-guard/issues"
-Changelog = "https://github.com/jimmyracheta/ai-runtime-guard/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/runtimeguard/runtime-guard"
+Repository = "https://github.com/runtimeguard/runtime-guard"
+Issues = "https://github.com/runtimeguard/runtime-guard/issues"
+Changelog = "https://github.com/runtimeguard/runtime-guard/blob/main/CHANGELOG.md"
 
 [project.scripts]
 airg = "airg_cli:main"
