@@ -11,7 +11,7 @@ from approvals import issue_or_reuse_approval_token
 from audit import append_log_entry, build_log_entry
 from backup import MODIFYING_COMMAND_RE, backup_paths, extract_paths
 from budget import check_and_record_cumulative_budget
-from config import MAX_RETRIES, POLICY, SERVER_BUILD, WORKSPACE_ROOT
+from config import AGENT_ID, MAX_RETRIES, POLICY, SERVER_BUILD, WORKSPACE_ROOT
 from executor import run_shell_command
 from models import PolicyResult
 from policy_engine import (
@@ -29,6 +29,7 @@ from policy_engine import (
     is_within_workspace,
 )
 from runtime_context import activate_runtime_context, current_agent_session_id, reset_runtime_context
+import script_sentinel
 
 
 def server_info(ctx: Context | None = None) -> str:
@@ -48,6 +49,13 @@ def execute_command(command: str, retry_count: int = 0, ctx: Context | None = No
     budget_fields: dict = {}
     simulation = None
     simulation_diagnostic: tuple[str, str] | None = None
+    sentinel_eval: dict[str, Any] = {
+        "enabled": False,
+        "has_hits": False,
+        "decision": "allowed",
+        "mode": "match_original",
+        "hits": [],
+    }
 
     try:
         if has_shell_unsafe_control_chars(command):
@@ -96,6 +104,46 @@ def execute_command(command: str, retry_count: int = 0, ctx: Context | None = No
                     result = check_policy(command, simulation=simulation)
                     if simulation is not None:
                         simulation_diagnostic = check_simulation_tier(command, simulation=simulation)
+                    if result.allowed:
+                        sentinel_eval = script_sentinel.evaluate_command_execution(
+                            command,
+                            agent_id=AGENT_ID,
+                            session_id=current_agent_session_id(),
+                        )
+                        sentinel_decision = str(sentinel_eval.get("decision", "allowed"))
+                        if sentinel_eval.get("has_hits") and sentinel_decision in {"blocked", "requires_confirmation"}:
+                            affected_targets = sorted(
+                                {
+                                    str(hit.get("path", ""))
+                                    for hit in sentinel_eval.get("hits", [])
+                                    if str(hit.get("path", "")).strip()
+                                }
+                            )
+                            preview = ", ".join(affected_targets[:3]) if affected_targets else "script artifact"
+                            if len(affected_targets) > 3:
+                                preview += ", ..."
+                            if sentinel_decision == "blocked":
+                                reason = (
+                                    "Script Sentinel preserved policy intent: execution of a tagged script artifact "
+                                    f"is blocked for this agent ({preview})."
+                                )
+                                result = PolicyResult(
+                                    allowed=False,
+                                    reason=reason,
+                                    decision_tier="blocked",
+                                    matched_rule="script_sentinel",
+                                )
+                            else:
+                                reason = (
+                                    "Script Sentinel preserved policy intent: execution of a tagged script artifact "
+                                    f"requires explicit confirmation for this agent ({preview})."
+                                )
+                                result = PolicyResult(
+                                    allowed=False,
+                                    reason=reason,
+                                    decision_tier="requires_confirmation",
+                                    matched_rule="script_sentinel",
+                                )
 
         affected_for_budget: list[str] = []
         affected_for_limits: list[str] = []
@@ -171,6 +219,30 @@ def execute_command(command: str, retry_count: int = 0, ctx: Context | None = No
             **({"shell_containment_offending_paths": shell_containment_paths} if shell_containment_paths else {}),
             **(
                 {
+                    "script_sentinel_hits_count": len(sentinel_eval.get("hits", [])),
+                    "script_sentinel_decision": sentinel_eval.get("decision", "allowed"),
+                    "script_sentinel_mode": sentinel_eval.get("mode", "match_original"),
+                    "script_sentinel_paths": [
+                        str(hit.get("path", ""))
+                        for hit in sentinel_eval.get("hits", [])
+                        if str(hit.get("path", "")).strip()
+                    ],
+                    "script_sentinel_hashes": [
+                        str(hit.get("content_hash", ""))
+                        for hit in sentinel_eval.get("hits", [])
+                        if str(hit.get("content_hash", "")).strip()
+                    ],
+                    "script_sentinel_allowance_applied": [
+                        str(hit.get("allowance_applied", ""))
+                        for hit in sentinel_eval.get("hits", [])
+                        if str(hit.get("allowance_applied", "")).strip()
+                    ],
+                }
+                if sentinel_eval.get("has_hits")
+                else {}
+            ),
+            **(
+                {
                     "simulation_diagnostic_message": simulation_diagnostic[0],
                     "simulation_diagnostic_rule": simulation_diagnostic[1],
                 }
@@ -181,6 +253,23 @@ def execute_command(command: str, retry_count: int = 0, ctx: Context | None = No
             **({"final_block": True} if final_block else {}),
         )
         append_log_entry(log_entry)
+        if sentinel_eval.get("has_hits"):
+            checked_event = {
+                **log_entry,
+                "source": "mcp-server",
+                "event": "script_sentinel_execute_checked",
+            }
+            append_log_entry(checked_event)
+            if str(sentinel_eval.get("decision", "allowed")) == "blocked":
+                append_log_entry({**checked_event, "event": "script_sentinel_blocked"})
+            elif str(sentinel_eval.get("decision", "allowed")) == "requires_confirmation":
+                append_log_entry({**checked_event, "event": "script_sentinel_requires_confirmation"})
+            for hit in sentinel_eval.get("hits", []):
+                allowance_type = str(hit.get("allowance_applied", "")).strip()
+                if allowance_type == "once":
+                    append_log_entry({**checked_event, "event": "script_sentinel_dismissed_once"})
+                elif allowance_type == "persistent":
+                    append_log_entry({**checked_event, "event": "script_sentinel_trusted"})
 
         if not result.allowed:
             if result.decision_tier == "requires_confirmation":
@@ -195,10 +284,27 @@ def execute_command(command: str, retry_count: int = 0, ctx: Context | None = No
                     if simulation_diagnostic
                     else ""
                 )
+                sentinel_context = ""
+                if sentinel_eval.get("has_hits"):
+                    sentinel_paths = sorted(
+                        {
+                            str(hit.get("path", ""))
+                            for hit in sentinel_eval.get("hits", [])
+                            if str(hit.get("path", "")).strip()
+                        }
+                    )
+                    sentinel_preview = ", ".join(sentinel_paths[:3]) if sentinel_paths else "script artifact"
+                    if len(sentinel_paths) > 3:
+                        sentinel_preview += ", ..."
+                    sentinel_context = (
+                        "Script Sentinel context: policy-intent match detected for script execution target(s): "
+                        f"{sentinel_preview}\n"
+                    )
                 return (
                     f"[POLICY BLOCK] {result.reason}\n\n"
                     "This command requires an explicit confirmation handshake.\n"
                     f"{simulation_context}"
+                    f"{sentinel_context}"
                     "Ask a human operator to approve it via the control-plane GUI/API using this exact command and token, then retry execute_command:\n"
                     f"approval_token={token}\n"
                     f"token_expires_at={expires_at.isoformat()}Z"

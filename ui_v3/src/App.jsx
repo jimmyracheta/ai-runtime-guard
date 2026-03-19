@@ -313,6 +313,7 @@ export default function App() {
   const [reportsConfirmations, setReportsConfirmations] = useState({ approved: 0, denied: 0 })
   const [reportsOffset, setReportsOffset] = useState(0)
   const [reportsLimit, setReportsLimit] = useState(50)
+  const [showReportFilters, setShowReportFilters] = useState(false)
   const [reportsExpandedEventId, setReportsExpandedEventId] = useState(null)
   const [reportsLoading, setReportsLoading] = useState(false)
   const [reportsError, setReportsError] = useState('')
@@ -327,6 +328,10 @@ export default function App() {
   const [agentPosture, setAgentPosture] = useState({ profiles: [], discovered_unregistered: [], totals: { green: 0, yellow: 0, red: 0 } })
   const [agentPostureLoading, setAgentPostureLoading] = useState(false)
   const [agentPostureError, setAgentPostureError] = useState('')
+  const [scriptSentinelData, setScriptSentinelData] = useState({ artifacts: { total: 0, items: [] }, summary: null })
+  const [scriptSentinelLoading, setScriptSentinelLoading] = useState(false)
+  const [scriptSentinelError, setScriptSentinelError] = useState('')
+  const [scriptSentinelActionLoading, setScriptSentinelActionLoading] = useState({})
   const [agentConfigActionLoading, setAgentConfigActionLoading] = useState({})
   const [reportsFilters, setReportsFilters] = useState({
     agent_id: '',
@@ -624,6 +629,64 @@ export default function App() {
     }
   }
 
+  async function fetchScriptSentinel() {
+    setScriptSentinelLoading(true)
+    setScriptSentinelError('')
+    try {
+      const res = await fetch(`${API_BASE}/settings/agents/script-sentinel?limit=200&offset=0&hours=24`)
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok || !payload?.ok) {
+        throw new Error((payload?.errors || ['Script Sentinel load failed']).join('; '))
+      }
+      setScriptSentinelData({
+        artifacts: payload.artifacts || { total: 0, items: [] },
+        summary: payload.summary || null,
+      })
+    } catch (err) {
+      setScriptSentinelError(String(err.message || err))
+    } finally {
+      setScriptSentinelLoading(false)
+    }
+  }
+
+  async function scriptSentinelAllowance(contentHash, allowanceType) {
+    const actionKey = `${allowanceType}:${contentHash}`
+    setScriptSentinelActionLoading((prev) => ({ ...prev, [actionKey]: true }))
+    setScriptSentinelError('')
+    try {
+      const promptText = allowanceType === 'once'
+        ? 'Reason for one-time dismiss:'
+        : 'Reason to trust this artifact for this agent:'
+      const reason = window.prompt(promptText, '')
+      if (!reason || !String(reason).trim()) return
+      const endpoint = allowanceType === 'once'
+        ? `${API_BASE}/settings/agents/script-sentinel/dismiss-once`
+        : `${API_BASE}/settings/agents/script-sentinel/trust`
+      const body = allowanceType === 'once'
+        ? { content_hash: contentHash, reason: String(reason).trim(), ttl_seconds: 600 }
+        : { content_hash: contentHash, reason: String(reason).trim() }
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok || !payload?.ok) {
+        throw new Error((payload?.errors || ['Script Sentinel allowance failed']).join('; '))
+      }
+      setMessage(allowanceType === 'once' ? 'One-time dismiss created.' : 'Persistent trust created.')
+      await fetchScriptSentinel()
+    } catch (err) {
+      setScriptSentinelError(String(err.message || err))
+    } finally {
+      setScriptSentinelActionLoading((prev) => {
+        const next = { ...prev }
+        delete next[actionKey]
+        return next
+      })
+    }
+  }
+
   async function applyAgentConfigHardening(profileId, { autoAddMcp = false } = {}) {
     const res = await fetch(`${API_BASE}/settings/agents/config-apply`, {
       method: 'POST',
@@ -762,6 +825,7 @@ export default function App() {
   useEffect(() => {
     if (activeRail !== 'settings' || activeSettingsTab !== 'agents') return
     fetchAgentPosture()
+    fetchScriptSentinel()
   }, [activeRail, activeSettingsTab])
 
   useEffect(() => {
@@ -1345,6 +1409,98 @@ export default function App() {
     const pageCount = Math.max(1, Math.ceil(reportsTotal / reportsLimit))
     const currentPage = Math.floor(reportsOffset / reportsLimit) + 1
     const pendingApprovalsCount = pendingApprovals.length
+    const todayKey = new Date().toISOString().slice(0, 10)
+
+    const mapCountByDay = (rows) => {
+      const out = new Map()
+      ;(rows || []).forEach((row) => {
+        const day = String(row?.day || '')
+        const count = Number(row?.count || 0)
+        if (day) out.set(day, count)
+      })
+      return out
+    }
+
+    const dayKeys = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date()
+      d.setDate(d.getDate() - (6 - i))
+      return d.toISOString().slice(0, 10)
+    })
+    const eventMap = mapCountByDay(eventsPerDay)
+    const blockedMap = mapCountByDay(blockedPerDay)
+    const chartRows = dayKeys.map((day) => ({
+      day,
+      total: Number(eventMap.get(day) || 0),
+      blocked: Number(blockedMap.get(day) || 0),
+    }))
+    const chartMax = Math.max(1, ...chartRows.map((row) => Number(row.total || 0)))
+    const hasChartData = chartRows.some((row) => Number(row.total || 0) > 0 || Number(row.blocked || 0) > 0)
+    const eventsToday = Number(eventMap.get(todayKey) || 0)
+    const blockedToday = Number(blockedMap.get(todayKey) || 0)
+    const yesterdayKey = dayKeys[dayKeys.length - 2] || ''
+    const eventsYesterday = Number(eventMap.get(yesterdayKey) || 0)
+    const blockedYesterday = Number(blockedMap.get(yesterdayKey) || 0)
+    const backupToday = reportsEvents.filter((event) => (
+      String(event?.event || '') === 'backup_created' && String(event?.timestamp || '').startsWith(todayKey)
+    )).length
+
+    const formatDayLabel = (isoDay) => {
+      const dt = new Date(`${isoDay}T00:00:00`)
+      if (Number.isNaN(dt.getTime())) return isoDay
+      return dt.toLocaleDateString(undefined, { weekday: 'short' })
+    }
+
+    const formatDelta = (todayValue, yesterdayValue) => {
+      const delta = Number(todayValue || 0) - Number(yesterdayValue || 0)
+      if (delta > 0) return { text: `+${delta} vs yesterday`, tone: 'positive' }
+      if (delta < 0) return { text: `${delta} vs yesterday`, tone: 'negative' }
+      return { text: 'No change vs yesterday', tone: 'neutral' }
+    }
+
+    const totalDelta = formatDelta(eventsToday, eventsYesterday)
+    const blockedDelta = formatDelta(blockedToday, blockedYesterday)
+
+    const filteredLabels = REPORT_FILTER_FIELDS.reduce((acc, field) => {
+      const value = String(reportsFilters[field.key] || '').trim()
+      if (value) acc.push(`${field.label} = ${value}`)
+      return acc
+    }, [])
+    if (reportsTimeFilter !== 'all_time') {
+      if (reportsTimeFilter === 'custom_day' && reportsCustomDay) {
+        filteredLabels.push(`Date = ${reportsCustomDay}`)
+      } else if (reportsTimeFilter === 'today') {
+        filteredLabels.push('Date = Today')
+      } else if (reportsTimeFilter === 'last_10_min') {
+        filteredLabels.push('Date = Last 10 min')
+      } else if (reportsTimeFilter === 'last_5_min') {
+        filteredLabels.push('Date = Last 5 min')
+      }
+    }
+    const activeFilterCount = filteredLabels.length
+    const activeFilterSummary = filteredLabels.slice(0, 3).join(', ')
+    const agentsMonitored = Math.max(
+      Number(knownAgentIds?.length || 0),
+      new Set(
+        (reportsEvents || [])
+          .map((event) => String(event?.agent_id || '').trim())
+          .filter(Boolean)
+      ).size
+    )
+    const lastEventTimestamp = String(reportsEvents[0]?.timestamp || reportsStatus?.last_ingested_at || '').trim()
+    const timeSinceLastEvent = lastEventTimestamp ? relativeTime(lastEventTimestamp) : 'n/a'
+    const nextIndexIn = (() => {
+      const src = String(reportsStatus?.last_ingested_at || '').trim()
+      if (!src) return 'n/a'
+      const base = new Date(src).getTime()
+      if (Number.isNaN(base)) return 'n/a'
+      const next = base + (5 * 60 * 1000)
+      const diff = next - Date.now()
+      if (diff <= 0) return 'due'
+      const mins = Math.floor(diff / 60000)
+      const secs = Math.floor((diff % 60000) / 1000)
+      return `${mins}m ${String(secs).padStart(2, '0')}s`
+    })()
+    const systemActive = !reportsError
 
     const resetReportsFilters = () => {
       setReportsOffset(0)
@@ -1363,6 +1519,7 @@ export default function App() {
       })
       setReportsTimeFilter('all_time')
       setReportsCustomDay('')
+      setShowReportFilters(false)
     }
 
     const openLogWithFilters = (patch = {}, options = {}) => {
@@ -1375,202 +1532,217 @@ export default function App() {
       setReportsFilters((prev) => ({ ...(clear ? {} : prev), ...patch }))
     }
 
-    const TrendBars = ({ data, tone = 'blue' }) => {
-      if (!data.length) return <div className="text-slate-500 text-xs">No data</div>
-      const maxCount = Math.max(...data.map((x) => Number(x.count || 0)), 1)
-      const barClass = tone === 'red' ? 'bg-red-400' : 'bg-blue-400'
-      return (
-        <div className="space-y-1">
-          {data.slice(0, 7).map((row) => {
-            const count = Number(row.count || 0)
-            const width = Math.max(2, Math.round((count / maxCount) * 100))
-            return (
-              <div key={row.day} className="grid grid-cols-[92px_1fr_44px] items-center gap-2 text-xs font-mono">
-                <div className="text-slate-600">{row.day}</div>
-                <div className="h-2 bg-slate-100 rounded">
-                  <div className={`h-2 rounded ${barClass}`} style={{ width: `${width}%` }} />
-                </div>
-                <div className="text-right text-slate-700">{count}</div>
-              </div>
-            )
-          })}
-        </div>
-      )
-    }
-
     return (
       <div className="space-y-3">
-        <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm text-slate-700">
-                Last indexed: <span className="font-mono text-xs">{reportsStatus?.last_ingested_at ? relativeTime(reportsStatus.last_ingested_at) : 'n/a'}</span>
-              </div>
-              <div className="text-[11px] text-slate-500 mt-1">Automatic refresh runs every 5 minutes.</div>
+        <div className="card">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="text-xs text-slate-500">
+              {reportsStatus?.last_ingested_at ? `Last indexed ${relativeTime(reportsStatus.last_ingested_at)}` : 'No ingest data yet'}
             </div>
-            <button onClick={() => fetchReports({ sync: true })} className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-slate-700 text-sm">Refresh</button>
+            <button onClick={() => fetchReports({ sync: true })} className="btn btn-ghost">Refresh</button>
+          </div>
+          <div className="status-banner">
+            <div className="status-item">
+              <span className={`dot ${systemActive ? 'active' : 'inactive'}`} />
+              <span>{systemActive ? 'System active' : 'System degraded'}</span>
+            </div>
+            <div className="status-item">
+              <span className="value">{agentsMonitored}</span>
+              <span>agents monitored</span>
+            </div>
+            <div className="status-item">
+              <span className="value">{pendingApprovalsCount}</span>
+              <span>pending approvals</span>
+            </div>
+            <div className="status-item">
+              <span className="value">{timeSinceLastEvent}</span>
+              <span>since last event</span>
+            </div>
+            <div className="status-item">
+              <span className="value">{nextIndexIn}</span>
+              <span>next index</span>
+            </div>
           </div>
           {reportsError && <div className="mt-2 text-sm text-red-600">{reportsError}</div>}
           {reportsLoading && <div className="mt-2 text-xs text-slate-500">Refreshing reports...</div>}
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm space-y-2">
+        <div className="card">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filters</div>
-            <button
-              onClick={resetReportsFilters}
-              className="px-2 py-1 rounded border border-slate-300 text-xs text-slate-700 hover:bg-slate-50"
-            >
-              Reset filters
+            <button onClick={() => setShowReportFilters((v) => !v)} className="btn btn-ghost">
+              {showReportFilters ? 'Hide filters' : 'Show filters'} ({activeFilterCount})
             </button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            {REPORT_FILTER_FIELDS.map((field) => (
-              <input
-                key={field.key}
-                value={reportsFilters[field.key] || ''}
-                onChange={(e) => {
-                  setReportsOffset(0)
-                  setReportsFilters((prev) => ({ ...prev, [field.key]: e.target.value }))
-                }}
-                className="border border-slate-300 rounded-[10px] px-3 py-2 text-xs font-mono"
-                placeholder={field.label}
-                title={field.label}
-              />
-            ))}
-            <select
-              value={reportsTimeFilter}
-              onChange={(e) => {
-                setReportsOffset(0)
-                setReportsTimeFilter(e.target.value)
-              }}
-              className="border border-slate-300 rounded-[10px] px-3 py-2 text-xs"
-            >
-              <option value="all_time">All Time</option>
-              <option value="last_5_min">Last 5 min</option>
-              <option value="last_10_min">Last 10 min</option>
-              <option value="today">Today</option>
-              <option value="custom_day">Custom day</option>
-            </select>
-            {reportsTimeFilter === 'custom_day' && (
-              <input
-                type="date"
-                value={reportsCustomDay}
-                onChange={(e) => {
-                  setReportsOffset(0)
-                  setReportsCustomDay(e.target.value)
-                }}
-                className="border border-slate-300 rounded-[10px] px-3 py-2 text-xs"
-              />
+            {showReportFilters && (
+              <button onClick={resetReportsFilters} className="btn btn-ghost">Reset filters</button>
             )}
           </div>
+          {activeFilterCount > 0 && (
+            <div className="text-xs text-slate-600 mt-2">
+              Filtered: <span className="font-mono">{activeFilterSummary}{activeFilterCount > 3 ? ', ...' : ''}</span>
+            </div>
+          )}
+          {showReportFilters && (
+            <div className="filter-panel mt-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {REPORT_FILTER_FIELDS.map((field) => (
+                  <input
+                    key={field.key}
+                    value={reportsFilters[field.key] || ''}
+                    onChange={(e) => {
+                      setReportsOffset(0)
+                      setReportsFilters((prev) => ({ ...prev, [field.key]: e.target.value }))
+                    }}
+                    className="mono-input"
+                    placeholder={field.label}
+                    title={field.label}
+                  />
+                ))}
+                <select
+                  value={reportsTimeFilter}
+                  onChange={(e) => {
+                    setReportsOffset(0)
+                    setReportsTimeFilter(e.target.value)
+                  }}
+                >
+                  <option value="all_time">All Time</option>
+                  <option value="last_5_min">Last 5 min</option>
+                  <option value="last_10_min">Last 10 min</option>
+                  <option value="today">Today</option>
+                  <option value="custom_day">Custom day</option>
+                </select>
+                {reportsTimeFilter === 'custom_day' && (
+                  <input
+                    type="date"
+                    value={reportsCustomDay}
+                    onChange={(e) => {
+                      setReportsOffset(0)
+                      setReportsCustomDay(e.target.value)
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {reportsTab === 'dashboard' && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="stat-grid">
               <button
                 onClick={() => openLogWithFilters({}, { clearAll: true })}
-                className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm text-left hover:border-[#bfd4ff] cursor-pointer"
+                className="stat-card text-left hover:border-[#bfd4ff] cursor-pointer"
               >
-                <div className="text-xs text-slate-500">Total events</div>
-                <div className="text-2xl font-semibold">{totals.total_events || 0}</div>
+                <div className="stat-label">Total events</div>
+                <div className={`stat-value ${Number(totals.total_events || 0) === 0 ? 'zero' : ''}`}>{totals.total_events || 0}</div>
+                <div className={`stat-delta ${totalDelta.tone}`}>{totalDelta.text}</div>
               </button>
               <button
                 onClick={() => openLogWithFilters({ policy_decision: 'blocked' }, { clearAll: true })}
-                className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm text-left hover:border-[#bfd4ff] cursor-pointer"
+                className={`stat-card text-left hover:border-[#bfd4ff] cursor-pointer ${Number(totals.blocked_events || 0) > 0 ? 'has-alert' : ''}`}
               >
-                <div className="text-xs text-slate-500">Blocked events</div>
-                <div className="text-2xl font-semibold text-red-700">{totals.blocked_events || 0}</div>
-                {(totals.blocked_events || 0) === 0 && <div className="text-[11px] text-slate-500 mt-1">No policy blocks recorded</div>}
+                <div className="stat-label">Blocked events</div>
+                <div className={`stat-value blocked ${Number(totals.blocked_events || 0) === 0 ? 'zero' : ''}`}>{totals.blocked_events || 0}</div>
+                <div className={`stat-delta ${blockedDelta.tone}`}>{blockedDelta.text}</div>
               </button>
               <button
                 onClick={() => openLogWithFilters({ event: 'backup_created' }, { clearAll: true })}
-                className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm text-left hover:border-[#bfd4ff] cursor-pointer"
+                className="stat-card text-left hover:border-[#bfd4ff] cursor-pointer"
               >
-                <div className="text-xs text-slate-500">Backups created</div>
-                <div className="text-2xl font-semibold text-blue-700">{totals.backup_events || 0}</div>
-                {(totals.backup_events || 0) === 0 && <div className="text-[11px] text-slate-500 mt-1">No destructive operations recorded</div>}
+                <div className="stat-label">Backups created</div>
+                <div className={`stat-value ${Number(totals.backup_events || 0) === 0 ? 'zero' : ''}`}>{totals.backup_events || 0}</div>
+                <div className="stat-delta">Today (visible log): {backupToday}</div>
               </button>
               <button
                 onClick={() => setActiveRail('approvals')}
-                className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm text-left hover:border-[#bfd4ff] cursor-pointer"
+                className={`stat-card text-left hover:border-[#bfd4ff] cursor-pointer ${pendingApprovalsCount > 0 ? 'has-pending' : ''}`}
               >
-                <div className="text-xs text-slate-500">Confirmations</div>
-                <div className="text-sm font-mono mt-1 text-slate-700">Pending: {pendingApprovalsCount}</div>
-                <div className="text-sm font-mono text-green-700">Approved: {reportsConfirmations.approved || 0}</div>
-                <div className="text-sm font-mono text-red-700">Denied: {reportsConfirmations.denied || 0}</div>
-                {pendingApprovalsCount === 0 && <div className="text-[11px] text-slate-500 mt-1">No pending approvals</div>}
+                <div className="stat-label">Approvals</div>
+                <div className={`stat-value ${pendingApprovalsCount === 0 ? 'zero' : ''}`}>{reportsConfirmations.approved || 0} / {reportsConfirmations.denied || 0}</div>
+                <div className="stat-delta">Pending: {pendingApprovalsCount}</div>
               </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-                <div className="text-sm font-semibold text-slate-700 mb-2">Events per day (7d)</div>
-                <TrendBars data={eventsPerDay} tone="blue" />
-              </div>
-              <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-                <div className="text-sm font-semibold text-slate-700 mb-2">Blocked per day (7d)</div>
-                <TrendBars data={blockedPerDay} tone="red" />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-                <div className="text-sm font-semibold text-slate-700 mb-2">Top commands</div>
-                <div className="space-y-1 text-xs font-mono">
-                  {topCommands.length === 0 && <div className="text-slate-500">No data</div>}
-                  {topCommands.map((row) => {
-                    const total = Number(row.count || 0)
-                    const allowed = Number(row.allowed_count || 0)
-                    const blocked = Number(row.blocked_count || 0)
-                    const allowedPct = total > 0 ? Math.round((allowed / total) * 100) : 0
-                    const blockedPct = total > 0 ? Math.round((blocked / total) * 100) : 0
-                    return (
-                      <button
-                        key={row.command}
-                        onClick={() => openLogWithFilters({ command: row.command }, { clearAll: true })}
-                        className="w-full text-left border border-transparent hover:border-slate-300 rounded px-1 py-1 cursor-pointer"
-                      >
-                        <div className="flex justify-between mb-1">
-                          <span>{row.command}</span>
-                          <span>{total}</span>
-                        </div>
-                        <div className="h-2 bg-slate-100 rounded overflow-hidden flex">
-                          <div className="bg-green-400" style={{ width: `${allowedPct}%` }} />
-                          <div className="bg-red-400" style={{ width: `${blockedPct}%` }} />
-                        </div>
-                      </button>
-                    )
-                  })}
+
+            <div className="card">
+              <div className="text-sm font-semibold text-slate-700 mb-2">Activity (7 days)</div>
+              {hasChartData ? (
+                <>
+                  <div className="activity-chart">
+                    <div className="activity-y-axis">
+                      <span>{chartMax}</span>
+                      <span>{Math.max(1, Math.round(chartMax / 2))}</span>
+                      <span>0</span>
+                    </div>
+                    <div className="activity-bars">
+                      {chartRows.map((row) => {
+                        const totalPct = row.total > 0 ? Math.max(4, Math.round((row.total / chartMax) * 100)) : 0
+                        const blockedPct = row.blocked > 0 ? Math.max(4, Math.round((row.blocked / chartMax) * 100)) : 0
+                        return (
+                          <div key={row.day} className="chart-bar-group" title={`${row.day}: total ${row.total}, blocked ${row.blocked}`}>
+                            <div className="chart-bar-stack">
+                              <div className="chart-bar total" style={{ height: `${totalPct}%` }} />
+                              <div className="chart-bar blocked" style={{ height: `${blockedPct}%` }} />
+                            </div>
+                            <div className="chart-bar-label">{formatDayLabel(row.day)}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <div className="chart-legend">
+                    <span><i className="legend-swatch total" /> Total events</span>
+                    <span><i className="legend-swatch blocked" /> Blocked</span>
+                  </div>
+                </>
+              ) : (
+                <div className="chart-empty">
+                  <div className="chart-empty-icon">▤</div>
+                  <p>No events recorded yet</p>
+                  <p className="text-tertiary">Events will appear here once an agent makes its first tool call through AIRG.</p>
                 </div>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-                <div className="text-sm font-semibold text-slate-700 mb-2">Top paths</div>
-                <div className="space-y-1 text-xs font-mono">
-                  {topPaths.length === 0 && <div className="text-slate-500">No data</div>}
+              )}
+            </div>
+
+            <div className="card">
+              <div className="top-lists-grid">
+                <div className="top-list">
+                  <h4>Top commands</h4>
+                  {!topCommands.length && <div className="text-xs text-slate-500">No data</div>}
+                  {topCommands.map((row) => (
+                    <button
+                      key={row.command}
+                      onClick={() => openLogWithFilters({ command: row.command }, { clearAll: true })}
+                      className="top-list-item"
+                    >
+                      <span className="name">{row.command}</span>
+                      <span className="count">{row.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="top-list">
+                  <h4>Top paths</h4>
+                  {!topPaths.length && <div className="text-xs text-slate-500">No data</div>}
                   {topPaths.map((row) => (
                     <button
                       key={row.path}
                       onClick={() => openLogWithFilters({ path: row.path }, { clearAll: true })}
-                      className="w-full text-left flex justify-between border border-transparent hover:border-slate-300 rounded px-1 py-1 cursor-pointer"
+                      className="top-list-item"
                     >
-                      <span className="truncate pr-2">{row.path}</span>
-                      <span>{row.count}</span>
+                      <span className="name truncate pr-2">{row.path}</span>
+                      <span className="count">{row.count}</span>
                     </button>
                   ))}
                 </div>
-              </div>
-              <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
-                <div className="text-sm font-semibold text-slate-700 mb-2">Blocked by rule</div>
-                <div className="space-y-1 text-xs font-mono">
-                  {blockedByRule.length === 0 && <div className="text-slate-500">No data</div>}
+                <div className="top-list">
+                  <h4>Blocked by rule</h4>
+                  {!blockedByRule.length && <div className="text-xs text-slate-500">No data</div>}
                   {blockedByRule.map((row) => (
                     <button
                       key={row.matched_rule}
                       onClick={() => openLogWithFilters({ matched_rule: row.matched_rule }, { clearAll: true })}
-                      className="w-full text-left flex justify-between border border-transparent hover:border-slate-300 rounded px-1 py-1 cursor-pointer"
+                      className="top-list-item"
                     >
-                      <span>{row.matched_rule}</span>
-                      <span>{row.count}</span>
+                      <span className="name">{row.matched_rule}</span>
+                      <span className="count">{row.count}</span>
                     </button>
                   ))}
                 </div>
@@ -1936,7 +2108,7 @@ export default function App() {
             const tier = pathTierFor(draftPolicy, p)
             return (
               <div key={p} className="grid gap-2 items-center border-b border-slate-200 py-2 text-sm" style={{ gridTemplateColumns: pathGridColumns }}>
-                <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-white">{p}</div>
+                <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-[var(--bg-input)]">{p}</div>
                 <label className="flex justify-center"><input type="radio" checked={tier === 'allowed'} onChange={() => setDraftPolicy((prev) => setPathTier(prev, p, 'allowed'))} /></label>
                 <label className="flex justify-center"><input type="radio" checked={tier === 'blocked'} onChange={() => setDraftPolicy((prev) => setPathTier(prev, p, 'blocked'))} /></label>
                 {showPathAdvanced && (
@@ -2020,7 +2192,7 @@ export default function App() {
           </div>
           {blockedExt.map((ext) => (
             <div key={ext} className="grid grid-cols-[minmax(320px,1fr)_140px] gap-2 items-center border-b border-slate-200 py-2 text-sm">
-              <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-white">{ext}</div>
+              <div className="border border-slate-300 rounded px-2 py-1 font-mono text-xs bg-[var(--bg-input)]">{ext}</div>
               <div className="flex justify-center gap-2">
                 <button
                   onClick={() => onEdit(ext)}
@@ -3237,6 +3409,8 @@ export default function App() {
     const postureRows = agentPosture?.profiles || []
     const postureTotals = agentPosture?.totals || { green: 0, yellow: 0, red: 0 }
     const postureDiscovered = agentPosture?.discovered_unregistered || []
+    const sentinelArtifacts = scriptSentinelData?.artifacts?.items || []
+    const sentinelSummary = scriptSentinelData?.summary || null
     const postureStatusLabel = {
       green: 'Hardened',
       yellow: 'Partial',
@@ -3868,6 +4042,92 @@ export default function App() {
               <div className="text-xs text-slate-500">No additional config files detected outside registered profiles.</div>
             )}
           </div>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-[10px] p-4 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-800">Script Sentinel</div>
+              <div className="text-xs text-slate-500">Policy-intent continuity for script-mediated command execution.</div>
+            </div>
+            <button
+              onClick={fetchScriptSentinel}
+              className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-xs bg-white hover:bg-slate-50"
+              disabled={scriptSentinelLoading}
+            >
+              {scriptSentinelLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          {sentinelSummary && (
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3 text-xs">
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Flagged: <span className="font-semibold">{sentinelSummary.flagged_artifacts || 0}</span></div>
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Checks(24h): <span className="font-semibold">{sentinelSummary.total_checks || 0}</span></div>
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Blocked: <span className="font-semibold">{sentinelSummary.blocked || 0}</span></div>
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Needs Approval: <span className="font-semibold">{sentinelSummary.requires_confirmation || 0}</span></div>
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Trusted: <span className="font-semibold">{sentinelSummary.trusted_allowances || 0}</span></div>
+              <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Dismissed Once: <span className="font-semibold">{sentinelSummary.one_time_allowances || 0}</span></div>
+            </div>
+          )}
+
+          {scriptSentinelError && <div className="text-sm text-red-600 mb-2">{scriptSentinelError}</div>}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="text-left text-slate-500 border-b border-slate-200">
+                  <th className="py-2 pr-2">Path</th>
+                  <th className="py-2 px-2">Hash</th>
+                  <th className="py-2 px-2">Matched Signatures</th>
+                  <th className="py-2 px-2">Last Seen</th>
+                  <th className="py-2 px-2 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sentinelArtifacts.map((item) => {
+                  const hash = String(item.content_hash || '')
+                  const onceKey = `once:${hash}`
+                  const trustKey = `persistent:${hash}`
+                  const signatures = Array.isArray(item.matched_signatures) ? item.matched_signatures : []
+                  const signaturePreview = signatures
+                    .map((sig) => String(sig?.pattern || sig?.normalized_pattern || ''))
+                    .filter(Boolean)
+                    .slice(0, 4)
+                    .join(', ')
+                  return (
+                    <tr key={`${item.path}:${hash}`} className="border-b border-slate-100">
+                      <td className="py-2 pr-2 font-mono break-all">{item.path}</td>
+                      <td className="py-2 px-2 font-mono break-all">{hash}</td>
+                      <td className="py-2 px-2 text-slate-600">{signaturePreview || '-'}</td>
+                      <td className="py-2 px-2 text-slate-600">{relativeTime(item.path_last_seen_ts || item.last_seen_ts || '')}</td>
+                      <td className="py-2 px-2">
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => scriptSentinelAllowance(hash, 'once')}
+                            className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+                            disabled={Boolean(scriptSentinelActionLoading[onceKey])}
+                          >
+                            Dismiss Once
+                          </button>
+                          <button
+                            onClick={() => scriptSentinelAllowance(hash, 'persistent')}
+                            className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-50"
+                            disabled={Boolean(scriptSentinelActionLoading[trustKey])}
+                          >
+                            Trust Artifact
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {!sentinelArtifacts.length && !scriptSentinelLoading && (
+            <div className="text-xs text-slate-500 mt-2">No flagged script artifacts recorded yet.</div>
+          )}
         </div>
       </div>
     )

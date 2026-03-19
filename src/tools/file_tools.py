@@ -11,10 +11,11 @@ else:
 from audit import append_log_entry, build_log_entry
 from backup import backup_paths
 from budget import check_and_record_cumulative_budget
-from config import POLICY, WORKSPACE_ROOT
+from config import AGENT_ID, POLICY, WORKSPACE_ROOT
 from models import PolicyResult
 from policy_engine import check_path_policy, relative_depth
 from runtime_context import activate_runtime_context, reset_runtime_context
+import script_sentinel
 
 
 def read_file(path: str, ctx: Context | None = None) -> str:
@@ -110,11 +111,26 @@ def write_file(path: str, content: str, ctx: Context | None = None) -> str:
         except OSError as e:
             return f"Error writing file: {e}"
 
+        sentinel_scan = script_sentinel.scan_and_record_write(path, content, writer_agent_id=AGENT_ID)
+        if sentinel_scan.get("flagged"):
+            append_log_entry(
+                {
+                    **log_entry,
+                    "source": "mcp-server",
+                    "event": "script_sentinel_flagged",
+                    "content_hash": sentinel_scan.get("content_hash", ""),
+                    "matched_signatures": sentinel_scan.get("matched_signatures", []),
+                    "script_sentinel_mode": POLICY.get("script_sentinel", {}).get("mode", "match_original"),
+                }
+            )
+
         msg = f"Successfully wrote {len(content)} characters to {path}"
         if backup_location:
             msg += f" (previous version backed up to {backup_location})"
         else:
             msg += " (no content-change backup needed)"
+        if sentinel_scan.get("flagged"):
+            msg += " (Script Sentinel flagged content)"
         return msg
     finally:
         reset_runtime_context(context_tokens)

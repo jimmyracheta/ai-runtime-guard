@@ -108,6 +108,12 @@ DEFAULT_TEST_POLICY = {
         "log_level": "verbose",
         "redact_patterns": [],
     },
+    "script_sentinel": {
+        "enabled": False,
+        "mode": "match_original",
+        "max_scan_bytes": 1048576,
+        "include_wrappers": True,
+    },
 }
 
 
@@ -115,6 +121,7 @@ def apply_test_environment(workspace: pathlib.Path, max_retries: int = 2) -> Exi
     ws = str(workspace.resolve())
     log_path = str((workspace / "activity.log").resolve())
     backup_dir = str((workspace / "backups").resolve())
+    reports_db = str((workspace / "reports.db").resolve())
     approval_db = pathlib.Path(workspace / "approvals.db").resolve()
     stack = ExitStack()
 
@@ -124,6 +131,8 @@ def apply_test_environment(workspace: pathlib.Path, max_retries: int = 2) -> Exi
     for module in [config, audit]:
         if hasattr(module, "LOG_PATH"):
             stack.enter_context(patch.object(module, "LOG_PATH", log_path))
+    if hasattr(config, "REPORTS_DB_PATH"):
+        stack.enter_context(patch.object(config, "REPORTS_DB_PATH", reports_db))
     if hasattr(policy_engine, "LOG_PATH"):
         stack.enter_context(patch.object(policy_engine, "LOG_PATH", log_path))
     for module in [config, backup, policy_engine, restore_tools]:

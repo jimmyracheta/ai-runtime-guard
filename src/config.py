@@ -270,6 +270,20 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     if int(reports["prune_interval_seconds"]) < 300:
         raise ValueError("reports.prune_interval_seconds must be >= 300")
 
+    script_sentinel = _ensure_dict("script_sentinel")
+    script_sentinel.setdefault("enabled", False)
+    script_sentinel.setdefault("mode", "match_original")
+    script_sentinel.setdefault("max_scan_bytes", 1048576)
+    script_sentinel.setdefault("include_wrappers", True)
+    if not isinstance(script_sentinel["enabled"], bool):
+        raise ValueError("script_sentinel.enabled must be boolean")
+    if str(script_sentinel["mode"]).strip() not in {"match_original", "block", "requires_confirmation"}:
+        raise ValueError("script_sentinel.mode must be one of: match_original, block, requires_confirmation")
+    if int(script_sentinel["max_scan_bytes"]) < 1024:
+        raise ValueError("script_sentinel.max_scan_bytes must be >= 1024")
+    if not isinstance(script_sentinel["include_wrappers"], bool):
+        raise ValueError("script_sentinel.include_wrappers must be boolean")
+
     agent_overrides = policy.get("agent_overrides", {})
     if agent_overrides is None:
         agent_overrides = {}

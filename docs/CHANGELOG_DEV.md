@@ -2,6 +2,41 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-03-19 (v2.0.dev3 Script Sentinel policy-intent continuity)
+- Added Script Sentinel runtime module (`src/script_sentinel.py`) with:
+  - `flag-at-write` detection for files written through `write_file`
+  - `check-at-execute` enforcement for common script invocation forms in `execute_command`
+  - global hash-based artifact tracking (`content_hash`) and path mapping persistence
+  - per-agent trust controls (`dismiss once`, `trust artifact`) with allowance storage.
+- Added Script Sentinel policy section defaults/validation:
+  - `script_sentinel.enabled`
+  - `script_sentinel.mode` (`match_original|block|requires_confirmation`)
+  - `script_sentinel.max_scan_bytes`
+  - `script_sentinel.include_wrappers`.
+- Added Script Sentinel runtime integration:
+  - `write_file` now records `script_sentinel_flagged` events on matched content
+  - `execute_command` now evaluates tagged artifacts and applies policy-intent continuity decisions
+  - added audit events:
+    - `script_sentinel_execute_checked`
+    - `script_sentinel_blocked`
+    - `script_sentinel_requires_confirmation`
+    - `script_sentinel_dismissed_once`
+    - `script_sentinel_trusted`.
+- Added Script Sentinel control-plane APIs in Flask backend:
+  - `GET /settings/agents/script-sentinel`
+  - `POST /settings/agents/script-sentinel/dismiss-once`
+  - `POST /settings/agents/script-sentinel/trust`.
+- Added Script Sentinel UI surface under `Settings -> Agents`:
+  - 24h summary counters
+  - flagged artifact list
+  - per-hash `Dismiss Once` and `Trust Artifact` actions.
+- Added regression tests for sentinel behavior in `tests/test_attacker_suite.py`:
+  - write-time tagging and execute-time blocking
+  - union-based detection with executor-specific enforcement
+  - stale-hash non-enforcement after out-of-band overwrite
+  - one-time and persistent allowance behavior.
+- Bumped package/dev surface version to `2.0.dev3`.
+
 ## 2026-03-19 (v2.0.dev2 config-writer apply/undo)
 - Added dev2 agent config writer module:
   - `src/agent_configurator.py`

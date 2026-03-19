@@ -47,6 +47,7 @@ class UIPolicyServiceTests(unittest.TestCase):
             "backup_access": {"block_agent_tools": True, "allowed_tools": ["restore_backup"]},
             "restore": {"require_dry_run_before_apply": True, "confirmation_ttl_seconds": 300},
             "audit": {"backup_enabled": True, "backup_on_content_change_only": True, "max_versions_per_file": 5, "backup_root": str(self.base / "backups"), "backup_retention_days": 30, "log_level": "verbose", "redact_patterns": []},
+            "script_sentinel": {"enabled": False, "mode": "match_original", "max_scan_bytes": 1048576, "include_wrappers": True},
         }
         self.policy_path.write_text(json.dumps(self.initial))
 

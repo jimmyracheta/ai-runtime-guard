@@ -122,6 +122,10 @@ Capabilities:
    - missing controls and recommended next actions
    - local unregistered agent-config detection.
 8. Claude hook/cfg posture help is available via copy-assist snippets in the same panel.
+9. Script Sentinel (when enabled) preserves policy intent across direct and indirect execution:
+   - scripts written via `write_file` are scanned and hash-tagged on blocked/approval-gated pattern matches
+   - script execution via `execute_command` applies tier continuity (`match_original`, `block`, or `requires_confirmation`)
+   - `Settings -> Agents` includes Script Sentinel artifact visibility and per-hash trust/dismiss actions.
 
 Caveats:
 1. Runtime policy reload is startup-based; after policy changes, restart MCP server (and usually reconnect agent client).
@@ -129,6 +133,7 @@ Caveats:
 3. Redaction and obfuscation defenses are pattern-based and not exhaustive.
 4. Some blast-radius/target inference for complex shell patterns is heuristic.
 5. Cumulative budget efficacy depends on threshold tuning.
+6. Script Sentinel coverage is scoped to artifacts written through AIRG `write_file`; it is not a generic host-wide script execution guardrail.
 
 ### Packaged UI/runtime path behavior
 For package installs (PyPI/TestPyPI):

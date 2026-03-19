@@ -7,7 +7,9 @@ import unittest
 
 import approvals
 import backup
+import config
 import policy_engine
+import script_sentinel
 from tools.command_tools import execute_command
 from tools.file_tools import delete_file, list_directory, read_file, write_file
 
@@ -250,6 +252,99 @@ class AttackerTestSuite(unittest.TestCase):
         lines = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         backup_events = [entry for entry in lines if entry.get("event") == "backup_created" and entry.get("tool") == "delete_file"]
         self.assertEqual(backup_events, [])
+
+    def test_script_sentinel_blocks_tagged_script_execution(self):
+        policy_engine.POLICY["script_sentinel"]["enabled"] = True
+        policy_engine.POLICY["script_sentinel"]["mode"] = "match_original"
+        policy_engine.POLICY["blocked"]["commands"] = ["danger-cmd"]
+        policy_engine.POLICY["requires_confirmation"]["commands"] = []
+        (self.workspace / "sentinel").mkdir(parents=True, exist_ok=True)
+
+        write_result = write_file("sentinel/block.sh", "danger-cmd\n")
+        self.assertIn("Script Sentinel flagged content", write_result)
+
+        blocked = execute_command("bash sentinel/block.sh")
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn("Script Sentinel preserved policy intent", blocked)
+
+    def test_script_sentinel_flags_from_override_union_and_enforces_by_executor_policy(self):
+        policy_engine.POLICY["script_sentinel"]["enabled"] = True
+        policy_engine.POLICY["script_sentinel"]["mode"] = "match_original"
+        policy_engine.POLICY["blocked"]["commands"] = []
+        policy_engine.POLICY["requires_confirmation"]["commands"] = []
+        policy_engine.POLICY["agent_overrides"] = {
+            "agent-b": {"policy": {"blocked": {"commands": ["danger-cmd"]}}}
+        }
+        (self.workspace / "sentinel").mkdir(parents=True, exist_ok=True)
+
+        write_result = write_file("sentinel/union.sh", "danger-cmd\n")
+        self.assertIn("Script Sentinel flagged content", write_result)
+
+        # Current executor policy allows this pattern (not blocked/requires_confirmation),
+        # so Script Sentinel does not enforce in match_original mode.
+        allowed = execute_command("bash sentinel/union.sh")
+        self.assertNotIn("[POLICY BLOCK]", allowed)
+
+        # Simulate a different executor policy where the same pattern is blocked.
+        policy_engine.POLICY["blocked"]["commands"] = ["danger-cmd"]
+        blocked = execute_command("bash sentinel/union.sh")
+        self.assertIn("[POLICY BLOCK]", blocked)
+
+    def test_script_sentinel_stale_hash_not_enforced_after_external_overwrite(self):
+        policy_engine.POLICY["script_sentinel"]["enabled"] = True
+        policy_engine.POLICY["script_sentinel"]["mode"] = "match_original"
+        policy_engine.POLICY["blocked"]["commands"] = ["danger-cmd"]
+        (self.workspace / "sentinel").mkdir(parents=True, exist_ok=True)
+
+        write_result = write_file("sentinel/stale.sh", "danger-cmd\n")
+        self.assertIn("Script Sentinel flagged content", write_result)
+
+        # Out-of-band overwrite bypasses write_file scan, but execute-time hash check
+        # should treat this as unflagged content now.
+        (self.workspace / "sentinel" / "stale.sh").write_text("echo safe\n")
+
+        allowed = execute_command("bash sentinel/stale.sh")
+        self.assertNotIn("[POLICY BLOCK]", allowed)
+
+    def test_script_sentinel_dismiss_once_and_trust_persistent(self):
+        policy_engine.POLICY["script_sentinel"]["enabled"] = True
+        policy_engine.POLICY["script_sentinel"]["mode"] = "match_original"
+        policy_engine.POLICY["blocked"]["commands"] = ["danger-cmd"]
+        (self.workspace / "sentinel").mkdir(parents=True, exist_ok=True)
+
+        write_file("sentinel/allow.sh", "danger-cmd\n")
+        artifacts = script_sentinel.list_flagged_artifacts(limit=10, offset=0)
+        target = next((item for item in artifacts.get("items", []) if item.get("path", "").endswith("/sentinel/allow.sh")), None)
+        self.assertIsNotNone(target)
+        content_hash = str(target.get("content_hash", ""))
+        self.assertTrue(content_hash)
+
+        once = script_sentinel.create_allowance(
+            agent_id=str(config.AGENT_ID),
+            content_hash=content_hash,
+            allowance_type="once",
+            reason="test one-time bypass",
+            created_by="tests",
+            ttl_seconds=600,
+        )
+        self.assertEqual(once["allowance_type"], "once")
+
+        first = execute_command("bash sentinel/allow.sh")
+        self.assertNotIn("[POLICY BLOCK]", first)
+        second = execute_command("bash sentinel/allow.sh")
+        self.assertIn("[POLICY BLOCK]", second)
+
+        persistent = script_sentinel.create_allowance(
+            agent_id=str(config.AGENT_ID),
+            content_hash=content_hash,
+            allowance_type="persistent",
+            reason="test persistent trust",
+            created_by="tests",
+        )
+        self.assertEqual(persistent["allowance_type"], "persistent")
+
+        third = execute_command("bash sentinel/allow.sh")
+        self.assertNotIn("[POLICY BLOCK]", third)
 
 
 if __name__ == "__main__":

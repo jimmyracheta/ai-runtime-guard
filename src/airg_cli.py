@@ -145,6 +145,12 @@ def _policy_template() -> dict[str, Any]:
             "max_db_size_mb": 200,
             "prune_interval_seconds": 86400,
         },
+        "script_sentinel": {
+            "enabled": False,
+            "mode": "match_original",
+            "max_scan_bytes": 1048576,
+            "include_wrappers": True,
+        },
         "agent_overrides": {},
     }
 

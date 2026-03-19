@@ -13,6 +13,7 @@ import agent_configurator
 import agent_posture
 import config
 import reports
+import script_sentinel
 from audit import append_log_entry, build_operator_log_entry
 from ui import service
 
@@ -632,6 +633,70 @@ def settings_agents_config_undo():
         return jsonify(result), 400
     result["posture"] = _posture_summary_with_state(profiles, paths)
     return jsonify(result)
+
+
+@app.route("/settings/agents/script-sentinel", methods=["GET", "OPTIONS"])
+def settings_agents_script_sentinel():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    limit = int(request.args.get("limit", "200") or "200")
+    offset = int(request.args.get("offset", "0") or "0")
+    hours = int(request.args.get("hours", "24") or "24")
+    artifacts = script_sentinel.list_flagged_artifacts(limit=limit, offset=offset)
+    summary = script_sentinel.execution_summary(hours=hours)
+    return jsonify({"ok": True, "artifacts": artifacts, "summary": summary})
+
+
+@app.route("/settings/agents/script-sentinel/dismiss-once", methods=["POST", "OPTIONS"])
+def settings_agents_script_sentinel_dismiss_once():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    payload = request.get_json(silent=True) or {}
+    content_hash = str(payload.get("content_hash", "")).strip().lower()
+    reason = str(payload.get("reason", "")).strip()
+    ttl_seconds = int(payload.get("ttl_seconds", 600) or 600)
+    target_agent = str(payload.get("agent_id", "")).strip() or str(config.AGENT_ID or "Unknown")
+    if not content_hash:
+        return jsonify({"ok": False, "errors": ["content_hash is required"]}), 400
+    if not reason:
+        return jsonify({"ok": False, "errors": ["reason is required"]}), 400
+    try:
+        created = script_sentinel.create_allowance(
+            agent_id=target_agent,
+            content_hash=content_hash,
+            allowance_type="once",
+            reason=reason,
+            created_by="gui-operator",
+            ttl_seconds=ttl_seconds,
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "errors": [str(exc)]}), 400
+    return jsonify({"ok": True, "allowance": created})
+
+
+@app.route("/settings/agents/script-sentinel/trust", methods=["POST", "OPTIONS"])
+def settings_agents_script_sentinel_trust():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    payload = request.get_json(silent=True) or {}
+    content_hash = str(payload.get("content_hash", "")).strip().lower()
+    reason = str(payload.get("reason", "")).strip()
+    target_agent = str(payload.get("agent_id", "")).strip() or str(config.AGENT_ID or "Unknown")
+    if not content_hash:
+        return jsonify({"ok": False, "errors": ["content_hash is required"]}), 400
+    if not reason:
+        return jsonify({"ok": False, "errors": ["reason is required"]}), 400
+    try:
+        created = script_sentinel.create_allowance(
+            agent_id=target_agent,
+            content_hash=content_hash,
+            allowance_type="persistent",
+            reason=reason,
+            created_by="gui-operator",
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "errors": [str(exc)]}), 400
+    return jsonify({"ok": True, "allowance": created})
 
 
 def _ui_dist_ready() -> bool:

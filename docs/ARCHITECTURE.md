@@ -17,6 +17,7 @@ Primary runtime artifacts:
 - `budget.py`: cumulative budget accounting and scope/reset behavior.
 - `backup.py`: backup extraction, dedupe/hash logic, retention/version pruning.
 - `reports.py`: activity-log ingestion, reports SQLite schema, query aggregations, retention pruning.
+- `script_sentinel.py`: script-artifact flagging (`write_file`) and execute-time policy-intent continuity checks (`execute_command`).
 - `audit.py`: canonical audit-log entry build + append helpers.
 - `executor.py`: constrained subprocess environment and shell execution wrapper.
 - `tools/`: tool surfaces split by concern (`command_tools.py`, `file_tools.py`, `restore_tools.py`).
@@ -64,6 +65,21 @@ Policy evaluation is centralized in `check_policy(command)` and uses strict prio
 4. `allowed`
 
 If multiple tiers match one command, highest-priority tier wins and a `policy_conflict_warning` event is appended to `activity.log`.
+
+## Script Sentinel (policy-intent continuity)
+`Script Sentinel` extends command-tier intent to common indirect execution paths:
+1. `flag-at-write`: files written via `write_file` are scanned for blocked/approval-gated command patterns and tagged by `content_hash`.
+2. `check-at-execute`: `execute_command` resolves common script invocation targets and checks hashes against tagged artifacts.
+3. Enforcement decisions are executor-agent scoped:
+   - artifact tags are global hash records
+   - final tier enforcement is computed from the executing agent's effective policy.
+4. Decision modes:
+   - `match_original` (default): blocked stays blocked, requires_confirmation stays requires_confirmation
+   - `block`: any script sentinel hit blocks
+   - `requires_confirmation`: any script sentinel hit requires approval.
+5. Scope boundary:
+   - coverage is intentionally limited to artifacts written through AIRG `write_file`
+   - this is policy-enforcement-evasion detection, not malicious-intent classification.
 
 ### `blocked`
 Immediate deny. Used for known-dangerous commands, sensitive paths, and key/cert extensions.
