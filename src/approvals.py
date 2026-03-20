@@ -242,10 +242,10 @@ def _check_approval_store_health(conn: sqlite3.Connection) -> tuple[bool, str]:
         tables = {
             str(r["name"])
             for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('pending_approvals','approved_commands')"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('pending_approvals','approved_commands','approval_history')"
             ).fetchall()
         }
-        required_tables = {"pending_approvals", "approved_commands"}
+        required_tables = {"pending_approvals", "approved_commands", "approval_history"}
         if tables != required_tables:
             return False, f"missing required approval tables: expected={sorted(required_tables)} found={sorted(tables)}"
 
@@ -258,6 +258,29 @@ def _check_approval_store_health(conn: sqlite3.Connection) -> tuple[bool, str]:
             return (
                 False,
                 f"approved_commands schema missing required columns: {sorted(required_cols - approved_cols)}",
+            )
+
+        history_cols = {
+            str(r["name"])
+            for r in conn.execute("PRAGMA table_info(approval_history)").fetchall()
+        }
+        required_history_cols = {
+            "token",
+            "agent_id",
+            "session_id",
+            "command_hash",
+            "normalized_command",
+            "requested_at",
+            "decision",
+            "resolved_at",
+            "approver",
+            "approved_via",
+            "source",
+        }
+        if not required_history_cols.issubset(history_cols):
+            return (
+                False,
+                f"approval_history schema missing required columns: {sorted(required_history_cols - history_cols)}",
             )
     except sqlite3.DatabaseError as exc:
         return False, f"approval-store health check failed with sqlite error: {exc}"
@@ -312,6 +335,41 @@ def init_approval_store() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_approved_commands_expires_at ON approved_commands(expires_at)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approval_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL,
+                agent_id TEXT,
+                session_id TEXT,
+                command_hash TEXT NOT NULL,
+                normalized_command TEXT NOT NULL,
+                requested_at TEXT NOT NULL,
+                decision TEXT NOT NULL DEFAULT 'pending',
+                resolved_at TEXT,
+                approver TEXT,
+                approved_via TEXT,
+                source TEXT
+            )
+            """
+        )
+        history_cols = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(approval_history)").fetchall()
+        }
+        if "approved_via" not in history_cols:
+            conn.execute("ALTER TABLE approval_history ADD COLUMN approved_via TEXT")
+        if "source" not in history_cols:
+            conn.execute("ALTER TABLE approval_history ADD COLUMN source TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_history_requested_at ON approval_history(requested_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_history_resolved_at ON approval_history(resolved_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_approval_history_token ON approval_history(token)"
+        )
         conn.commit()
         healthy, reason = _check_approval_store_health(conn)
         if not healthy:
@@ -352,6 +410,23 @@ def prune_expired_approvals() -> None:
     init_approval_store()
     now = _to_z(_now_utc())
     with _conn() as conn:
+        conn.execute(
+            """
+            UPDATE approval_history
+            SET decision = 'expired',
+                resolved_at = COALESCE(resolved_at, ?),
+                approver = COALESCE(approver, 'System'),
+                approved_via = COALESCE(approved_via, 'expiry'),
+                source = COALESCE(source, 'approval.expiry')
+            WHERE decision = 'pending'
+              AND token IN (
+                SELECT token
+                FROM pending_approvals
+                WHERE expires_at <= ?
+              )
+            """,
+            (now, now),
+        )
         conn.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now,))
         conn.execute("DELETE FROM approved_commands WHERE expires_at <= ?", (now,))
         conn.commit()
@@ -403,6 +478,21 @@ def issue_or_reuse_approval_token(
                 payload,
             ),
         )
+        conn.execute(
+            """
+            INSERT INTO approval_history
+              (token, agent_id, session_id, command_hash, normalized_command, requested_at, decision)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending')
+            """,
+            (
+                token,
+                AGENT_ID,
+                session_id,
+                cmd_hash,
+                _normalize_for_audit(command),
+                _to_z(now),
+            ),
+        )
         conn.commit()
     return token, expires_at
 
@@ -412,6 +502,8 @@ def consume_command_approval(
     approval_token: str,
     *,
     source: str = "approve_command",
+    approver: str = "User",
+    approved_via: str = "gui",
 ) -> tuple[bool, str | None, str | None]:
     prune_expired_approvals()
     if approval_failures_exceeded(approval_token):
@@ -421,7 +513,7 @@ def consume_command_approval(
     with _conn() as conn:
         rec = conn.execute(
             """
-            SELECT command_hash, expires_at, session_id
+            SELECT command_hash, expires_at, session_id, agent_id, normalized_command, requested_at
             FROM pending_approvals
             WHERE token = ?
             LIMIT 1
@@ -492,6 +584,44 @@ def consume_command_approval(
                 source,
             ),
         )
+        updated = conn.execute(
+            """
+            UPDATE approval_history
+            SET decision = 'approved',
+                resolved_at = ?,
+                approver = ?,
+                approved_via = ?,
+                source = ?
+            WHERE token = ? AND decision = 'pending'
+            """,
+            (
+                approved_at,
+                str(approver or "User"),
+                str(approved_via or "gui"),
+                source,
+                approval_token,
+            ),
+        )
+        if updated.rowcount == 0:
+            conn.execute(
+                """
+                INSERT INTO approval_history
+                  (token, agent_id, session_id, command_hash, normalized_command, requested_at, decision, resolved_at, approver, approved_via, source)
+                VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
+                """,
+                (
+                    approval_token,
+                    str(rec["agent_id"] or AGENT_ID),
+                    session_id,
+                    expected_hash,
+                    str(rec["normalized_command"] or _normalize_for_audit(command)),
+                    str(rec["requested_at"] or approved_at),
+                    approved_at,
+                    str(approver or "User"),
+                    str(approved_via or "gui"),
+                    source,
+                ),
+            )
         conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
         conn.commit()
     APPROVAL_FAILURES.pop(approval_token, None)
@@ -588,15 +718,111 @@ def list_pending_approvals() -> list[dict]:
     return out
 
 
-def deny_command_approval(approval_token: str) -> tuple[bool, str]:
+def deny_command_approval(
+    approval_token: str,
+    *,
+    approver: str = "User",
+    approved_via: str = "gui",
+    source: str = "approve_command",
+) -> tuple[bool, str]:
     init_approval_store()
+    denied_at = _to_z(_now_utc())
     with _conn() as conn:
+        pending = conn.execute(
+            """
+            SELECT token, agent_id, session_id, command_hash, normalized_command, requested_at
+            FROM pending_approvals
+            WHERE token = ?
+            LIMIT 1
+            """,
+            (approval_token,),
+        ).fetchone()
+        if not pending:
+            return False, "Approval token not found"
         cur = conn.execute("DELETE FROM pending_approvals WHERE token = ?", (approval_token,))
+        conn.execute(
+            """
+            UPDATE approval_history
+            SET decision = 'denied',
+                resolved_at = ?,
+                approver = ?,
+                approved_via = ?,
+                source = ?
+            WHERE token = ? AND decision = 'pending'
+            """,
+            (
+                denied_at,
+                str(approver or "User"),
+                str(approved_via or "gui"),
+                source,
+                approval_token,
+            ),
+        )
+        if cur.rowcount:
+            conn.execute(
+                """
+                INSERT INTO approval_history
+                  (token, agent_id, session_id, command_hash, normalized_command, requested_at, decision, resolved_at, approver, approved_via, source)
+                SELECT ?, ?, ?, ?, ?, ?, 'denied', ?, ?, ?, ?
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM approval_history WHERE token = ? AND decision IN ('approved', 'denied', 'expired')
+                )
+                """,
+                (
+                    approval_token,
+                    str(pending["agent_id"] or AGENT_ID),
+                    str(pending["session_id"] or ""),
+                    str(pending["command_hash"] or ""),
+                    str(pending["normalized_command"] or ""),
+                    str(pending["requested_at"] or denied_at),
+                    denied_at,
+                    str(approver or "User"),
+                    str(approved_via or "gui"),
+                    source,
+                    approval_token,
+                ),
+            )
         conn.commit()
         if cur.rowcount == 0:
             return False, "Approval token not found"
     APPROVAL_FAILURES.pop(approval_token, None)
     return True, "Approval denied and token removed"
+
+
+def list_approval_history(limit: int = 200) -> list[dict]:
+    init_approval_store()
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT token, agent_id, session_id, normalized_command, requested_at, decision, resolved_at, approver, approved_via
+            FROM approval_history
+            WHERE decision IN ('approved', 'denied', 'expired')
+            ORDER BY COALESCE(resolved_at, requested_at) DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        decision = str(row["decision"] or "")
+        approver = str(row["approver"] or "").strip()
+        if not approver:
+            approver = "System" if decision == "expired" else "User"
+        out.append(
+            {
+                "token": str(row["token"] or ""),
+                "agent_id": str(row["agent_id"] or "Unknown"),
+                "session_id": str(row["session_id"] or ""),
+                "command": str(row["normalized_command"] or ""),
+                "requested_at": str(row["requested_at"] or ""),
+                "decision": decision,
+                "resolved_at": str(row["resolved_at"] or ""),
+                "approver": approver,
+                "approved_via": str(row["approved_via"] or ""),
+            }
+        )
+    return out
 
 
 def prune_expired_restore_confirmations() -> None:

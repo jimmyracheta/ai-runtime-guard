@@ -52,6 +52,34 @@ class ApprovalStoreTests(unittest.TestCase):
         self.assertTrue(denied)
         self.assertIn("removed", msg)
 
+    def test_approval_history_tracks_approved_and_denied(self):
+        approved_token, _ = approvals.issue_or_reuse_approval_token("cat approved.txt", session_id="hist-1")
+        ok, _reason, _rule = approvals.consume_command_approval(
+            "cat approved.txt",
+            approved_token,
+            approver="Alice",
+            approved_via="gui",
+        )
+        self.assertTrue(ok)
+
+        denied_token, _ = approvals.issue_or_reuse_approval_token("cat denied.txt", session_id="hist-2")
+        denied, _msg = approvals.deny_command_approval(
+            denied_token,
+            approver="",
+            approved_via="gui",
+        )
+        self.assertTrue(denied)
+
+        history = approvals.list_approval_history(limit=20)
+        self.assertGreaterEqual(len(history), 2)
+        by_token = {row["token"]: row for row in history}
+        self.assertEqual(by_token[approved_token]["decision"], "approved")
+        self.assertEqual(by_token[approved_token]["command"], "cat approved.txt")
+        self.assertEqual(by_token[approved_token]["approver"], "Alice")
+        self.assertEqual(by_token[denied_token]["decision"], "denied")
+        self.assertEqual(by_token[denied_token]["command"], "cat denied.txt")
+        self.assertEqual(by_token[denied_token]["approver"], "User")
+
     def test_approval_is_session_scoped(self):
         token, _ = approvals.issue_or_reuse_approval_token("rm tmp.txt", session_id="session-A")
         ok, _reason, _rule = approvals.consume_command_approval("rm tmp.txt", token)

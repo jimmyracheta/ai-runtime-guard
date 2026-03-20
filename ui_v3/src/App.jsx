@@ -279,6 +279,8 @@ export default function App() {
   const [jsonError, setJsonError] = useState('')
   const [message, setMessage] = useState('')
   const [pendingApprovals, setPendingApprovals] = useState([])
+  const [approvalHistory, setApprovalHistory] = useState([])
+  const [approvalHistoryError, setApprovalHistoryError] = useState('')
   const [descriptions, setDescriptions] = useState({})
   const [contexts, setContexts] = useState({})
   const [runtimePaths, setRuntimePaths] = useState({})
@@ -432,8 +434,12 @@ export default function App() {
       const tab = SETTINGS_TABS.find((t) => t.id === activeSettingsTab)
       return `Settings · ${tab?.label || 'Agents'}`
     }
+    if (activeRail === 'approvals') {
+      const tab = (NAV_CHILDREN.approvals || []).find((t) => t.id === activeApprovalsTab)
+      return `Approvals · ${tab?.label || 'Pending'}`
+    }
     return 'Approvals · Pending'
-  }, [activeRail, activePolicyTab, reportsTab, activeSettingsTab])
+  }, [activeRail, activeApprovalsTab, activePolicyTab, reportsTab, activeSettingsTab])
 
   useEffect(() => {
     if (!overrideAgentId && knownAgentIds.length) {
@@ -487,6 +493,21 @@ export default function App() {
     if (!res.ok) return
     const payload = await res.json()
     setPendingApprovals(payload.pending || [])
+  }
+
+  async function fetchApprovalsHistory() {
+    try {
+      const res = await fetch(`${API_BASE}/approvals/history?limit=200`)
+      if (!res.ok) {
+        setApprovalHistoryError(`History load failed (${res.status})`)
+        return
+      }
+      const payload = await res.json()
+      setApprovalHistory(payload.history || [])
+      setApprovalHistoryError('')
+    } catch (err) {
+      setApprovalHistoryError(String(err.message || err))
+    }
   }
 
   function emptyProfile() {
@@ -811,7 +832,11 @@ export default function App() {
     // from other processes appear without manual refresh.
     fetchPolicy().catch((err) => setMessage(err.message))
     fetchApprovals()
-    pollRef.current = setInterval(fetchApprovals, 3000)
+    fetchApprovalsHistory()
+    pollRef.current = setInterval(() => {
+      fetchApprovals()
+      fetchApprovalsHistory()
+    }, 3000)
     return () => clearInterval(pollRef.current)
   }, [])
 
@@ -1215,6 +1240,7 @@ export default function App() {
     }
     setRemoving((r) => ({ ...r, [token]: true }))
     setTimeout(() => setPendingApprovals((prev) => prev.filter((p) => p.token !== token)), 180)
+    fetchApprovalsHistory()
   }
 
   async function deny(token) {
@@ -1228,6 +1254,7 @@ export default function App() {
     }
     setRemoving((r) => ({ ...r, [token]: true }))
     setTimeout(() => setPendingApprovals((prev) => prev.filter((p) => p.token !== token)), 180)
+    fetchApprovalsHistory()
   }
 
   function toggleNavSection(sectionId) {
@@ -1356,6 +1383,63 @@ export default function App() {
       if (!command) return ''
       if (command.length <= max) return command
       return `${command.slice(0, max - 1)}…`
+    }
+
+    if (activeApprovalsTab === 'history') {
+      return (
+        <div className="bg-white rounded-[10px] border border-slate-200 p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="text-slate-700 font-medium">Recent approval decisions</div>
+            <button onClick={fetchApprovalsHistory} className="btn btn-ghost">Refresh</button>
+          </div>
+          {approvalHistoryError && (
+            <div className="mb-3 text-sm text-red-600">{approvalHistoryError}</div>
+          )}
+          {!approvalHistory.length ? (
+            <div className="text-sm text-slate-500 py-6 text-center">No approval history yet.</div>
+          ) : (
+            <div className="overflow-auto border border-slate-200 rounded-[8px]">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-700">
+                  <tr>
+                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Command</th>
+                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Requested</th>
+                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Decision Time</th>
+                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Approver</th>
+                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Decision</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {approvalHistory.map((item) => {
+                    const decision = String(item?.decision || '').toLowerCase()
+                    const decisionClass = decision === 'approved'
+                      ? 'text-green-700 bg-green-50 border-green-200'
+                      : decision === 'denied'
+                        ? 'text-red-700 bg-red-50 border-red-200'
+                        : 'text-slate-700 bg-slate-100 border-slate-200'
+                    return (
+                      <tr key={`${item.token}-${item.resolved_at}-${item.decision}`} className="odd:bg-white even:bg-slate-50/30">
+                        <td className="px-3 py-2 border-b border-slate-100 align-top">
+                          <div className="font-mono text-xs text-slate-700 break-all">{truncateCommand(item.command, 140)}</div>
+                          <div className="text-[11px] text-slate-500 mt-1">agent <span className="font-mono">{item.agent_id || 'Unknown'}</span></div>
+                        </td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600 whitespace-nowrap">{item.requested_at || 'n/a'}</td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600 whitespace-nowrap">{item.resolved_at || 'n/a'}</td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-700">{item.approver || 'User'}</td>
+                        <td className="px-3 py-2 border-b border-slate-100 align-top">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium ${decisionClass}`}>
+                            {decision || 'unknown'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )
     }
 
     if (!pendingApprovals.length) {

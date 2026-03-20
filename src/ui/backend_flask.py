@@ -385,6 +385,18 @@ def pending_approvals():
     return jsonify({"pending": items, "count": len(items)})
 
 
+@app.route("/approvals/history", methods=["GET", "OPTIONS"])
+def approvals_history():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        limit = int(str(request.args.get("limit", "200")))
+    except Exception:
+        limit = 200
+    items = approvals.list_approval_history(limit=limit)
+    return jsonify({"history": items, "count": len(items)})
+
+
 @app.route("/approvals/approve", methods=["POST", "OPTIONS"])
 def approve_pending():
     if request.method == "OPTIONS":
@@ -392,10 +404,18 @@ def approve_pending():
     payload = request.get_json(silent=True) or {}
     token = str(payload.get("token", "")).strip()
     command = str(payload.get("command", "")).strip()
+    approver = str(payload.get("approver") or request.headers.get("X-Actor") or "User").strip() or "User"
+    approved_via = str(payload.get("approved_via") or "gui").strip() or "gui"
     if not token or not command:
         return jsonify({"error": "Expected {token, command}"}), 400
     pending = next((item for item in approvals.list_pending_approvals() if item["token"] == token), None)
-    ok, reason, matched_rule = approvals.consume_command_approval(command, token, source="flask.approvals")
+    ok, reason, matched_rule = approvals.consume_command_approval(
+        command,
+        token,
+        source="flask.approvals",
+        approver=approver,
+        approved_via=approved_via,
+    )
     if not ok:
         status = 410 if matched_rule == "approval_token" else 403
         return jsonify({"approved": False, "error": reason, "matched_rule": matched_rule}), status
@@ -408,7 +428,8 @@ def approve_pending():
             decision_tier="allowed",
             command=command,
             approval_token=token,
-            approved_via="gui",
+            approved_via=approved_via,
+            approver=approver,
         )
     )
     return jsonify({"approved": True, "message": "Approval accepted"})
@@ -420,10 +441,17 @@ def deny_pending():
         return ("", 204)
     payload = request.get_json(silent=True) or {}
     token = str(payload.get("token", "")).strip()
+    approver = str(payload.get("approver") or request.headers.get("X-Actor") or "User").strip() or "User"
+    approved_via = str(payload.get("approved_via") or "gui").strip() or "gui"
     if not token:
         return jsonify({"error": "Expected {token}"}), 400
     pending = next((item for item in approvals.list_pending_approvals() if item["token"] == token), None)
-    ok, message = approvals.deny_command_approval(token)
+    ok, message = approvals.deny_command_approval(
+        token,
+        approver=approver,
+        approved_via=approved_via,
+        source="flask.approvals",
+    )
     if not ok:
         return jsonify({"denied": False, "error": message}), 404
     append_log_entry(
@@ -435,7 +463,8 @@ def deny_pending():
             decision_tier="blocked",
             command=(pending or {}).get("command", ""),
             approval_token=token,
-            approved_via="gui",
+            approved_via=approved_via,
+            approver=approver,
         )
     )
     return jsonify({"denied": True, "message": message})
