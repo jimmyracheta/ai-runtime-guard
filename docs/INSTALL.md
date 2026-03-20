@@ -65,7 +65,7 @@ airg-setup --silent
 ```bash
 mkdir -p ~/airg-workspace
 ```
-4. Use explicit env vars in your AI agent MCP config:
+4. Configure MCP env for agent identity + workspace:
 ```json
 {
   "mcpServers": {
@@ -74,12 +74,7 @@ mkdir -p ~/airg-workspace
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "claude-desktop",
-        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
-        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
-        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
-        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
-        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db"
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace"
       }
     }
   }

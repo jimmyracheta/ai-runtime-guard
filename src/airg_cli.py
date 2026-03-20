@@ -302,12 +302,6 @@ def _init_runtime(
                 "env": {
                     "AIRG_AGENT_ID": os.environ.get("AIRG_AGENT_ID", "default"),
                     "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
-                    "AIRG_POLICY_PATH": str(paths["policy_path"]),
-                    "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
-                    "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
-                    "AIRG_LOG_PATH": str(paths["log_path"]),
-                    "AIRG_REPORTS_DB_PATH": str(paths["reports_db_path"]),
-                    "AIRG_SERVER_COMMAND": _resolve_server_command_for_env(),
                 },
             },
             indent=2,
@@ -423,20 +417,13 @@ def _apply_backup_override(policy: dict[str, Any], backup_root: str) -> dict[str
     return out
 
 
-def _agent_config_payload(agent: str, workspace: str, paths: dict[str, pathlib.Path], agent_id: str) -> dict[str, Any]:
-    reports_db_path = paths.get("reports_db_path", paths["approval_db_path"].with_name("reports.db"))
+def _agent_config_payload(agent: str, workspace: str, _paths: dict[str, pathlib.Path], agent_id: str) -> dict[str, Any]:
     server_parts = shlex.split(_resolve_server_command_for_env())
     server_cmd = server_parts[0] if server_parts else "airg-server"
     server_args = server_parts[1:] if len(server_parts) > 1 else []
     env_block = {
         "AIRG_AGENT_ID": agent_id.strip() or "default",
         "AIRG_WORKSPACE": workspace,
-        "AIRG_POLICY_PATH": str(paths["policy_path"]),
-        "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
-        "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
-        "AIRG_LOG_PATH": str(paths["log_path"]),
-        "AIRG_REPORTS_DB_PATH": str(reports_db_path),
-        "AIRG_SERVER_COMMAND": _resolve_server_command_for_env(),
     }
     if agent in {"claude_desktop", "cursor", "generic"}:
         return {
@@ -818,12 +805,12 @@ def _warn_if_paths_inside_unsafe_roots(paths: dict[str, pathlib.Path]) -> None:
             if resolved.is_relative_to(workspace):
                 print(
                     f"[airg][warn] {label} is inside AIRG_WORKSPACE ({workspace}). "
-                    "Set explicit AIRG_* env vars in MCP config to keep runtime state outside workspace."
+                    "Move runtime state outside workspace (re-run airg-setup with custom runtime paths)."
                 )
             if resolved.is_relative_to(project_root):
                 print(
                     f"[airg][warn] {label} is inside project directory ({project_root}). "
-                    "Set explicit AIRG_* env vars in MCP config to avoid repo-local runtime state."
+                    "Move runtime state outside the repo (re-run airg-setup with custom runtime paths)."
                 )
         except Exception:
             # Non-fatal path resolution issues should not block startup.

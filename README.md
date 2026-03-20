@@ -95,7 +95,7 @@ See [INSTALL.md](docs/INSTALL.md) for advanced setup, service management, and fr
 
 ## MCP client configuration (example)
 Use generated profile config from GUI `Settings -> Agents` whenever possible.
-That view generates client-ready JSON/CLI snippets with your runtime paths, workspace, and agent ID.
+That view generates client-ready JSON/CLI snippets with workspace and agent identity.
 
 If you configure manually, use an absolute server command path (not a bare `airg-server` unless PATH is guaranteed):
 
@@ -107,13 +107,7 @@ If you configure manually, use an absolute server command path (not a bare `airg
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "claude-desktop",
-        "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace",
-        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
-        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
-        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
-        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db",
-        "AIRG_SERVER_COMMAND": "/absolute/path/to/airg-server"
+        "AIRG_WORKSPACE": "/absolute/path/to/agent-workspace"
       }
     }
   }
@@ -122,7 +116,7 @@ If you configure manually, use an absolute server command path (not a bare `airg
 
 Best practice:
 1. Run `airg-setup`, then open GUI `Settings -> Agents` and copy generated config for your profile.
-2. Keep explicit `AIRG_*` paths in client config so launches are deterministic across restarts.
+2. Keep MCP env minimal (`AIRG_AGENT_ID`, `AIRG_WORKSPACE`) and let AIRG runtime defaults handle global state paths.
 
 ## AIRG_WORKSPACE (important)
 `AIRG_WORKSPACE` is the default project root for agent operations.

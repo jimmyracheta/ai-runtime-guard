@@ -4,15 +4,12 @@ This file tracks agent-specific MCP setup for `ai-runtime-guard`.
 
 Use this together with `INSTALL.md`.
 
-## AIRG variables to include in MCP config
-Always set these explicitly in agent MCP config:
+## Required MCP env vars
+Use only these two env vars in agent MCP config:
 1. `AIRG_AGENT_ID`
 2. `AIRG_WORKSPACE`
-3. `AIRG_POLICY_PATH`
-4. `AIRG_APPROVAL_DB_PATH`
-5. `AIRG_APPROVAL_HMAC_KEY_PATH`
-6. `AIRG_LOG_PATH`
-7. `AIRG_REPORTS_DB_PATH`
+
+AIRG runtime paths (`policy.json`, approvals DB/HMAC, logs, reports DB) are resolved from local runtime state at install/setup time and do not need to be repeated per-agent.
 
 Server command:
 1. Preferred: absolute path to installed binary (example `/home/<user>/ai-runtime-guard/venv/bin/airg-server`).
@@ -27,12 +24,7 @@ Minimal MCP server block:
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",
-        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
-        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
-        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
-        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
-        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db"
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace"
       }
     }
   }
@@ -65,11 +57,6 @@ Add AIRG via CLI:
 codex mcp add ai-runtime-guard \
   --env AIRG_AGENT_ID=my-agent \
   --env AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
-  --env AIRG_POLICY_PATH=/absolute/path/to/policy.json \
-  --env AIRG_APPROVAL_DB_PATH=/absolute/path/to/approvals.db \
-  --env AIRG_APPROVAL_HMAC_KEY_PATH=/absolute/path/to/approvals.db.hmac.key \
-  --env AIRG_LOG_PATH=/absolute/path/to/activity.log \
-  --env AIRG_REPORTS_DB_PATH=/absolute/path/to/reports.db \
   -- /absolute/path/to/airg-server
 ```
 
@@ -88,16 +75,7 @@ cwd = "/absolute/path/to/ai-runtime-guard"
 [mcp_servers.ai-runtime-guard.env]
 AIRG_AGENT_ID = "my-agent"
 AIRG_WORKSPACE = "/absolute/path/to/airg-workspace"
-AIRG_POLICY_PATH = "/absolute/path/to/policy.json"
-AIRG_APPROVAL_DB_PATH = "/absolute/path/to/approvals.db"
-AIRG_APPROVAL_HMAC_KEY_PATH = "/absolute/path/to/approvals.db.hmac.key"
-AIRG_LOG_PATH = "/absolute/path/to/activity.log"
-AIRG_REPORTS_DB_PATH = "/absolute/path/to/reports.db"
 ```
-
-### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-setup`.
-2. Restart the agent app fully after policy changes.
 
 ## Claude Desktop
 ### GUI setup
@@ -116,12 +94,7 @@ Sample JSON (AIRG-focused, sanitized):
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",
-        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
-        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
-        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
-        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
-        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db"
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace"
       }
     }
   }
@@ -131,10 +104,6 @@ Sample JSON (AIRG-focused, sanitized):
 Notes:
 1. `preferences` keys in Claude config are optional and unrelated to MCP server registration.
 
-### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-setup`.
-2. Restart Claude Desktop fully after policy changes.
-
 ## Claude Code
 ### CLI/file setup
 Claude Code MCP registration is CLI-based:
@@ -142,11 +111,6 @@ Claude Code MCP registration is CLI-based:
 claude mcp add ai-runtime-guard \
   -e AIRG_AGENT_ID=my-agent \
   -e AIRG_WORKSPACE=/absolute/path/to/airg-workspace \
-  -e AIRG_POLICY_PATH=/home/$USER/.config/ai-runtime-guard/policy.json \
-  -e AIRG_APPROVAL_DB_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db \
-  -e AIRG_APPROVAL_HMAC_KEY_PATH=/home/$USER/.local/state/ai-runtime-guard/approvals.db.hmac.key \
-  -e AIRG_LOG_PATH=/home/$USER/.local/state/ai-runtime-guard/activity.log \
-  -e AIRG_REPORTS_DB_PATH=/home/$USER/.local/state/ai-runtime-guard/reports.db \
   -- /absolute/path/to/airg-server
 ```
 
@@ -200,18 +164,9 @@ Use a JSON MCP block similar to Claude-style MCP config (no `preferences` sectio
       "args": [],
       "env": {
         "AIRG_AGENT_ID": "my-agent",
-        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace",
-        "AIRG_POLICY_PATH": "/absolute/path/to/policy.json",
-        "AIRG_APPROVAL_DB_PATH": "/absolute/path/to/approvals.db",
-        "AIRG_APPROVAL_HMAC_KEY_PATH": "/absolute/path/to/approvals.db.hmac.key",
-        "AIRG_LOG_PATH": "/absolute/path/to/activity.log",
-        "AIRG_REPORTS_DB_PATH": "/absolute/path/to/reports.db"
+        "AIRG_WORKSPACE": "/absolute/path/to/airg-workspace"
       }
     }
   }
 }
 ```
-
-### AIRG notes
-1. Use explicit `AIRG_*` env vars from `airg-setup`.
-2. Restart Cursor fully after policy changes.

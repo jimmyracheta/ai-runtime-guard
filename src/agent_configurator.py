@@ -1,5 +1,6 @@
 import json
 import os
+import platform
 import pathlib
 import shlex
 import shutil
@@ -80,6 +81,13 @@ def _read_json_file(path: pathlib.Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Expected object at {path}, found {type(payload).__name__}")
     return payload
+
+
+def _read_json_file_optional(path: pathlib.Path) -> dict[str, Any]:
+    try:
+        return _read_json_file(path)
+    except Exception:
+        return {}
 
 
 def _merge_list_union(base: list[Any], overlay: list[Any]) -> list[Any]:
@@ -176,15 +184,10 @@ def _server_process() -> tuple[str, list[str]]:
     return str(pathlib.Path(sys.executable).resolve()), ["-m", "airg_cli", "server"]
 
 
-def _shared_env(paths: dict[str, pathlib.Path], workspace: pathlib.Path, agent_id: str) -> dict[str, str]:
+def _shared_env(_paths: dict[str, pathlib.Path], workspace: pathlib.Path, agent_id: str) -> dict[str, str]:
     return {
         "AIRG_AGENT_ID": str(agent_id).strip() or "default",
         "AIRG_WORKSPACE": str(workspace),
-        "AIRG_POLICY_PATH": str(paths["policy_path"]),
-        "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
-        "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
-        "AIRG_LOG_PATH": str(paths["log_path"]),
-        "AIRG_REPORTS_DB_PATH": str(paths["reports_db_path"]),
     }
 
 
@@ -199,6 +202,10 @@ def _airg_server_block(paths: dict[str, pathlib.Path], workspace: pathlib.Path, 
 
 def _contains_airg_mcp(payload: dict[str, Any]) -> bool:
     servers = payload.get("mcpServers", {})
+    return _contains_airg_mcp_servers(servers)
+
+
+def _contains_airg_mcp_servers(servers: Any) -> bool:
     if not isinstance(servers, dict):
         return False
     if "ai-runtime-guard" in servers:
@@ -240,13 +247,74 @@ def _workspace_mcp_path(workspace: pathlib.Path) -> pathlib.Path:
 
 
 def _mcp_probe_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
-    home = _home()
     return [
         workspace / ".mcp.json",
-        home / ".mcp.json",
-        workspace / ".claude.json",
-        home / ".claude.json",
+        _home() / ".claude.json",
+        *_claude_managed_paths(),
     ]
+
+
+def _claude_managed_paths() -> list[pathlib.Path]:
+    system = platform.system().lower()
+    if system == "darwin":
+        return [pathlib.Path("/Library/Application Support/ClaudeCode/managed-mcp.json")]
+    if system == "linux":
+        return [pathlib.Path("/etc/claude-code/managed-mcp.json")]
+    if system == "windows":
+        return [pathlib.Path(r"C:\Program Files\ClaudeCode\managed-mcp.json")]
+    return []
+
+
+def _workspace_key_matches(workspace: pathlib.Path, project_key: Any) -> bool:
+    raw = str(project_key or "").strip()
+    if not raw:
+        return False
+    if raw == str(workspace):
+        return True
+    try:
+        candidate = pathlib.Path(raw).expanduser().resolve()
+    except Exception:
+        return False
+    return str(candidate) == str(workspace)
+
+
+def _detect_claude_mcp_locations(workspace: pathlib.Path) -> list[dict[str, str]]:
+    home = _home()
+    found: list[dict[str, str]] = []
+
+    workspace_mcp = workspace / ".mcp.json"
+    if _contains_airg_mcp(_read_json_file_optional(workspace_mcp)):
+        found.append({"scope": "project", "path": str(workspace_mcp)})
+
+    claude_local = home / ".claude.json"
+    claude_payload = _read_json_file_optional(claude_local)
+    if _contains_airg_mcp_servers(claude_payload.get("mcpServers", {})):
+        found.append({"scope": "user", "path": str(claude_local)})
+
+    projects = claude_payload.get("projects", {})
+    if isinstance(projects, dict):
+        for key, value in projects.items():
+            if not _workspace_key_matches(workspace, key):
+                continue
+            if not isinstance(value, dict):
+                continue
+            if _contains_airg_mcp_servers(value.get("mcpServers", {})):
+                found.append({"scope": "local", "path": str(claude_local)})
+                break
+
+    for managed in _claude_managed_paths():
+        if _contains_airg_mcp(_read_json_file_optional(managed)):
+            found.append({"scope": "managed", "path": str(managed)})
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in found:
+        key = (str(item.get("scope", "")), str(item.get("path", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"scope": key[0], "path": key[1]})
+    return deduped
 
 
 def _backup_path_for(target: pathlib.Path) -> pathlib.Path:
@@ -354,13 +422,7 @@ def _restore_change(change: dict[str, Any]) -> None:
 
 
 def _mcp_present_for_claude(workspace: pathlib.Path) -> bool:
-    for path in _mcp_probe_paths(workspace):
-        try:
-            if _contains_airg_mcp(_read_json_file(path)):
-                return True
-        except Exception:
-            continue
-    return False
+    return bool(_detect_claude_mcp_locations(workspace))
 
 
 def _apply_claude(
@@ -375,9 +437,19 @@ def _apply_claude(
 
     changes: list[dict[str, Any]] = []
     preflight = {
-        "mcp_present": _mcp_present_for_claude(workspace),
+        "mcp_locations": _detect_claude_mcp_locations(workspace),
         "mcp_probe_paths": [str(p) for p in _mcp_probe_paths(workspace)],
     }
+    preflight["mcp_present"] = bool(preflight["mcp_locations"])
+    preflight["mcp_detected_scopes"] = list(
+        dict.fromkeys(
+            [
+                str(item.get("scope", "")).strip()
+                for item in preflight["mcp_locations"]
+                if isinstance(item, dict) and str(item.get("scope", "")).strip()
+            ]
+        )
+    )
 
     try:
         if not preflight["mcp_present"]:
@@ -401,6 +473,8 @@ def _apply_claude(
             changes.append(_write_with_backup(mcp_target, mcp_after))
             preflight["mcp_present"] = True
             preflight["mcp_auto_added"] = True
+            preflight["mcp_locations"] = [{"scope": "project", "path": str(mcp_target)}]
+            preflight["mcp_detected_scopes"] = ["project"]
 
         target = _settings_local_path(workspace)
         before = _read_json_file(target) if target.exists() else {}

@@ -1,4 +1,5 @@
 import json
+import platform
 import pathlib
 from typing import Any
 
@@ -32,10 +33,7 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
     return out
 
 
-def _contains_airg_mcp(payload: dict[str, Any]) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    servers = payload.get("mcpServers", {})
+def _contains_airg_mcp_servers(servers: Any) -> bool:
     if not isinstance(servers, dict):
         return False
     if "ai-runtime-guard" in servers:
@@ -48,6 +46,12 @@ def _contains_airg_mcp(payload: dict[str, Any]) -> bool:
         if "airg" in cmd or any("airg" in a for a in args):
             return True
     return False
+
+
+def _contains_airg_mcp(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return _contains_airg_mcp_servers(payload.get("mcpServers", {}))
 
 
 def _hook_is_active(effective: dict[str, Any]) -> bool:
@@ -164,14 +168,76 @@ def _cursor_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
     ]
 
 
-def _mcp_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
+def _claude_managed_paths() -> list[pathlib.Path]:
+    system = platform.system().lower()
+    if system == "darwin":
+        return [pathlib.Path("/Library/Application Support/ClaudeCode/managed-mcp.json")]
+    if system == "linux":
+        return [pathlib.Path("/etc/claude-code/managed-mcp.json")]
+    if system == "windows":
+        return [pathlib.Path(r"C:\Program Files\ClaudeCode\managed-mcp.json")]
+    return []
+
+
+def _workspace_key_matches(workspace: pathlib.Path, project_key: Any) -> bool:
+    raw = str(project_key or "").strip()
+    if not raw:
+        return False
+    if raw == str(workspace):
+        return True
+    try:
+        candidate = pathlib.Path(raw).expanduser().resolve()
+    except Exception:
+        return False
+    return str(candidate) == str(workspace)
+
+
+def _claude_mcp_probe_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
     home = _home()
     return [
         workspace / ".mcp.json",
-        home / ".mcp.json",
-        workspace / ".claude.json",
         home / ".claude.json",
+        *_claude_managed_paths(),
     ]
+
+
+def _detect_claude_mcp_locations(workspace: pathlib.Path) -> list[dict[str, str]]:
+    home = _home()
+    found: list[dict[str, str]] = []
+
+    project_mcp = workspace / ".mcp.json"
+    if _contains_airg_mcp(_read_json(project_mcp)):
+        found.append({"scope": "project", "path": str(project_mcp)})
+
+    claude_local = home / ".claude.json"
+    claude_payload = _read_json(claude_local)
+    if _contains_airg_mcp_servers(claude_payload.get("mcpServers", {})):
+        found.append({"scope": "user", "path": str(claude_local)})
+
+    projects = claude_payload.get("projects", {})
+    if isinstance(projects, dict):
+        for key, value in projects.items():
+            if not _workspace_key_matches(workspace, key):
+                continue
+            if not isinstance(value, dict):
+                continue
+            if _contains_airg_mcp_servers(value.get("mcpServers", {})):
+                found.append({"scope": "local", "path": str(claude_local)})
+                break
+
+    for managed in _claude_managed_paths():
+        if _contains_airg_mcp(_read_json(managed)):
+            found.append({"scope": "managed", "path": str(managed)})
+
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in found:
+        key = (str(item.get("scope", "")), str(item.get("path", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append({"scope": key[0], "path": key[1]})
+    return deduped
 
 
 def _build_claude_posture(profile: dict[str, Any]) -> dict[str, Any]:
@@ -180,8 +246,10 @@ def _build_claude_posture(profile: dict[str, Any]) -> dict[str, Any]:
     effective: dict[str, Any] = {}
     for p in settings_paths:
         effective = _deep_merge(effective, _read_json(p))
-    mcp_sources = _mcp_paths(workspace)
-    has_mcp = any(_contains_airg_mcp(_read_json(p)) for p in mcp_sources)
+    mcp_probe_paths = _claude_mcp_probe_paths(workspace)
+    mcp_locations = _detect_claude_mcp_locations(workspace)
+    mcp_scopes = list(dict.fromkeys([str(item.get("scope", "")) for item in mcp_locations if str(item.get("scope", ""))]))
+    has_mcp = bool(mcp_locations)
     native_denied = _native_tools_restricted(effective)
     hook_active = _hook_is_active(effective)
     sandbox_enabled, escape_closed = _sandbox_hardened(effective)
@@ -203,10 +271,12 @@ def _build_claude_posture(profile: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "rationale": rationale,
         "signals": signals,
+        "mcp_detected_scopes": mcp_scopes,
+        "mcp_detected_locations": mcp_locations,
         "missing_controls": _missing_controls_from_signals(signals, labels=CLAUDE_SIGNAL_LABELS),
         "recommended_actions": _claude_recommendations(signals),
-        "paths_checked": [str(p) for p in settings_paths + mcp_sources],
-        "existing_paths": [str(p) for p in settings_paths + mcp_sources if p.exists()],
+        "paths_checked": [str(p) for p in settings_paths + mcp_probe_paths],
+        "existing_paths": [str(p) for p in settings_paths + mcp_probe_paths if p.exists()],
     }
 
 
@@ -233,7 +303,7 @@ def _build_cursor_posture(profile: dict[str, Any]) -> dict[str, Any]:
 
 def _build_generic_posture(profile: dict[str, Any]) -> dict[str, Any]:
     workspace = _workspace_from_profile(profile)
-    paths = _mcp_paths(workspace)
+    paths = _claude_mcp_probe_paths(workspace)
     has_mcp = any(_contains_airg_mcp(_read_json(p)) for p in paths)
     status = "yellow" if has_mcp else "red"
     rationale = "AIRG MCP detected." if has_mcp else "No AIRG MCP server configuration detected."

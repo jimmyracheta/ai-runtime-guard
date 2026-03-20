@@ -27,10 +27,7 @@ class SetupWizardTests(unittest.TestCase):
         env = payload["mcpServers"]["ai-runtime-guard"]["env"]
         self.assertEqual(env["AIRG_AGENT_ID"], "agent-claude")
         self.assertEqual(env["AIRG_WORKSPACE"], "/tmp/ws")
-        self.assertEqual(env["AIRG_POLICY_PATH"], "/tmp/policy.json")
-        self.assertEqual(env["AIRG_APPROVAL_DB_PATH"], "/tmp/approvals.db")
-        self.assertEqual(env["AIRG_APPROVAL_HMAC_KEY_PATH"], "/tmp/approvals.db.hmac.key")
-        self.assertEqual(env["AIRG_LOG_PATH"], "/tmp/activity.log")
+        self.assertEqual(set(env.keys()), {"AIRG_AGENT_ID", "AIRG_WORKSPACE"})
 
     def test_secure_permissions_creates_non_empty_hmac_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

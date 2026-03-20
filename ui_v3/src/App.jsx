@@ -1858,7 +1858,7 @@ export default function App() {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr 130px 130px 80px 80px',
+                    gridTemplateColumns: 'minmax(0, 1fr) 140px 140px 110px 96px',
                     gap: 12,
                     padding: '6px 16px',
                     background: '#fafafa',
@@ -1886,7 +1886,7 @@ export default function App() {
                     key={`history-${item.command}-${item.requestedAt}-${idx}`}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '1fr 130px 130px 80px 80px',
+                      gridTemplateColumns: 'minmax(0, 1fr) 140px 140px 110px 96px',
                       gap: 12,
                       padding: '10px 16px',
                       borderBottom: idx < historyItems.length - 1 ? '1px solid #f3f4f6' : 'none',
@@ -1896,7 +1896,7 @@ export default function App() {
                     onMouseEnter={(e) => { e.currentTarget.style.background = '#fafafa' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'white' }}
                   >
-                    <div>
+                    <div style={{ minWidth: 0 }}>
                       <div
                         style={{
                           fontFamily: 'monospace',
@@ -5322,8 +5322,21 @@ export default function App() {
       return 'Posture coverage depends on this client’s support for hooks, permissions, and sandbox controls.'
     })()
 
+    const mcpDetectedScopes = Array.isArray(selectedPosture?.mcp_detected_scopes)
+      ? selectedPosture.mcp_detected_scopes.map((scope) => String(scope || '').trim()).filter(Boolean)
+      : []
+    const mcpScopeLabels = {
+      project: 'project',
+      local: 'local',
+      user: 'user',
+      managed: 'managed',
+    }
+    const mcpScopeSummary = mcpDetectedScopes.length
+      ? `Configured in ${mcpDetectedScopes.map((scope) => mcpScopeLabels[scope] || scope).join(', ')} scope${mcpDetectedScopes.length === 1 ? '' : 's'}`
+      : 'Configured'
+
     const signalRows = [
-      { key: 'airg_mcp_present', label: 'AIRG MCP configured', failText: 'Not found in settings.json' },
+      { key: 'airg_mcp_present', label: 'AIRG MCP configured', failText: 'Not found in project/local/user/managed MCP config scopes' },
       { key: 'hook_active', label: 'airg-hook PreToolUse registered', failText: 'No hook entry in settings.local.json' },
       { key: 'native_tools_restricted', label: 'Native tools restricted', failText: 'Bash, Write, Edit, MultiEdit not denied' },
       { key: 'sandbox_enabled', label: 'Sandbox enabled', failText: 'sandbox: false in settings' },
@@ -5333,7 +5346,7 @@ export default function App() {
       const rawValue = selectedSignals?.[row.key]
       const state = notSupported ? 'na' : (rawValue ? 'pass' : 'fail')
       const detail = state === 'pass'
-        ? 'Configured'
+        ? (row.key === 'airg_mcp_present' ? mcpScopeSummary : 'Configured')
         : state === 'na'
           ? 'Not supported by this client'
           : row.failText

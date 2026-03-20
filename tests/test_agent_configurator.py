@@ -2,6 +2,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import agent_configurator
 
@@ -78,6 +79,8 @@ class AgentConfiguratorTests(unittest.TestCase):
         self.assertTrue(workspace_mcp.exists())
         mcp_payload = json.loads(workspace_mcp.read_text())
         self.assertIn("ai-runtime-guard", mcp_payload.get("mcpServers", {}))
+        mcp_env = mcp_payload["mcpServers"]["ai-runtime-guard"].get("env", {})
+        self.assertEqual(set(mcp_env.keys()), {"AIRG_AGENT_ID", "AIRG_WORKSPACE"})
 
         undone = agent_configurator.undo_hardening(self.paths, profile)
         self.assertTrue(undone.get("ok"), msg=undone)
@@ -110,10 +113,51 @@ class AgentConfiguratorTests(unittest.TestCase):
         merged = json.loads(cursor_mcp.read_text())
         self.assertIn("existing", merged.get("mcpServers", {}))
         self.assertIn("ai-runtime-guard", merged.get("mcpServers", {}))
+        cursor_env = merged["mcpServers"]["ai-runtime-guard"].get("env", {})
+        self.assertEqual(set(cursor_env.keys()), {"AIRG_AGENT_ID", "AIRG_WORKSPACE"})
 
         undone = agent_configurator.undo_hardening(self.paths, profile)
         self.assertTrue(undone.get("ok"), msg=undone)
         self.assertEqual(json.loads(cursor_mcp.read_text()), original)
+
+    def test_claude_apply_accepts_local_scope_mcp_in_home_claude_json(self) -> None:
+        profile = {
+            "profile_id": "p-claude-local",
+            "agent_type": "claude_code",
+            "workspace": str(self.workspace),
+            "agent_id": "claude-code-local",
+        }
+        settings_local = self.workspace / ".claude" / "settings.local.json"
+        settings_local.parent.mkdir(parents=True, exist_ok=True)
+        settings_local.write_text("{}\n")
+
+        home_dir = self.base / "home"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        claude_json = home_dir / ".claude.json"
+        claude_json.write_text(
+            json.dumps(
+                {
+                    "projects": {
+                        str(self.workspace): {
+                            "mcpServers": {
+                                "ai-runtime-guard": {
+                                    "command": "/tmp/airg-server",
+                                    "args": [],
+                                }
+                            }
+                        }
+                    }
+                },
+                indent=2,
+            )
+        )
+
+        with patch("agent_configurator.pathlib.Path.home", return_value=home_dir):
+            applied = agent_configurator.apply_hardening(self.paths, profile, auto_add_mcp=False)
+        self.assertTrue(applied.get("ok"), msg=applied)
+        self.assertFalse(applied.get("requires_mcp"))
+        self.assertIn("local", applied.get("preflight", {}).get("mcp_detected_scopes", []))
+        self.assertFalse((self.workspace / ".mcp.json").exists())
 
 
 if __name__ == "__main__":

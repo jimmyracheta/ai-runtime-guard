@@ -110,15 +110,10 @@ def _validate_profile(profile: dict[str, Any], *, existing: list[dict[str, Any]]
     return len(errors) == 0, errors, normalized
 
 
-def _shared_env(paths: dict[str, pathlib.Path], workspace: str, agent_id: str) -> dict[str, str]:
+def _shared_env(_paths: dict[str, pathlib.Path], workspace: str, agent_id: str) -> dict[str, str]:
     return {
         "AIRG_AGENT_ID": agent_id,
         "AIRG_WORKSPACE": workspace,
-        "AIRG_POLICY_PATH": str(paths["policy_path"]),
-        "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
-        "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
-        "AIRG_LOG_PATH": str(paths["log_path"]),
-        "AIRG_REPORTS_DB_PATH": str(paths["reports_db_path"]),
     }
 
 
@@ -238,13 +233,8 @@ def list_profiles(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
         "agent_types": AGENT_TYPES,
         "registry_path": str(_registry_path(paths)),
         "configs_dir": str(_registry_dir(paths)),
-        "shared_paths": {
-            "AIRG_POLICY_PATH": str(paths["policy_path"]),
-            "AIRG_APPROVAL_DB_PATH": str(paths["approval_db_path"]),
-            "AIRG_APPROVAL_HMAC_KEY_PATH": str(paths["approval_hmac_key_path"]),
-            "AIRG_LOG_PATH": str(paths["log_path"]),
-            "AIRG_REPORTS_DB_PATH": str(paths["reports_db_path"]),
-        },
+        "mcp_env_required": ["AIRG_AGENT_ID", "AIRG_WORKSPACE"],
+        "mcp_env_note": "Runtime state paths are global defaults and do not need per-agent MCP env entries.",
     }
 
 
