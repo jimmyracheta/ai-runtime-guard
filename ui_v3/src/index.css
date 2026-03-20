@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 :root {
-  --bg-app: #f8f9fa;
+  --bg-app: #eceef1;
   --bg-sidebar: #0f1117;
   --bg-sidebar-hover: #171b24;
   --bg-sidebar-active: #1f2430;
@@ -156,6 +156,17 @@
     box-shadow: var(--shadow-card);
     padding: 16px;
     margin-bottom: 16px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 10px 14px;
   }
 
   .section-title {

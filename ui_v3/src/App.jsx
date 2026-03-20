@@ -20,7 +20,7 @@ const POLICY_TABS = [
 ]
 const REPORT_TABS = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'script_sentinel', label: 'Script Sentinel' },
+  { id: 'sentinel', label: 'Script Sentinel' },
   { id: 'log', label: 'Log' },
 ]
 const SETTINGS_TABS = [
@@ -238,6 +238,15 @@ function relativeTime(iso) {
   }
 }
 
+function formatExpiry(seconds) {
+  const total = Number(seconds || 0)
+  if (total <= 0) return 'Expired'
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
+  if (mins > 0) return `${mins}m ${secs}s`
+  return `${secs}s`
+}
+
 function ensureScriptSentinelPolicy(policy) {
   const next = deepClone(policy || {})
   const current = isPlainObject(next.script_sentinel) ? next.script_sentinel : {}
@@ -310,6 +319,7 @@ export default function App() {
   const [settingsConfigsDir, setSettingsConfigsDir] = useState('')
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsError, setSettingsError] = useState('')
+  const [selectedSettingsProfileId, setSelectedSettingsProfileId] = useState('')
   const [settingsSavedProfiles, setSettingsSavedProfiles] = useState({})
   const [settingsNeedsReconfigure, setSettingsNeedsReconfigure] = useState({})
   const [agentPosture, setAgentPosture] = useState({ profiles: [], discovered_unregistered: [], totals: { green: 0, yellow: 0, red: 0 } })
@@ -320,8 +330,8 @@ export default function App() {
   const [scriptSentinelError, setScriptSentinelError] = useState('')
   const [scriptSentinelActionLoading, setScriptSentinelActionLoading] = useState({})
   const [agentConfigActionLoading, setAgentConfigActionLoading] = useState({})
-  const [advancedBackupOpen, setAdvancedBackupOpen] = useState(true)
-  const [advancedReportsOpen, setAdvancedReportsOpen] = useState(true)
+  const [advancedBackupOpen, setAdvancedBackupOpen] = useState(false)
+  const [advancedReportsOpen, setAdvancedReportsOpen] = useState(false)
   const [reportsFilters, setReportsFilters] = useState({
     agent_id: '',
     agent_session_id: '',
@@ -352,7 +362,16 @@ export default function App() {
   const pollRef = useRef(null)
   const [overrideAgentId, setOverrideAgentId] = useState('')
   const [overrideExpanded, setOverrideExpanded] = useState({})
-  const [overrideListInputs, setOverrideListInputs] = useState({})
+  const [overrideDiffModal, setOverrideDiffModal] = useState({
+    open: false,
+    agentId: '',
+    lines: [],
+  })
+  const [overrideBaselineModal, setOverrideBaselineModal] = useState({
+    open: false,
+    sectionLabel: '',
+    baselineData: {},
+  })
   const [navOpen, setNavOpen] = useState({
     approvals: true,
     policy: true,
@@ -419,6 +438,17 @@ export default function App() {
       setOverrideAgentId(knownAgentIds[0] || '')
     }
   }, [knownAgentIds, overrideAgentId])
+
+  useEffect(() => {
+    setSelectedSettingsProfileId((prev) => {
+      const ids = (agentProfiles || [])
+        .map((profile) => String(profile?.profile_id || '').trim())
+        .filter(Boolean)
+      if (!ids.length) return ''
+      if (prev && ids.includes(prev)) return prev
+      return ids[0]
+    })
+  }, [agentProfiles])
 
   useEffect(() => {
     return () => {
@@ -834,7 +864,7 @@ export default function App() {
   }, [activeRail, activeSettingsTab])
 
   useEffect(() => {
-    if (activeRail !== 'reports' || reportsTab !== 'script_sentinel') return
+    if (activeRail !== 'reports' || reportsTab !== 'sentinel') return
     fetchScriptSentinel()
   }, [activeRail, reportsTab])
 
@@ -1270,8 +1300,15 @@ export default function App() {
       setMessage(payload.error || `Approve failed (${res.status})`)
       return
     }
-    setRemoving((r) => ({ ...r, [token]: true }))
-    setTimeout(() => setPendingApprovals((prev) => prev.filter((p) => p.token !== token)), 180)
+    setRemoving((r) => ({ ...r, [token]: 'approved' }))
+    setTimeout(() => {
+      setPendingApprovals((prev) => prev.filter((p) => p.token !== token))
+      setRemoving((r) => {
+        const next = { ...r }
+        delete next[token]
+        return next
+      })
+    }, 600)
     fetchApprovalsHistory()
   }
 
@@ -1284,8 +1321,15 @@ export default function App() {
       setMessage(payload.error || `Deny failed (${res.status})`)
       return
     }
-    setRemoving((r) => ({ ...r, [token]: true }))
-    setTimeout(() => setPendingApprovals((prev) => prev.filter((p) => p.token !== token)), 180)
+    setRemoving((r) => ({ ...r, [token]: 'denied' }))
+    setTimeout(() => {
+      setPendingApprovals((prev) => prev.filter((p) => p.token !== token))
+      setRemoving((r) => {
+        const next = { ...r }
+        delete next[token]
+        return next
+      })
+    }, 600)
     fetchApprovalsHistory()
   }
 
@@ -1411,223 +1455,808 @@ export default function App() {
   }
 
   function ApprovalsPanel() {
-    const truncateCommand = (command, max = 110) => {
-      if (!command) return ''
-      if (command.length <= max) return command
-      return `${command.slice(0, max - 1)}…`
+    const activeTab = activeApprovalsTab === 'history' ? 'history' : 'pending'
+    const pendingCount = pendingApprovals.length
+
+    const handleRefresh = () => {
+      fetchApprovals()
+      fetchApprovalsHistory()
     }
 
-    if (activeApprovalsTab === 'history') {
-      return (
-        <div className="bg-white rounded-[10px] border border-slate-200 p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="text-slate-700 font-medium">Recent approval decisions</div>
-            <button onClick={fetchApprovalsHistory} className="btn btn-ghost">Refresh</button>
-          </div>
-          {approvalHistoryError && (
-            <div className="mb-3 text-sm text-red-600">{approvalHistoryError}</div>
-          )}
-          {!approvalHistory.length ? (
-            <div className="text-sm text-slate-500 py-6 text-center">No approval history yet.</div>
-          ) : (
-            <div className="overflow-auto border border-slate-200 rounded-[8px]">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-slate-700">
-                  <tr>
-                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Command</th>
-                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Requested</th>
-                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Decision Time</th>
-                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Approver</th>
-                    <th className="text-left font-semibold px-3 py-2 border-b border-slate-200">Decision</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {approvalHistory.map((item) => {
-                    const decision = String(item?.decision || '').toLowerCase()
-                    const decisionClass = decision === 'approved'
-                      ? 'text-green-700 bg-green-50 border-green-200'
-                      : decision === 'denied'
-                        ? 'text-red-700 bg-red-50 border-red-200'
-                        : 'text-slate-700 bg-slate-100 border-slate-200'
-                    return (
-                      <tr key={`${item.token}-${item.resolved_at}-${item.decision}`} className="odd:bg-white even:bg-slate-50/30">
-                        <td className="px-3 py-2 border-b border-slate-100 align-top">
-                          <div className="font-mono text-xs text-slate-700 break-all">{truncateCommand(item.command, 140)}</div>
-                          <div className="text-[11px] text-slate-500 mt-1">agent <span className="font-mono">{item.agent_id || 'Unknown'}</span></div>
-                        </td>
-                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600 whitespace-nowrap">{item.requested_at || 'n/a'}</td>
-                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-600 whitespace-nowrap">{item.resolved_at || 'n/a'}</td>
-                        <td className="px-3 py-2 border-b border-slate-100 align-top text-xs text-slate-700">{item.approver || 'User'}</td>
-                        <td className="px-3 py-2 border-b border-slate-100 align-top">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded border text-xs font-medium ${decisionClass}`}>
-                            {decision || 'unknown'}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )
-    }
+    const tabs = [
+      { key: 'pending', label: 'Pending', count: pendingCount },
+      { key: 'history', label: 'History', count: null },
+    ]
 
-    if (!pendingApprovals.length) {
+    function ExpandSection({ label, open, onToggle, children }) {
       return (
-        <div className="bg-white rounded-[10px] border border-slate-200 p-8 text-center shadow-sm">
-          <div className="mb-2 inline-flex items-center justify-center">
-            <UiIcon kind="info" className="w-8 h-8 text-slate-500" />
-          </div>
-          <div className="text-green-700 font-semibold">No pending approvals</div>
-        </div>
-      )
-    }
-    return (
-      <div className="space-y-3">
-        <div className="text-slate-700 font-medium">{pendingApprovals.length} command(s) awaiting approval</div>
-        {pendingApprovals.map((item) => {
-          const urgency = item.seconds_remaining < 60
-          return (
-            <div
-              key={item.token}
-              className={`bg-white border-l-4 ${urgency ? 'border-red-400' : 'border-amber-400'} rounded-[10px] border border-slate-200 p-4 shadow-sm transition-all duration-200 ${removing[item.token] ? 'opacity-0 -translate-y-1' : 'opacity-100 translate-y-0'}`}
+        <>
+          <div
+            onClick={onToggle}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              fontSize: 11,
+              color: '#6b7280',
+              cursor: 'pointer',
+              padding: '0 16px 8px',
+              userSelect: 'none',
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#4f46e5' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = '#6b7280' }}
+          >
+            <svg
+              style={{
+                width: 10,
+                height: 10,
+                flexShrink: 0,
+                transform: open ? 'rotate(90deg)' : 'none',
+                transition: 'transform 0.15s',
+              }}
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
             >
-              <div className="text-sm font-semibold text-slate-800">
-                Agent <span className="font-mono">{item.agent_id || 'Unknown'}</span> needs approval for the following command:
-              </div>
-              <div className="font-mono text-sm text-slate-700 mt-1 break-all">{truncateCommand(item.command)}</div>
-              <div className="text-xs text-slate-500 mt-1">Requested {relativeTime(item.requested_at)} • session <span className="font-mono">{item.session_id || 'n/a'}</span></div>
-              <div className={`text-xs mt-1 ${urgency ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>Expires in {item.seconds_remaining}s</div>
-              <details className="mt-2 text-sm">
-                <summary className="cursor-pointer text-slate-600">Full command details</summary>
-                <pre className="mt-2 text-xs font-mono bg-slate-50 rounded p-2 border border-slate-200 overflow-auto whitespace-pre-wrap break-all">{item.command}</pre>
-              </details>
-              {item.affected_paths?.length > 0 && (
-                <details className="mt-2 text-sm">
-                  <summary className="cursor-pointer text-slate-600">Affected paths ({item.affected_paths.length})</summary>
-                  <ul className="mt-2 text-xs font-mono bg-slate-50 rounded p-2 border border-slate-200 max-h-32 overflow-auto">
-                    {item.affected_paths.map((p) => <li key={p}>{p}</li>)}
-                  </ul>
-                </details>
-              )}
-              <div className="mt-3 flex gap-2">
-                <button onClick={() => approve(item.token, item.command)} className="px-3 py-1.5 rounded-[10px] bg-green-600 text-white text-sm font-medium">Approve</button>
-                <button onClick={() => deny(item.token)} className="px-3 py-1.5 rounded-[10px] border border-red-300 text-red-700 text-sm">Deny</button>
-              </div>
+              <path d="M3 2l3 3-3 3" />
+            </svg>
+            {label}
+          </div>
+          {open && children}
+        </>
+      )
+    }
+
+    function ApprovalCard({ approval, onApprove, onDeny, removalState }) {
+      const [cmdOpen, setCmdOpen] = useState(false)
+      const [pathsOpen, setPathsOpen] = useState(false)
+      const affectedPaths = Array.isArray(approval?.affected_paths) ? approval.affected_paths : []
+      const sessionId = String(approval?.session_id || '')
+      const borderLeftColor = removalState === 'approved'
+        ? '#16a34a'
+        : removalState === 'denied'
+          ? '#dc2626'
+          : '#f59e0b'
+
+      return (
+        <div
+          style={{
+            background: 'white',
+            border: '1px solid #e5e7eb',
+            borderLeft: `3px solid ${borderLeftColor}`,
+            borderRadius: 8,
+            marginBottom: 10,
+            overflow: 'hidden',
+            opacity: removalState ? 0.5 : 1,
+            transition: 'all 0.2s',
+          }}
+        >
+          <div style={{ padding: '14px 16px 0' }}>
+            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 6 }}>
+              <strong style={{ color: '#374151', fontWeight: 600 }}>
+                {approval?.agent_id || 'Unknown'}
+              </strong>{' '}
+              needs approval for:
             </div>
-          )
-        })}
+
+            <div
+              style={{
+                fontFamily: 'monospace',
+                fontSize: 13,
+                fontWeight: 500,
+                color: '#111827',
+                background: '#fafafa',
+                border: '1px solid #f0f0f0',
+                borderRadius: 5,
+                padding: '8px 12px',
+                marginBottom: 10,
+                wordBreak: 'break-all',
+                lineHeight: 1.5,
+              }}
+            >
+              {approval?.command || ''}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                fontSize: 11,
+                color: '#9ca3af',
+                marginBottom: 10,
+              }}
+            >
+              <span>Requested {relativeTime(approval?.requested_at || '')}</span>
+              <span>·</span>
+              <span>
+                Session{' '}
+                <code
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: 10,
+                    background: '#f3f4f6',
+                    padding: '1px 5px',
+                    borderRadius: 3,
+                    color: '#6b7280',
+                  }}
+                >
+                  {sessionId ? sessionId.slice(0, 14) : 'n/a'}
+                </code>
+              </span>
+              <span>·</span>
+              <span style={{ color: '#d97706', fontWeight: 500 }}>
+                Expires in {formatExpiry(approval?.seconds_remaining)}
+              </span>
+            </div>
+          </div>
+
+          <ExpandSection
+            label="Full command details"
+            open={cmdOpen}
+            onToggle={() => setCmdOpen((v) => !v)}
+          >
+            <div
+              style={{
+                padding: '10px 16px',
+                background: '#fafafa',
+                borderTop: '1px solid #f3f4f6',
+                fontSize: 12,
+              }}
+            >
+              {[
+                ['Command', approval?.command || ''],
+                ['Normalized', approval?.normalized_command || approval?.command || ''],
+                ['Matched rule', approval?.matched_rule || '-'],
+                ['Token', approval?.token || '-'],
+              ].map(([label, val]) => (
+                <div key={label} style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                      color: '#9ca3af',
+                      width: 90,
+                      flexShrink: 0,
+                      paddingTop: 2,
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: '#374151',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {val}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </ExpandSection>
+
+          <ExpandSection
+            label={`Affected paths (${affectedPaths.length})`}
+            open={pathsOpen}
+            onToggle={() => setPathsOpen((v) => !v)}
+          >
+            <div
+              style={{
+                padding: '10px 16px',
+                background: '#fafafa',
+                borderTop: '1px solid #f3f4f6',
+              }}
+            >
+              {affectedPaths.length ? affectedPaths.map((p, i) => (
+                <div
+                  key={`${approval?.token || 'path'}-${i}`}
+                  style={{ fontFamily: 'monospace', fontSize: 11, color: '#374151', marginBottom: 2 }}
+                >
+                  {p}
+                </div>
+              )) : (
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>No affected paths reported.</div>
+              )}
+            </div>
+          </ExpandSection>
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              padding: '12px 16px',
+              borderTop: '1px solid #f3f4f6',
+            }}
+          >
+            <button
+              onClick={() => onApprove(approval?.token, approval?.command)}
+              style={{
+                background: '#4f46e5',
+                color: 'white',
+                border: 'none',
+                borderRadius: 5,
+                padding: '7px 20px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#4338ca' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = '#4f46e5' }}
+            >
+              Approve
+            </button>
+
+            <button
+              onClick={() => onDeny(approval?.token)}
+              style={{
+                background: 'white',
+                color: '#dc2626',
+                border: '1px solid #fecaca',
+                borderRadius: 5,
+                padding: '7px 16px',
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#fff5f5' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'white' }}
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    const historyItems = approvalHistory.map((item) => {
+      const decision = String(item?.decision || '').toLowerCase()
+      return {
+        command: String(item?.command || item?.normalized_command || '').trim(),
+        agentId: String(item?.agent_id || 'Unknown'),
+        requestedAt: String(item?.requested_at || ''),
+        decidedAt: String(item?.resolved_at || item?.decided_at || ''),
+        approver: String(item?.approver || 'User'),
+        decision: decision === 'approved' ? 'approved' : 'denied',
+      }
+    })
+
+    return (
+      <div>
+        <div className="topbar">
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#0f0f0f' }}>
+              {activeTab === 'pending' ? 'Approvals · Pending' : 'Approvals · History'}
+            </div>
+            <div style={{ fontSize: 10, color: '#9ca3af', fontFamily: 'monospace', marginTop: 1 }}>
+              hash {String(policyHash || '').slice(0, 12)}
+            </div>
+          </div>
+          <button className="btn btn-ghost" onClick={handleRefresh}>Refresh</button>
+        </div>
+
+        <div
+          style={{
+            background: 'white',
+            borderBottom: '1px solid #e5e7eb',
+            padding: '0 20px',
+            display: 'flex',
+            gap: 0,
+            flexShrink: 0,
+            borderLeft: '1px solid #e5e7eb',
+            borderRight: '1px solid #e5e7eb',
+            borderTop: 'none',
+            borderBottomLeftRadius: 8,
+            borderBottomRightRadius: 8,
+            marginTop: -1,
+            marginBottom: 12,
+          }}
+        >
+          {tabs.map((tab) => (
+            <div
+              key={tab.key}
+              onClick={() => setActiveApprovalsTab(tab.key)}
+              style={{
+                fontSize: 12,
+                fontWeight: 500,
+                padding: '10px 16px',
+                cursor: 'pointer',
+                color: activeTab === tab.key ? '#4f46e5' : '#6b7280',
+                borderBottom: activeTab === tab.key ? '2px solid #4f46e5' : '2px solid transparent',
+                transition: 'all 0.15s',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {tab.label}
+              {tab.count !== null && (
+                <span
+                  style={{
+                    background: tab.count > 0 ? '#fee2e2' : '#f3f4f6',
+                    color: tab.count > 0 ? '#dc2626' : '#9ca3af',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: '1px 6px',
+                    borderRadius: 10,
+                  }}
+                >
+                  {tab.count}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {activeTab === 'pending' && (
+          <>
+            {!pendingApprovals.length ? (
+              <div
+                style={{
+                  background: 'white',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 8,
+                  padding: '48px 20px',
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
+                  No pending approvals
+                </div>
+                <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                  Agents will appear here when they request confirmation for a command
+                </div>
+              </div>
+            ) : (
+              <div>
+                {pendingApprovals.map((approval) => (
+                  <ApprovalCard
+                    key={approval.token}
+                    approval={approval}
+                    onApprove={approve}
+                    onDeny={deny}
+                    removalState={removing[approval.token]}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'history' && (
+          <div
+            style={{
+              background: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              overflow: 'hidden',
+            }}
+          >
+            {approvalHistoryError && (
+              <div style={{ padding: '10px 16px', fontSize: 12, color: '#dc2626', borderBottom: '1px solid #f0f0f0' }}>
+                {approvalHistoryError}
+              </div>
+            )}
+
+            {!historyItems.length ? (
+              <div style={{ padding: '36px 16px', textAlign: 'center', fontSize: 12, color: '#9ca3af' }}>
+                No approval history yet.
+              </div>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 130px 130px 80px 80px',
+                    gap: 12,
+                    padding: '6px 16px',
+                    background: '#fafafa',
+                    borderBottom: '1px solid #f0f0f0',
+                  }}
+                >
+                  {['Command', 'Requested', 'Decision time', 'Approver', 'Decision'].map((header) => (
+                    <div
+                      key={header}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                        color: '#9ca3af',
+                      }}
+                    >
+                      {header}
+                    </div>
+                  ))}
+                </div>
+
+                {historyItems.map((item, idx) => (
+                  <div
+                    key={`history-${item.command}-${item.requestedAt}-${idx}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 130px 130px 80px 80px',
+                      gap: 12,
+                      padding: '10px 16px',
+                      borderBottom: idx < historyItems.length - 1 ? '1px solid #f3f4f6' : 'none',
+                      alignItems: 'start',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#fafafa' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'white' }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                          color: '#374151',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                        title={item.command}
+                      >
+                        {item.command || '-'}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                        {item.agentId || 'Unknown'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>
+                        {item.requestedAt ? relativeTime(item.requestedAt) : 'n/a'}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, fontFamily: 'monospace' }}>
+                        {item.requestedAt || 'n/a'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 11, color: '#6b7280' }}>
+                        {item.decidedAt ? relativeTime(item.decidedAt) : 'n/a'}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, fontFamily: 'monospace' }}>
+                        {item.decidedAt || 'n/a'}
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 12, color: '#374151' }}>
+                      {item.approver === 'human-operator' ? 'User' : item.approver}
+                    </div>
+
+                    <div>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: '2px 8px',
+                          borderRadius: 10,
+                          background: item.decision === 'approved' ? '#dcfce7' : '#fee2e2',
+                          color: item.decision === 'approved' ? '#15803d' : '#dc2626',
+                        }}
+                      >
+                        {item.decision === 'approved' ? 'Approved' : 'Denied'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
       </div>
     )
   }
 
   function ScriptSentinelPanel() {
     const sentinelArtifacts = scriptSentinelData?.artifacts?.items || []
-    const sentinelSummary = scriptSentinelData?.summary || null
+    const sentinelSummary = scriptSentinelData?.summary || {}
+
+    const stats = [
+      { label: 'Flagged', value: Number(sentinelSummary.flagged_artifacts || 0), color: '#d97706' },
+      { label: 'Checks (24h)', value: Number(sentinelSummary.total_checks || 0), color: '#111827' },
+      { label: 'Blocked', value: Number(sentinelSummary.blocked || 0), color: '#dc2626' },
+      { label: 'Needs Approval', value: Number(sentinelSummary.requires_confirmation || 0), color: '#111827' },
+      { label: 'Trusted', value: Number(sentinelSummary.trusted_allowances || 0), color: '#15803d' },
+      { label: 'Dismissed', value: Number(sentinelSummary.one_time_allowances || 0), color: '#111827' },
+    ]
+
+    const hasExecContext = (signatures = []) => signatures.some((sig) => {
+      if (sig?.match_context === 'exec_context') return true
+      if (sig?.enforceable === true) return true
+      if (sig?.type === 'policy_command' && sig?.enforceable === undefined && !sig?.match_context) return true
+      return false
+    })
+
+    const normalizeSignatureLabel = (sig) => String(sig?.pattern || sig?.normalized_pattern || '').trim()
+
+    function HashCell({ hash }) {
+      const [copied, setCopied] = useState(false)
+
+      const handleClick = async () => {
+        try {
+          await navigator.clipboard?.writeText(hash)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        } catch {
+          // noop: clipboard can fail in restricted contexts
+        }
+      }
+
+      return (
+        <div
+          title={hash}
+          onClick={handleClick}
+          style={{
+            fontFamily: 'monospace',
+            fontSize: 11,
+            color: copied ? '#15803d' : '#6b7280',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            transition: 'color 0.15s',
+            userSelect: 'none',
+          }}
+          onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = '#4f46e5' }}
+          onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = '#6b7280' }}
+        >
+          {copied ? 'Copied!' : `${hash.slice(0, 12)}…`}
+        </div>
+      )
+    }
+
     return (
-      <div className="bg-white border border-slate-200 rounded-[10px] p-4 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
+      <div>
+        <div className="topbar">
           <div>
-            <div className="text-sm font-semibold text-slate-800">Script Sentinel</div>
-            <div className="text-xs text-slate-500">Policy-intent continuity for script-mediated command execution.</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#0f0f0f' }}>
+              Reports · Script Sentinel
+            </div>
+            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>
+              Policy-intent continuity for script-mediated command execution
+            </div>
           </div>
-          <button
-            onClick={fetchScriptSentinel}
-            className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-xs bg-white hover:bg-slate-50"
-            disabled={scriptSentinelLoading}
-          >
+          <button className="btn btn-ghost" onClick={fetchScriptSentinel}>
             {scriptSentinelLoading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
 
-        {sentinelSummary && (
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3 text-xs">
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Flagged: <span className="font-semibold">{sentinelSummary.flagged_artifacts || 0}</span></div>
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Checks(24h): <span className="font-semibold">{sentinelSummary.total_checks || 0}</span></div>
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Blocked: <span className="font-semibold">{sentinelSummary.blocked || 0}</span></div>
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Needs Approval: <span className="font-semibold">{sentinelSummary.requires_confirmation || 0}</span></div>
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Trusted: <span className="font-semibold">{sentinelSummary.trusted_allowances || 0}</span></div>
-            <div className="border border-slate-200 rounded px-2 py-1 bg-slate-50">Dismissed Once: <span className="font-semibold">{sentinelSummary.one_time_allowances || 0}</span></div>
-          </div>
-        )}
-
-        {scriptSentinelError && <div className="text-sm text-red-600 mb-2">{scriptSentinelError}</div>}
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-200">
-                <th className="py-2 pr-2">Path</th>
-                <th className="py-2 px-2">Hash</th>
-                <th className="py-2 px-2">Execution Context</th>
-                <th className="py-2 px-2">Matched Signatures</th>
-                <th className="py-2 px-2">Last Seen</th>
-                <th className="py-2 px-2 text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sentinelArtifacts.map((item) => {
-                const hash = String(item.content_hash || '')
-                const onceKey = `once:${hash}`
-                const trustKey = `persistent:${hash}`
-                const signatures = Array.isArray(item.matched_signatures) ? item.matched_signatures : []
-                const hasExecContext = signatures.some((sig) => {
-                  if (sig?.match_context === 'exec_context') return true
-                  if (sig?.enforceable === true) return true
-                  if (sig?.type === 'policy_command' && sig?.enforceable === undefined && !sig?.match_context) return true
-                  return false
-                })
-                const signaturePreview = signatures
-                  .map((sig) => {
-                    const base = String(sig?.pattern || sig?.normalized_pattern || '')
-                    const ctx = String(sig?.match_context || '')
-                    if (!ctx) return base
-                    return `${base} [${ctx}]`
-                  })
-                  .filter(Boolean)
-                  .slice(0, 4)
-                  .join(', ')
-                return (
-                  <tr key={`${item.path}:${hash}`} className="border-b border-slate-100">
-                    <td className="py-2 pr-2 font-mono break-all">{item.path}</td>
-                    <td className="py-2 px-2 font-mono break-all">{hash}</td>
-                    <td className="py-2 px-2">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${hasExecContext ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-slate-50 border-slate-300 text-slate-600'}`}>
-                        {hasExecContext ? 'Yes' : 'No'}
-                      </span>
-                    </td>
-                    <td className="py-2 px-2 text-slate-600">{signaturePreview || '-'}</td>
-                    <td className="py-2 px-2 text-slate-600">{relativeTime(item.path_last_seen_ts || item.last_seen_ts || '')}</td>
-                    <td className="py-2 px-2">
-                      <div className="flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => scriptSentinelAllowance(hash, 'once')}
-                          className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-50"
-                          disabled={Boolean(scriptSentinelActionLoading[onceKey])}
-                        >
-                          Dismiss Once
-                        </button>
-                        <button
-                          onClick={() => scriptSentinelAllowance(hash, 'persistent')}
-                          className="px-2 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50 disabled:opacity-50"
-                          disabled={Boolean(scriptSentinelActionLoading[trustKey])}
-                        >
-                          Trust Artifact
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+            gap: 8,
+            marginTop: 12,
+            marginBottom: 16,
+          }}
+        >
+          {stats.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                background: 'white',
+                border: '1px solid #e5e7eb',
+                borderRadius: 7,
+                padding: '10px 14px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: '#9ca3af',
+                  marginBottom: 5,
+                }}
+              >
+                {item.label}
+              </div>
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 700,
+                  color: item.color,
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1,
+                }}
+              >
+                {item.value}
+              </div>
+            </div>
+          ))}
         </div>
 
-        {!sentinelArtifacts.length && !scriptSentinelLoading && (
-          <div className="text-xs text-slate-500 mt-2">No flagged script artifacts recorded yet.</div>
+        {scriptSentinelError && (
+          <div style={{ marginBottom: 12, fontSize: 12, color: '#dc2626' }}>{scriptSentinelError}</div>
         )}
+
+        <div
+          style={{
+            background: 'white',
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '2fr 1.4fr 80px 1fr 90px 110px',
+              gap: 12,
+              padding: '8px 12px',
+              background: '#fafafa',
+              borderBottom: '1px solid #f0f0f0',
+            }}
+          >
+            {['Path', 'Hash', 'Exec context', 'Matched signatures', 'Last seen', 'Actions'].map((header) => (
+              <div
+                key={header}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: '#9ca3af',
+                }}
+              >
+                {header}
+              </div>
+            ))}
+          </div>
+
+          {sentinelArtifacts.map((row, idx) => {
+            const hash = String(row?.content_hash || '')
+            const onceKey = `once:${hash}`
+            const trustKey = `persistent:${hash}`
+            const signatures = Array.isArray(row?.matched_signatures) ? row.matched_signatures : []
+            const execContext = hasExecContext(signatures)
+            const lastSeen = row?.path_last_seen_ts || row?.last_seen_ts || ''
+            const signatureLabels = signatures
+              .map((sig) => normalizeSignatureLabel(sig))
+              .filter(Boolean)
+
+            return (
+              <div
+                key={`${row?.path || 'row'}:${hash || idx}`}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '2fr 1.4fr 80px 1fr 90px 110px',
+                  gap: 12,
+                  padding: '9px 12px',
+                  borderBottom: idx < sentinelArtifacts.length - 1 ? '1px solid #f3f4f6' : 'none',
+                  alignItems: 'center',
+                }}
+              >
+                <div
+                  title={row?.path || ''}
+                  style={{
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: '#374151',
+                  }}
+                >
+                  {row?.path || '-'}
+                </div>
+
+                <HashCell hash={hash} />
+
+                <span
+                  style={{
+                    display: 'inline-block',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 10,
+                    background: execContext ? '#dcfce7' : '#f3f4f6',
+                    color: execContext ? '#15803d' : '#6b7280',
+                    width: 'fit-content',
+                  }}
+                >
+                  {execContext ? 'Yes' : 'No'}
+                </span>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {signatureLabels.length ? signatureLabels.map((sig, sigIdx) => (
+                    <span
+                      key={`${hash}-sig-${sigIdx}`}
+                      style={{
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        background: '#fef3c7',
+                        color: '#92400e',
+                        padding: '1px 6px',
+                        borderRadius: 3,
+                      }}
+                    >
+                      {sig}
+                    </span>
+                  )) : (
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>-</span>
+                  )}
+                </div>
+
+                <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                  {lastSeen ? relativeTime(lastSeen) : '-'}
+                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => scriptSentinelAllowance(hash, 'once')}
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 500,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      border: '1px solid #e5e7eb',
+                      background: 'white',
+                      color: '#6b7280',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#f3f4f6'
+                      e.currentTarget.style.color = '#374151'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'white'
+                      e.currentTarget.style.color = '#6b7280'
+                    }}
+                    disabled={Boolean(scriptSentinelActionLoading[onceKey])}
+                  >
+                    Dismiss once
+                  </button>
+
+                  <button
+                    onClick={() => scriptSentinelAllowance(hash, 'persistent')}
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 500,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      border: '1px solid #bbf7d0',
+                      background: '#f0fdf4',
+                      color: '#15803d',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#dcfce7' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#f0fdf4' }}
+                    disabled={Boolean(scriptSentinelActionLoading[trustKey])}
+                  >
+                    Trust
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+
+          {!sentinelArtifacts.length && !scriptSentinelLoading && (
+            <div style={{ padding: '18px 12px', fontSize: 12, color: '#9ca3af' }}>
+              No flagged script artifacts recorded yet.
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -1802,7 +2431,7 @@ export default function App() {
           </div>
         )}
 
-        {reportsTab !== 'script_sentinel' && (
+        {reportsTab !== 'sentinel' && (
           <div className="card">
           <div className="flex items-center justify-between gap-2">
             <button onClick={() => setShowReportFilters((v) => !v)} className="btn btn-ghost">
@@ -1862,7 +2491,7 @@ export default function App() {
           </div>
         )}
 
-        {reportsTab === 'script_sentinel' && (
+        {reportsTab === 'sentinel' && (
           <ScriptSentinelPanel />
         )}
 
@@ -3546,6 +4175,7 @@ export default function App() {
   function AgentOverridesPanel() {
     const overrides = draftPolicy?.agent_overrides || {}
     const selectedPolicy = overrideAgentId ? (overrides?.[overrideAgentId]?.policy || {}) : {}
+    const overrideCount = overrideAgentId ? AGENT_OVERRIDE_SECTIONS.filter((section) => Object.prototype.hasOwnProperty.call(selectedPolicy || {}, section)).length : 0
 
     const setAgentOverridePolicy = (agentId, updater) => {
       setDraftPolicy((prev) => {
@@ -3574,21 +4204,20 @@ export default function App() {
     const sectionValue = (section) => deepMerge(draftPolicy?.[section] || {}, selectedPolicy[section] || {})
     const isSectionOverridden = (section) => Object.prototype.hasOwnProperty.call(selectedPolicy || {}, section)
 
-    const updateListField = (section, field, transform = (v) => v) => {
-      const raw = String(overrideListInputs?.[`${section}.${field}`] || '').trim()
-      const normalized = transform(raw)
+    const addTagValue = (section, field, raw, transform = (v) => v) => {
+      const normalized = transform(String(raw || '').trim())
       if (!normalized) {
         setMessage('Value is required')
-        return
+        return false
       }
       const current = sectionValue(section)
       const list = Array.isArray(current?.[field]) ? current[field] : []
       const next = { ...(current || {}), [field]: Array.from(new Set([...list, normalized])) }
       setSectionValue(section, next)
-      setOverrideListInputs((prev) => ({ ...prev, [`${section}.${field}`]: '' }))
+      return true
     }
 
-    const removeListField = (section, field, item) => {
+    const removeTagValue = (section, field, item) => {
       const current = sectionValue(section)
       const list = Array.isArray(current?.[field]) ? current[field] : []
       const next = { ...(current || {}), [field]: list.filter((x) => x !== item) }
@@ -3610,6 +4239,11 @@ export default function App() {
 
     const setOverride = (section) => {
       if (!overrideAgentId) return
+      setAgentOverridePolicy(overrideAgentId, (policy) => {
+        const out = { ...(policy || {}) }
+        out[section] = out[section] || {}
+        return out
+      })
       setOverrideExpanded((prev) => ({ ...prev, [section]: true }))
     }
 
@@ -3622,7 +4256,11 @@ export default function App() {
 
     const showBaselineInfo = (section) => {
       const baseline = draftPolicy?.[section] || {}
-      window.alert(`${AGENT_OVERRIDE_SECTION_LABELS[section]} baseline\n\n${formatHuman(baseline)}`)
+      setOverrideBaselineModal({
+        open: true,
+        sectionLabel: AGENT_OVERRIDE_SECTION_LABELS[section],
+        baselineData: baseline,
+      })
     }
 
     const listDelta = (baseList, effectiveList) => {
@@ -3636,15 +4274,23 @@ export default function App() {
 
     const summarizeQuickDiff = () => {
       if (!overrideAgentId) return
-      const lines = [`Agent policy diff for ${overrideAgentId}`]
+      const lines = []
+
+      const scalarText = (value) => {
+        if (value === undefined) return 'undefined'
+        if (value === null) return 'null'
+        if (typeof value === 'string') return value
+        return String(value)
+      }
 
       const addListLine = (label, delta) => {
-        if (delta.added.length) lines.push(`${label}: added ${delta.added.length} (${delta.added.join(', ')})`)
-        if (delta.removed.length) lines.push(`${label}: removed ${delta.removed.length} (${delta.removed.join(', ')})`)
+        delta.added.forEach((item) => lines.push({ type: 'added', text: `${label}: ${item}` }))
+        delta.removed.forEach((item) => lines.push({ type: 'removed', text: `${label}: ${item}` }))
       }
       const addScalarLine = (label, baseValue, effectiveValue) => {
         if (JSON.stringify(baseValue) !== JSON.stringify(effectiveValue)) {
-          lines.push(`${label}: ${String(baseValue)} -> ${String(effectiveValue)}`)
+          lines.push({ type: 'removed', text: `${label}: ${scalarText(baseValue)}` })
+          lines.push({ type: 'added', text: `${label}: ${scalarText(effectiveValue)}` })
         }
       }
 
@@ -3683,53 +4329,364 @@ export default function App() {
         listDelta(exeBase?.shell_workspace_containment?.exempt_commands, exeEff?.shell_workspace_containment?.exempt_commands)
       )
 
-      if (lines.length === 1) lines.push('No differences from baseline.')
-      window.alert(lines.join('\n'))
+      setOverrideDiffModal({
+        open: true,
+        agentId: overrideAgentId,
+        lines,
+      })
+    }
+
+    const linkCodeStyle = {
+      fontFamily: 'monospace',
+      background: 'rgba(3,105,161,0.1)',
+      padding: '0 4px',
+      borderRadius: 3,
+      fontSize: 11,
+    }
+
+    function SectionRow({ sectionKey, label, isOverridden, isOpen, onToggleOpen, onToggleOverride, onInfo }) {
+      return (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '11px 16px',
+            cursor: 'pointer',
+            userSelect: 'none',
+            transition: 'background 0.1s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#fafafa' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'white' }}
+          onClick={onToggleOpen}
+        >
+          <svg
+            style={{
+              width: 14,
+              height: 14,
+              color: '#9ca3af',
+              flexShrink: 0,
+              transform: isOpen ? 'rotate(90deg)' : 'none',
+              transition: 'transform 0.2s',
+            }}
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M3 2l3 3-3 3" />
+          </svg>
+
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', flex: 1 }}>
+            {label}
+          </span>
+
+          <span style={{
+            fontSize: 10,
+            fontWeight: 600,
+            padding: '2px 8px',
+            borderRadius: 10,
+            background: isOverridden ? '#eef2ff' : '#f3f4f6',
+            color: isOverridden ? '#4f46e5' : '#6b7280',
+          }}>
+            {isOverridden ? 'Overridden' : 'Inherited'}
+          </span>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={onInfo}
+              title="View baseline"
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: 4,
+                border: '1px solid #e5e7eb',
+                background: 'white',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#9ca3af',
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: 'serif',
+                fontStyle: 'italic',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#c7d2fe'
+                e.currentTarget.style.color = '#4f46e5'
+                e.currentTarget.style.background = '#eef2ff'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#e5e7eb'
+                e.currentTarget.style.color = '#9ca3af'
+                e.currentTarget.style.background = 'white'
+              }}
+            >
+              i
+            </button>
+
+            <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 5, padding: 2 }}>
+              {[
+                { label: 'Inherit', active: !isOverridden, activeStyle: { background: 'white', color: '#374151' } },
+                { label: 'Override', active: isOverridden, activeStyle: { background: 'white', color: '#4f46e5' } },
+              ].map((option) => (
+                <div
+                  key={`${sectionKey}-${option.label}`}
+                  onClick={() => {
+                    if (option.label === 'Inherit' && isOverridden) onToggleOverride()
+                    if (option.label === 'Override' && !isOverridden) onToggleOverride()
+                  }}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    color: '#6b7280',
+                    userSelect: 'none',
+                    transition: 'all 0.15s',
+                    boxShadow: option.active ? '0 1px 2px rgba(0,0,0,0.07)' : 'none',
+                    ...(option.active ? option.activeStyle : {}),
+                  }}
+                >
+                  {option.label}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    function TagEditor({ sectionKey, field, tags, onAdd, onRemove, transform = (v) => v }) {
+      const [input, setInput] = useState('')
+      const handleAdd = () => {
+        if (!input.trim()) return
+        const ok = onAdd(sectionKey, field, input.trim(), transform)
+        if (ok) setInput('')
+      }
+      return (
+        <div style={{ marginBottom: 14 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              color: '#9ca3af',
+              marginBottom: 8,
+            }}
+          >
+            {field.replace(/_/g, ' ')}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+              placeholder={`Add ${field.replace(/_/g, ' ')}...`}
+              style={{
+                flex: 1,
+                fontSize: 12,
+                fontFamily: 'monospace',
+                padding: '6px 10px',
+                borderRadius: 5,
+                border: '1px solid #d1d5db',
+                outline: 'none',
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = '#4f46e5'
+                e.currentTarget.style.boxShadow = '0 0 0 2px rgba(79,70,229,0.1)'
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = '#d1d5db'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            />
+            <button
+              onClick={handleAdd}
+              style={{
+                background: '#4f46e5',
+                color: 'white',
+                border: 'none',
+                borderRadius: 5,
+                padding: '6px 14px',
+                fontSize: 11,
+                fontWeight: 500,
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, minHeight: 28 }}>
+            {tags.length === 0 ? (
+              <span style={{ fontSize: 11, color: '#d1d5db', fontStyle: 'italic' }}>
+                No entries — inheriting baseline
+              </span>
+            ) : tags.map((tag, i) => (
+              <div
+                key={`${field}-${tag}-${i}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '3px 8px',
+                  borderRadius: 5,
+                  border: '1px solid #e5e7eb',
+                  background: '#fafafa',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: '#374151',
+                }}
+              >
+                {tag}
+                <button
+                  onClick={() => onRemove(sectionKey, field, tag)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#9ca3af',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    lineHeight: 1,
+                    padding: '0 1px',
+                    borderRadius: 2,
+                    transition: 'all 0.12s',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = '#dc2626'
+                    e.currentTarget.style.background = '#fee2e2'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = '#9ca3af'
+                    e.currentTarget.style.background = 'none'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )
     }
 
     return (
       <div className="space-y-3">
         <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm space-y-3">
           <div className="text-sm font-semibold text-slate-800">Agent Overrides</div>
-          <div className="text-xs text-slate-600">
-            Baseline policy remains global. Agent overrides apply only to: <span className="font-mono">blocked, requires_confirmation, allowed, network, execution</span>.
-            Workspace remains controlled by MCP env (<span className="font-mono">AIRG_WORKSPACE</span>), not policy overrides.
+          <div
+            style={{
+              background: '#f0f9ff',
+              border: '1px solid #bae6fd',
+              borderRadius: 7,
+              padding: '10px 14px',
+              marginBottom: 12,
+              fontSize: 11,
+              color: '#0369a1',
+              lineHeight: 1.6,
+            }}
+          >
+            Baseline policy remains global. Agent overrides apply only to:{' '}
+            {['blocked', 'requires_confirmation', 'allowed', 'network', 'execution'].map((section, i, arr) => (
+              <span key={section}>
+                <code style={linkCodeStyle}>{section}</code>
+                {i < arr.length - 1 ? ', ' : '. '}
+              </span>
+            ))}
+            Workspace remains controlled by MCP env (<code style={linkCodeStyle}>AIRG_WORKSPACE</code>), not policy overrides.
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
-            <div className="flex gap-2 items-center">
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', maxWidth: 320, width: '100%' }}>
               <select
                 value={overrideAgentId}
                 onChange={(e) => setOverrideAgentId(e.target.value)}
-                className="border border-slate-300 rounded-[10px] px-3 py-2 text-sm bg-white"
+                style={{
+                  width: '100%',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  color: '#111827',
+                  padding: '7px 32px 7px 12px',
+                  borderRadius: 6,
+                  border: '1px solid #d1d5db',
+                  background: 'white',
+                  appearance: 'none',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  fontFamily: 'inherit',
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = '#4f46e5'
+                  e.currentTarget.style.boxShadow = '0 0 0 2px rgba(79,70,229,0.1)'
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = '#d1d5db'
+                  e.currentTarget.style.boxShadow = 'none'
+                }}
               >
                 <option value="">Select agent…</option>
                 {knownAgentIds.map((id) => (
                   <option key={id} value={id}>{id}</option>
                 ))}
               </select>
-              <span className="text-xs text-slate-500">
-                Manage agent profiles in <span className="font-semibold">Settings → Agents</span>.
-              </span>
+              <svg
+                style={{
+                  position: 'absolute',
+                  right: 10,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                  color: '#9ca3af',
+                }}
+                width="12"
+                height="12"
+                viewBox="0 0 14 14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              >
+                <path d="M3 5l4 4 4-4" />
+              </svg>
             </div>
-            <div className="flex gap-2 justify-end">
+
+            <span style={{ fontSize: 11, color: '#9ca3af' }}>
+              <strong style={{ color: '#4f46e5', fontWeight: 600 }}>{overrideCount}</strong>{' '}
+              section{overrideCount !== 1 ? 's' : ''} overridden
+            </span>
+
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span
+                onClick={() => {
+                  setActiveRail('settings')
+                  setActiveSettingsTab('agents')
+                }}
+                style={{ fontSize: 11, color: '#4f46e5', cursor: 'pointer', textDecoration: 'none' }}
+                onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
+                onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
+              >
+                Manage profiles in Settings → Agents
+              </span>
               <button
                 onClick={summarizeQuickDiff}
                 disabled={!overrideAgentId}
-                className="px-3 py-1.5 rounded-[10px] border border-blue-300 text-blue-700 bg-blue-50 text-sm disabled:opacity-50"
+                className="btn btn-ghost disabled:opacity-50"
               >
                 Quick Diff
               </button>
               <button
                 onClick={resetAgentOverrides}
                 disabled={!overrideAgentId}
-                className="px-3 py-1.5 rounded-[10px] border border-amber-300 text-amber-700 bg-amber-50 text-sm disabled:opacity-50"
+                className="btn disabled:opacity-50"
+                style={{ color: '#b45309', borderColor: '#fde68a' }}
               >
                 Reset to Inherited
               </button>
             </div>
-          </div>
-          <div className="text-xs text-slate-500">
-            Override sections enabled: <span className="font-mono">{overrideAgentId ? String(AGENT_OVERRIDE_SECTIONS.filter((s) => isSectionOverridden(s)).length) : '0'}</span>
           </div>
         </div>
 
@@ -3744,151 +4701,225 @@ export default function App() {
             {AGENT_OVERRIDE_SECTIONS.map((section) => {
               const enabled = isSectionOverridden(section)
               const expanded = !!overrideExpanded[section]
-              const effective = enabled ? 'Overridden' : 'Inherited'
               const sectionData = sectionValue(section)
               return (
-                <div key={section} className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => toggleExpanded(section)} className="text-sm font-semibold text-slate-800 hover:text-slate-900">
-                        {expanded ? '▾' : '▸'} {AGENT_OVERRIDE_SECTION_LABELS[section]}
-                      </button>
-                      <span className={`text-[11px] px-2 py-0.5 rounded border ${enabled ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>
-                        {effective}
-                      </span>
-                    </div>
-                    <div className="flex gap-2 text-xs">
-                      <button
-                        onClick={() => showBaselineInfo(section)}
-                        className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-700"
-                        title="Show baseline configuration"
-                      >
-                        ℹ️
-                      </button>
-                      <button
-                        onClick={() => setInherit(section)}
-                        className="px-2 py-1 rounded border border-slate-300 bg-white text-slate-700"
-                      >
-                        Inherit
-                      </button>
-                      <button
-                        onClick={() => setOverride(section)}
-                        className="px-2 py-1 rounded border border-blue-300 bg-blue-50 text-blue-700"
-                      >
-                        Override
-                      </button>
-                    </div>
-                  </div>
-                  {expanded && section === 'blocked' && (
-                    <div className="space-y-3">
-                      {['commands', 'paths', 'extensions'].map((field) => (
-                        <div key={field} className="border border-slate-200 rounded-[10px] p-2 space-y-2">
-                          <div className="text-xs font-semibold text-slate-700 capitalize">{field}</div>
-                          <div className="flex gap-2">
-                            <input
-                              value={overrideListInputs[`${section}.${field}`] || ''}
-                              onChange={(e) => setOverrideListInputs((prev) => ({ ...prev, [`${section}.${field}`]: e.target.value }))}
-                              className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-mono"
-                            />
-                            <button onClick={() => updateListField(section, field)} className="px-2 py-1 rounded bg-[#0055ff] text-white text-xs">Add</button>
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {((sectionData?.[field]) || []).map((item) => (
-                              <span key={item} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-slate-50 text-xs font-mono">
-                                {item}
-                                <button onClick={() => removeListField(section, field, item)} className="text-red-600">×</button>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {expanded && section === 'allowed' && (
-                    <div className="space-y-3">
-                      <div className="border border-slate-200 rounded-[10px] p-2 space-y-2">
-                        <div className="text-xs font-semibold text-slate-700">paths_whitelist</div>
-                        <div className="flex gap-2">
-                          <input value={overrideListInputs['allowed.paths_whitelist'] || ''} onChange={(e) => setOverrideListInputs((p) => ({ ...p, 'allowed.paths_whitelist': e.target.value }))} className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-mono" />
-                          <button onClick={() => updateListField('allowed', 'paths_whitelist')} className="px-2 py-1 rounded bg-[#0055ff] text-white text-xs">Add</button>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {(sectionData?.paths_whitelist || []).map((item) => <span key={item} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-slate-50 text-xs font-mono">{item}<button onClick={() => removeListField('allowed', 'paths_whitelist', item)} className="text-red-600">×</button></span>)}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2">
-                        <label className="text-xs">Max directory depth<input type="number" min={0} className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs" value={sectionData?.max_directory_depth ?? 0} onChange={(e) => setSectionValue('allowed', { ...sectionData, max_directory_depth: Math.max(0, parseInt(e.target.value, 10) || 0) })} /></label>
-                      </div>
-                    </div>
-                  )}
-                  {expanded && section === 'requires_confirmation' && (
-                    <div className="space-y-3">
-                      {['commands', 'paths'].map((field) => (
-                        <div key={field} className="border border-slate-200 rounded-[10px] p-2 space-y-2">
-                          <div className="text-xs font-semibold text-slate-700 capitalize">{field}</div>
-                          <div className="flex gap-2"><input value={overrideListInputs[`${section}.${field}`] || ''} onChange={(e) => setOverrideListInputs((p) => ({ ...p, [`${section}.${field}`]: e.target.value }))} className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-mono" /><button onClick={() => updateListField(section, field)} className="px-2 py-1 rounded bg-[#0055ff] text-white text-xs">Add</button></div>
-                          <div className="flex flex-wrap gap-1">{((sectionData?.[field]) || []).map((item) => <span key={item} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-slate-50 text-xs font-mono">{item}<button onClick={() => removeListField(section, field, item)} className="text-red-600">×</button></span>)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {expanded && section === 'network' && (
-                    <div className="space-y-3">
-                      <div style={{ maxWidth: 280 }}>
-                        <SegControl
-                          value={sectionData?.enforcement_mode || 'off'}
-                          onChange={(mode) => setSectionValue('network', { ...sectionData, enforcement_mode: mode })}
-                          options={[
-                            { label: 'Off', value: 'off', activeClass: 'm-off' },
-                            { label: 'Monitor', value: 'monitor', activeClass: 'm-monitor' },
-                            { label: 'Enforce', value: 'enforce', activeClass: 'm-enforce' },
-                          ]}
-                        />
-                      </div>
-                      <label className="text-xs inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(sectionData?.block_unknown_domains)} onChange={(e) => setSectionValue('network', { ...sectionData, block_unknown_domains: e.target.checked })} /> block_unknown_domains</label>
-                      {['commands', 'allowed_domains', 'blocked_domains'].map((field) => (
-                        <div key={field} className="border border-slate-200 rounded-[10px] p-2 space-y-2">
-                          <div className="text-xs font-semibold text-slate-700">{field}</div>
-                          <div className="flex gap-2"><input value={overrideListInputs[`network.${field}`] || ''} onChange={(e) => setOverrideListInputs((p) => ({ ...p, [`network.${field}`]: e.target.value }))} className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-mono" /><button onClick={() => updateListField('network', field, field.includes('domains') ? normalizeDomain : (v) => v)} className="px-2 py-1 rounded bg-[#0055ff] text-white text-xs">Add</button></div>
-                          <div className="flex flex-wrap gap-1">{((sectionData?.[field]) || []).map((item) => <span key={item} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-slate-50 text-xs font-mono">{item}<button onClick={() => removeListField('network', field, item)} className="text-red-600">×</button></span>)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {expanded && section === 'execution' && (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <label className="text-xs">Max command timeout seconds<input type="number" min={1} className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs" value={sectionData?.max_command_timeout_seconds ?? 30} onChange={(e) => setSectionValue('execution', { ...sectionData, max_command_timeout_seconds: Math.max(1, parseInt(e.target.value, 10) || 1) })} /></label>
-                        <label className="text-xs">Max output chars<input type="number" min={1024} className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs" value={sectionData?.max_output_chars ?? 200000} onChange={(e) => setSectionValue('execution', { ...sectionData, max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024) })} /></label>
-                      </div>
-                      <div className="border border-slate-200 rounded-[10px] p-2 space-y-2">
-                        <div className="text-xs font-semibold text-slate-700">shell_workspace_containment</div>
-                        <div style={{ maxWidth: 280 }}>
-                          <SegControl
-                            value={sectionData?.shell_workspace_containment?.mode || 'off'}
-                            onChange={(mode) => setSectionValue('execution', { ...sectionData, shell_workspace_containment: { ...(sectionData?.shell_workspace_containment || {}), mode } })}
-                            options={[
-                              { label: 'Off', value: 'off', activeClass: 'm-off' },
-                              { label: 'Monitor', value: 'monitor', activeClass: 'm-monitor' },
-                              { label: 'Enforce', value: 'enforce', activeClass: 'm-enforce' },
-                            ]}
+                <div key={section} className="bg-white border border-slate-200 rounded-[10px] shadow-sm overflow-hidden">
+                  <SectionRow
+                    sectionKey={section}
+                    label={AGENT_OVERRIDE_SECTION_LABELS[section]}
+                    isOverridden={enabled}
+                    isOpen={expanded}
+                    onToggleOpen={() => toggleExpanded(section)}
+                    onToggleOverride={() => {
+                      if (enabled) setInherit(section)
+                      else setOverride(section)
+                    }}
+                    onInfo={() => showBaselineInfo(section)}
+                  />
+
+                  {expanded && enabled && (
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid #f3f4f6' }}>
+                      {section === 'blocked' && (
+                        ['commands', 'paths', 'extensions'].map((field) => (
+                          <TagEditor
+                            key={`${section}-${field}`}
+                            sectionKey={section}
+                            field={field}
+                            tags={Array.isArray(sectionData?.[field]) ? sectionData[field] : []}
+                            onAdd={addTagValue}
+                            onRemove={removeTagValue}
                           />
-                        </div>
-                        <label className="text-xs inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(sectionData?.shell_workspace_containment?.log_paths)} onChange={(e) => setSectionValue('execution', { ...sectionData, shell_workspace_containment: { ...(sectionData?.shell_workspace_containment || {}), log_paths: e.target.checked } })} /> log_paths</label>
-                        <div className="flex gap-2"><input value={overrideListInputs['execution.shell_workspace_containment.exempt_commands'] || ''} onChange={(e) => setOverrideListInputs((p) => ({ ...p, 'execution.shell_workspace_containment.exempt_commands': e.target.value }))} className="flex-1 border border-slate-300 rounded px-2 py-1 text-xs font-mono" /><button onClick={() => {
-                          const raw = String(overrideListInputs['execution.shell_workspace_containment.exempt_commands'] || '').trim()
-                          if (!raw) return
-                          const current = sectionData?.shell_workspace_containment || {}
-                          const nextList = Array.from(new Set([...(current.exempt_commands || []), raw]))
-                          setSectionValue('execution', { ...sectionData, shell_workspace_containment: { ...current, exempt_commands: nextList } })
-                          setOverrideListInputs((p) => ({ ...p, 'execution.shell_workspace_containment.exempt_commands': '' }))
-                        }} className="px-2 py-1 rounded bg-[#0055ff] text-white text-xs">Add exempt command</button></div>
-                        <div className="flex flex-wrap gap-1">{((sectionData?.shell_workspace_containment?.exempt_commands) || []).map((item) => <span key={item} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-300 bg-slate-50 text-xs font-mono">{item}<button onClick={() => {
-                          const current = sectionData?.shell_workspace_containment || {}
-                          const nextList = (current.exempt_commands || []).filter((x) => x !== item)
-                          setSectionValue('execution', { ...sectionData, shell_workspace_containment: { ...current, exempt_commands: nextList } })
-                        }} className="text-red-600">×</button></span>)}</div>
-                      </div>
+                        ))
+                      )}
+
+                      {section === 'requires_confirmation' && (
+                        ['commands', 'paths'].map((field) => (
+                          <TagEditor
+                            key={`${section}-${field}`}
+                            sectionKey={section}
+                            field={field}
+                            tags={Array.isArray(sectionData?.[field]) ? sectionData[field] : []}
+                            onAdd={addTagValue}
+                            onRemove={removeTagValue}
+                          />
+                        ))
+                      )}
+
+                      {section === 'allowed' && (
+                        <>
+                          <TagEditor
+                            sectionKey="allowed"
+                            field="paths_whitelist"
+                            tags={Array.isArray(sectionData?.paths_whitelist) ? sectionData.paths_whitelist : []}
+                            onAdd={addTagValue}
+                            onRemove={removeTagValue}
+                          />
+                          <label className="text-xs block">
+                            Max directory depth
+                            <input
+                              type="number"
+                              min={0}
+                              className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                              value={sectionData?.max_directory_depth ?? 0}
+                              onChange={(e) => setSectionValue('allowed', {
+                                ...sectionData,
+                                max_directory_depth: Math.max(0, parseInt(e.target.value, 10) || 0),
+                              })}
+                            />
+                          </label>
+                        </>
+                      )}
+
+                      {section === 'network' && (
+                        <>
+                          <div style={{ maxWidth: 280, marginBottom: 12 }}>
+                            <SegControl
+                              value={sectionData?.enforcement_mode || 'off'}
+                              onChange={(mode) => setSectionValue('network', { ...sectionData, enforcement_mode: mode })}
+                              options={[
+                                { label: 'Off', value: 'off', activeClass: 'm-off' },
+                                { label: 'Monitor', value: 'monitor', activeClass: 'm-monitor' },
+                                { label: 'Enforce', value: 'enforce', activeClass: 'm-enforce' },
+                              ]}
+                            />
+                          </div>
+                          <div style={{ maxWidth: 122, marginBottom: 12 }}>
+                            <SegControl
+                              value={Boolean(sectionData?.block_unknown_domains)}
+                              onChange={(enabledValue) => setSectionValue('network', { ...sectionData, block_unknown_domains: Boolean(enabledValue) })}
+                              options={[
+                                { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                                { label: 'No', value: false, activeClass: 'yn-no' },
+                              ]}
+                            />
+                          </div>
+                          {['commands', 'allowed_domains', 'blocked_domains'].map((field) => (
+                            <TagEditor
+                              key={`${section}-${field}`}
+                              sectionKey="network"
+                              field={field}
+                              tags={Array.isArray(sectionData?.[field]) ? sectionData[field] : []}
+                              onAdd={addTagValue}
+                              onRemove={removeTagValue}
+                              transform={field.includes('domains') ? normalizeDomain : (v) => v}
+                            />
+                          ))}
+                        </>
+                      )}
+
+                      {section === 'execution' && (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+                            <label className="text-xs">
+                              Max command timeout seconds
+                              <input
+                                type="number"
+                                min={1}
+                                className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                                value={sectionData?.max_command_timeout_seconds ?? 30}
+                                onChange={(e) => setSectionValue('execution', {
+                                  ...sectionData,
+                                  max_command_timeout_seconds: Math.max(1, parseInt(e.target.value, 10) || 1),
+                                })}
+                              />
+                            </label>
+                            <label className="text-xs">
+                              Max output chars
+                              <input
+                                type="number"
+                                min={1024}
+                                className="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-xs"
+                                value={sectionData?.max_output_chars ?? 200000}
+                                onChange={(e) => setSectionValue('execution', {
+                                  ...sectionData,
+                                  max_output_chars: Math.max(1024, parseInt(e.target.value, 10) || 1024),
+                                })}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="border border-slate-200 rounded-[10px] p-2 space-y-2">
+                            <div className="text-xs font-semibold text-slate-700">shell_workspace_containment</div>
+                            <div style={{ maxWidth: 280 }}>
+                              <SegControl
+                                value={sectionData?.shell_workspace_containment?.mode || 'off'}
+                                onChange={(mode) => setSectionValue('execution', {
+                                  ...sectionData,
+                                  shell_workspace_containment: {
+                                    ...(sectionData?.shell_workspace_containment || {}),
+                                    mode,
+                                  },
+                                })}
+                                options={[
+                                  { label: 'Off', value: 'off', activeClass: 'm-off' },
+                                  { label: 'Monitor', value: 'monitor', activeClass: 'm-monitor' },
+                                  { label: 'Enforce', value: 'enforce', activeClass: 'm-enforce' },
+                                ]}
+                              />
+                            </div>
+                            <div style={{ maxWidth: 122 }}>
+                              <SegControl
+                                value={Boolean(sectionData?.shell_workspace_containment?.log_paths)}
+                                onChange={(enabledValue) => setSectionValue('execution', {
+                                  ...sectionData,
+                                  shell_workspace_containment: {
+                                    ...(sectionData?.shell_workspace_containment || {}),
+                                    log_paths: Boolean(enabledValue),
+                                  },
+                                })}
+                                options={[
+                                  { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                                  { label: 'No', value: false, activeClass: 'yn-no' },
+                                ]}
+                              />
+                            </div>
+                            <TagEditor
+                              sectionKey="execution"
+                              field="exempt_commands"
+                              tags={Array.isArray(sectionData?.shell_workspace_containment?.exempt_commands) ? sectionData.shell_workspace_containment.exempt_commands : []}
+                              onAdd={(sectionKey, field, raw, transform) => {
+                                const normalized = transform(String(raw || '').trim())
+                                if (!normalized) return false
+                                const current = sectionData?.shell_workspace_containment || {}
+                                const list = Array.isArray(current.exempt_commands) ? current.exempt_commands : []
+                                setSectionValue('execution', {
+                                  ...sectionData,
+                                  shell_workspace_containment: {
+                                    ...current,
+                                    exempt_commands: Array.from(new Set([...list, normalized])),
+                                  },
+                                })
+                                return true
+                              }}
+                              onRemove={(_sectionKey, _field, value) => {
+                                const current = sectionData?.shell_workspace_containment || {}
+                                const list = Array.isArray(current.exempt_commands) ? current.exempt_commands : []
+                                setSectionValue('execution', {
+                                  ...sectionData,
+                                  shell_workspace_containment: {
+                                    ...current,
+                                    exempt_commands: list.filter((item) => item !== value),
+                                  },
+                                })
+                              }}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {expanded && !enabled && (
+                    <div
+                      style={{
+                        padding: '12px 16px',
+                        borderTop: '1px solid #f3f4f6',
+                        fontSize: 12,
+                        color: '#9ca3af',
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      This section inherits baseline values. Switch to Override to edit.
                     </div>
                   )}
                 </div>
@@ -3956,13 +4987,7 @@ export default function App() {
 
   function SettingsPanel() {
     const postureRows = agentPosture?.profiles || []
-    const postureTotals = agentPosture?.totals || { green: 0, yellow: 0, red: 0 }
     const postureDiscovered = agentPosture?.discovered_unregistered || []
-    const postureStatusLabel = {
-      green: 'Hardened',
-      yellow: 'Partial',
-      red: 'Unprotected',
-    }
     const workspaceHints = Array.from(
       new Set(
         [runtimePaths.AIRG_WORKSPACE, ...agentProfiles.map((p) => p.workspace || '')]
@@ -3998,7 +5023,9 @@ export default function App() {
     }
 
     const addProfileRow = () => {
-      setAgentProfiles((prev) => [...prev, emptyProfile()])
+      const next = emptyProfile()
+      setAgentProfiles((prev) => [...prev, next])
+      setSelectedSettingsProfileId(next.profile_id)
     }
 
     const duplicateAgentIdForProfile = (profile) => {
@@ -4146,20 +5173,6 @@ export default function App() {
       }
     }
 
-    const showInfo = async (profile) => {
-      setSettingsLoading(true)
-      setSettingsError('')
-      try {
-        await upsertSettingsProfile(profile)
-        const payload = await generateAgentConfig(profile.profile_id, false)
-        window.alert(payload.generated?.instructions || 'No instructions available.')
-      } catch (err) {
-        setSettingsError(String(err.message || err))
-      } finally {
-        setSettingsLoading(false)
-      }
-    }
-
     const deleteRow = async (profile) => {
       if (!window.confirm(`Delete profile "${profile.name || profile.agent_id || profile.profile_id}"?`)) return
       const isUnsavedLocalRow =
@@ -4182,11 +5195,13 @@ export default function App() {
           delete out[profile.profile_id]
           return out
         })
+        setSelectedSettingsProfileId((prev) => (prev === profile.profile_id ? '' : prev))
         setMessage('Profile deleted')
       } catch (err) {
         const msg = String(err.message || err)
         if (msg.toLowerCase().includes('profile not found')) {
           setAgentProfiles((prev) => prev.filter((item) => item.profile_id !== profile.profile_id))
+          setSelectedSettingsProfileId((prev) => (prev === profile.profile_id ? '' : prev))
           setMessage('Profile removed')
         } else {
           setSettingsError(msg)
@@ -4265,323 +5280,459 @@ export default function App() {
       }
     }
 
-    const hookSnippet = `{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          { "type": "command", "command": "airg-hook" }
-        ]
-      }
-    ]
-  }
-}`
+    const postureForProfile = (profile) => {
+      if (!profile) return null
+      const profileId = String(profile?.profile_id || '')
+      const profileAgentId = String(profile?.agent_id || '').trim()
+      return (
+        postureRows.find((row) => String(row?.profile_id || '') === profileId) ||
+        postureRows.find((row) => String(row?.agent_id || '').trim() === profileAgentId) ||
+        null
+      )
+    }
 
-    const claudeHardenSnippet = `{
-  "permissions": {
-    "deny": ["Bash", "Write", "Edit", "MultiEdit"],
-    "allow": [
-      "mcp__ai-runtime-guard__execute_command",
-      "mcp__ai-runtime-guard__write_file",
-      "mcp__ai-runtime-guard__read_file",
-      "mcp__ai-runtime-guard__list_directory",
-      "mcp__ai-runtime-guard__restore_backup",
-      "Read",
-      "Glob",
-      "Grep",
-      "LS",
-      "Task",
-      "WebSearch"
-    ]
-  },
-  "sandbox": {
-    "enabled": true,
-    "allowUnsandboxedCommands": false
-  }
-}`
+    const selectedProfile = agentProfiles.find((profile) => String(profile?.profile_id || '') === selectedSettingsProfileId) || agentProfiles[0] || null
+    const selectedPosture = postureForProfile(selectedProfile)
+    const selectedStatus = String(selectedPosture?.status || 'red').toLowerCase()
+    const selectedStatusNormalized = ['green', 'yellow', 'red'].includes(selectedStatus) ? selectedStatus : 'red'
+    const selectedAgentType = String(selectedProfile?.agent_type || '').toLowerCase()
+    const selectedSignals = selectedPosture?.signals || {}
+    const selectedRecommendations = Array.isArray(selectedPosture?.recommended_actions) ? selectedPosture.recommended_actions : []
+
+    const statusPillStyle = {
+      red: { bg: '#fee2e2', fg: '#dc2626', label: 'Red' },
+      yellow: { bg: '#fef3c7', fg: '#b45309', label: 'Yellow' },
+      green: { bg: '#dcfce7', fg: '#15803d', label: 'Green' },
+    }
+
+    const postureCardTheme = {
+      red: { border: '#fecaca', bg: '#fff5f5', iconBg: '#fee2e2', iconFg: '#dc2626', icon: '✕', label: 'Unprotected' },
+      yellow: { border: '#fde68a', bg: '#fffdf0', iconBg: '#fef3c7', iconFg: '#b45309', icon: '◐', label: 'MCP-only enforcement' },
+      green: { border: '#bbf7d0', bg: '#f0fdf4', iconBg: '#dcfce7', iconFg: '#15803d', icon: '✓', label: 'Fully hardened' },
+    }
+
+    const selectedTheme = postureCardTheme[selectedStatusNormalized]
+    const selectedPill = statusPillStyle[selectedStatusNormalized]
+    const isMcpOnlyCeiling = ['cursor'].includes(selectedAgentType)
+
+    const ceilingNote = (() => {
+      if (selectedAgentType === 'claude_code') return 'Can reach Green — hooks and permissions available for Claude Code.'
+      if (selectedAgentType === 'cursor') return 'Maximum posture for this agent type is Yellow (MCP-layer controls only).'
+      if (selectedAgentType === 'claude_desktop') return 'Review posture signals for this profile; MCP + hook/sandbox coverage depends on settings files.'
+      return 'Posture coverage depends on this client’s support for hooks, permissions, and sandbox controls.'
+    })()
+
+    const signalRows = [
+      { key: 'airg_mcp_present', label: 'AIRG MCP configured', failText: 'Not found in settings.json' },
+      { key: 'hook_active', label: 'airg-hook PreToolUse registered', failText: 'No hook entry in settings.local.json' },
+      { key: 'native_tools_restricted', label: 'Native tools restricted', failText: 'Bash, Write, Edit, MultiEdit not denied' },
+      { key: 'sandbox_enabled', label: 'Sandbox enabled', failText: 'sandbox: false in settings' },
+      { key: 'sandbox_escape_closed', label: 'Sandbox escape closed', failText: 'Depends on sandbox being enabled' },
+    ].map((row) => {
+      const notSupported = isMcpOnlyCeiling && row.key !== 'airg_mcp_present'
+      const rawValue = selectedSignals?.[row.key]
+      const state = notSupported ? 'na' : (rawValue ? 'pass' : 'fail')
+      const detail = state === 'pass'
+        ? 'Configured'
+        : state === 'na'
+          ? 'Not supported by this client'
+          : row.failText
+      return { ...row, state, detail }
+    })
+
+    const canApplyHardening = Boolean(selectedProfile)
+      && selectedAgentType === 'claude_code'
+      && selectedStatusNormalized !== 'green'
+
+    const selectedDirty = selectedProfile ? isProfileDirty(selectedProfile) : false
+    const selectedNeedsReconfigure = selectedProfile ? Boolean(settingsNeedsReconfigure[selectedProfile.profile_id]) : false
+
+    const typeLabelFor = (profile) => {
+      const id = String(profile?.agent_type || '').trim()
+      const match = (agentTypes || []).find((option) => String(option?.id || '') === id)
+      return match?.label || id || 'Unknown'
+    }
 
     return (
-      <div className="space-y-4">
-        <div className="bg-white border border-slate-200 rounded-[10px] p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-800">Configured Agents</div>
-              <div className="text-xs text-slate-500">Save generates and stores MCP config in runtime state.</div>
-            </div>
-            <button onClick={addProfileRow} className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-sm bg-white hover:bg-slate-50">Add Agent</button>
+      <div className="space-y-3">
+        {settingsError && (
+          <div className="bg-white border border-red-200 rounded-[10px] px-3 py-2 text-sm text-red-700">
+            {settingsError}
           </div>
+        )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
-                  <th className="py-2 pr-2">Agent Type</th>
-                  <th className="py-2 px-2">Profile Name</th>
-                  <th className="py-2 px-2">Agent ID</th>
-                  <th className="py-2 px-2">Workspace</th>
-                  <th className="py-2 px-2 text-center"><div className="flex justify-center"><UiIcon kind="save" /></div></th>
-                  <th className="py-2 px-2 text-center"><div className="flex justify-center"><UiIcon kind="folder" /></div></th>
-                  <th className="py-2 px-2 text-center"><div className="flex items-center justify-center gap-1"><UiIcon kind="copy" /><span>JSON</span></div></th>
-                  <th className="py-2 px-2 text-center"><div className="flex items-center justify-center gap-1"><UiIcon kind="terminal" /><span>CLI</span></div></th>
-                  <th className="py-2 px-2 text-center"><div className="flex justify-center"><UiIcon kind="info" /></div></th>
-                  <th className="py-2 pl-3 text-center border-l-2 border-slate-300"><div className="flex justify-center"><UiIcon kind="trash" /></div></th>
-                </tr>
-              </thead>
-              <tbody>
-                {agentProfiles.map((profile) => {
-                  const configured = Boolean(profile.last_saved_path)
-                  const dirty = isProfileDirty(profile)
-                  const needsReconfigure = Boolean(settingsNeedsReconfigure[profile.profile_id])
-                  return (
-                    <tr key={profile.profile_id} className={`border-b border-slate-100 ${configured ? 'bg-slate-50' : 'bg-white'}`}>
-                      <td className="py-2 pr-2 align-top">
-                        <select
-                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
-                          value={profile.agent_type || 'claude_code'}
-                          onChange={(e) => updateProfile(profile.profile_id, { agent_type: e.target.value })}
-                        >
-                          {agentTypes.map((opt) => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
-                        </select>
-                      </td>
-                      <td className="py-2 px-2 align-top">
-                        <input
-                          type="text"
-                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs"
-                          value={profile.name || ''}
-                          onChange={(e) => updateProfile(profile.profile_id, { name: e.target.value })}
-                        />
-                      </td>
-                      <td className="py-2 px-2 align-top">
-                        <input
-                          type="text"
-                          className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-mono"
-                          value={profile.agent_id || ''}
-                          onChange={(e) => updateProfile(profile.profile_id, { agent_id: e.target.value })}
-                        />
-                      </td>
-                      <td className="py-2 px-2 align-top">
-                        <div className="flex gap-1">
-                          <input
-                            list={`workspace-hints-${profile.profile_id}`}
-                            type="text"
-                            className="w-full border border-slate-300 rounded px-2 py-1 text-xs font-mono"
-                            value={profile.workspace || ''}
-                            onChange={(e) => updateProfile(profile.profile_id, { workspace: e.target.value })}
-                          />
-                          <datalist id={`workspace-hints-${profile.profile_id}`}>
-                            {workspaceHints.map((hint) => <option key={hint} value={hint} />)}
-                          </datalist>
-                          <button
-                            title="Use current AIRG workspace"
-                            className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50"
-                            onClick={() => updateProfile(profile.profile_id, { workspace: runtimePaths.AIRG_WORKSPACE || profile.workspace || '' })}
-                          >
-                            ↺
-                          </button>
-                        </div>
-                        {profile.last_generated_at && (
-                          <div className="text-[10px] text-slate-500 mt-1">Last generated {relativeTime(profile.last_generated_at)}</div>
-                        )}
-                        {dirty && (
-                          <div className="text-[10px] text-amber-700 mt-1">Unsaved changes for this profile.</div>
-                        )}
-                        {needsReconfigure && (
-                          <div className="text-[10px] text-blue-700 mt-1">MCP reconfiguration required for this agent after profile changes.</div>
-                        )}
-                      </td>
-                      <td className="py-2 px-2 text-center align-top">
-                        <button className="px-2 py-1 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50" onClick={() => saveRow(profile)} title="Save + generate + store">
-                          <UiIcon kind="save" />
-                        </button>
-                      </td>
-                      <td className="py-2 px-2 text-center align-top">
-                        <button className="px-2 py-1 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50 disabled:opacity-50" onClick={() => openConfig(profile)} disabled={!profile.last_saved_path} title="Open configuration file">
-                          <UiIcon kind="folder" />
-                        </button>
-                      </td>
-                      <td className="py-2 px-2 text-center align-top">
-                        <button className="px-2 py-1 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50" onClick={() => copyJson(profile)} title="Copy JSON to clipboard">
-                          <UiIcon kind="copy" />
-                        </button>
-                      </td>
-                      <td className="py-2 px-2 text-center align-top">
-                        <button className="px-2 py-1 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50" onClick={() => copyCli(profile)} title="Copy CLI command to clipboard">
-                          <UiIcon kind="terminal" />
-                        </button>
-                      </td>
-                      <td className="py-2 px-2 text-center align-top">
-                        <button className="px-2 py-1 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50" onClick={() => showInfo(profile)} title="Show instructions">
-                          <UiIcon kind="info" />
-                        </button>
-                      </td>
-                      <td className="py-2 pl-3 text-center border-l-2 border-slate-300 align-top">
-                        <button className="px-2 py-1 border border-red-300 text-red-700 rounded-[10px] bg-red-50 hover:bg-red-100" onClick={() => deleteRow(profile)} title="Delete profile">
-                          <UiIcon kind="trash" className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {!agentProfiles.length && (
-            <div className="text-sm text-slate-500 py-6 text-center">No configured agents yet. Click Add Agent to create one.</div>
-          )}
-
-          <div className="text-xs text-slate-500 mt-3">
-            Profile Storage Location: <span className="font-mono">{settingsConfigsDir || '-'}</span>
-          </div>
-          {settingsError && <div className="text-sm text-red-600 mt-2">{settingsError}</div>}
-        </div>
-
-        <div className="bg-white border border-slate-200 rounded-[10px] p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-800">Agent Security Posture</div>
-              <div className="text-xs text-slate-500">Detection plus safe apply/undo for supported agent config targets.</div>
-            </div>
-            <button
-              onClick={fetchAgentPosture}
-              className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-xs bg-white hover:bg-slate-50"
-              disabled={agentPostureLoading}
+        <div style={{ display: 'grid', gridTemplateColumns: '260px minmax(0, 1fr)', gap: 12 }}>
+          <div className="bg-white border border-slate-200 rounded-[10px] overflow-hidden shadow-sm">
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 12px',
+                borderBottom: '1px solid #e5e7eb',
+                background: '#fafafa',
+              }}
             >
-              {agentPostureLoading ? 'Refreshing…' : 'Refresh'}
-            </button>
-          </div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8' }}>
+                AGENTS
+              </div>
+              <button
+                onClick={addProfileRow}
+                className="px-3 py-1.5 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50 text-sm font-semibold"
+              >
+                + Add
+              </button>
+            </div>
 
-          <div className="flex flex-wrap gap-2 mb-3">
-            <span className="badge badge-allowed">Green: {postureTotals.green || 0}</span>
-            <span className="badge badge-pending">Yellow: {postureTotals.yellow || 0}</span>
-            <span className="badge badge-blocked">Red: {postureTotals.red || 0}</span>
-          </div>
-
-          {agentPostureError && <div className="text-sm text-red-600 mb-2">{agentPostureError}</div>}
-
-          <div className="posture-grid">
-            {postureRows.map((row, idx) => {
-              const status = String(row?.status || 'red').toLowerCase()
-              const signals = row?.signals || {}
-              const boolSignals = Object.entries(signals).filter(([, v]) => typeof v === 'boolean')
-              return (
-                <div key={`posture-${row.profile_id || row.agent_id || idx}`} className={`posture-card ${status}`}>
-                  <div className="posture-card-header">
-                    <div>
-                      <span className="agent-name">{row.name || row.profile_id || 'Unnamed Agent'}</span>
-                      <span className="agent-type">{row.agent_type || 'unknown'}</span>
-                      <div className="text-[11px] text-[var(--text-tertiary)] font-mono mt-1">{row.agent_id || '-'}</div>
-                      <div className="text-[11px] text-[var(--text-secondary)] font-mono break-all">{row.workspace || '-'}</div>
+            <div style={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
+              {!agentProfiles.length && (
+                <div style={{ padding: '14px 12px', fontSize: 12, color: '#9ca3af' }}>
+                  No configured agents.
+                </div>
+              )}
+              {agentProfiles.map((profile) => {
+                const posture = postureForProfile(profile)
+                const status = ['green', 'yellow', 'red'].includes(String(posture?.status || '').toLowerCase())
+                  ? String(posture?.status || '').toLowerCase()
+                  : 'red'
+                const pill = statusPillStyle[status]
+                const isActive = String(profile?.profile_id || '') === String(selectedProfile?.profile_id || '')
+                return (
+                  <button
+                    key={profile.profile_id}
+                    type="button"
+                    onClick={() => setSelectedSettingsProfileId(profile.profile_id)}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      border: 'none',
+                      borderLeft: isActive ? '2px solid #4f46e5' : '2px solid transparent',
+                      background: isActive ? '#f5f4ff' : 'white',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      borderBottom: '1px solid #f1f5f9',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: status === 'green' ? '#22c55e' : status === 'yellow' ? '#f59e0b' : '#ef4444',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#1f2937' }}>
+                        {profile.name || profile.agent_id || 'Unnamed Agent'}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 1 }}>
+                        {typeLabelFor(profile)}
+                      </div>
                     </div>
-                    <span className={`posture-badge ${status}`}>
-                      {postureStatusLabel[status] || 'Unprotected'}
+                    <span
+                      style={{
+                        background: pill.bg,
+                        color: pill.fg,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        borderRadius: 6,
+                        padding: '1px 6px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {pill.label}
                     </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div style={{ padding: '8px 12px', borderTop: '1px solid #e5e7eb', fontSize: 10, color: '#64748b' }}>
+              Profile storage: <span className="font-mono">{settingsConfigsDir || '-'}</span>
+            </div>
+          </div>
+
+          <div style={{ minWidth: 0 }}>
+            {!selectedProfile ? (
+              <div className="bg-white border border-slate-200 rounded-[10px] p-4 text-sm text-slate-500 shadow-sm">
+                Select an agent from the left panel to view configuration and posture.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                      <div
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 8,
+                          background: '#f3f4f6',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#6b7280',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        ••
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>
+                          {selectedProfile.name || selectedProfile.agent_id || selectedProfile.profile_id}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>
+                          {typeLabelFor(selectedProfile)} · {selectedProfile.workspace || '-'}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => fetchAgentPosture()}
+                        className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-xs bg-white hover:bg-slate-50"
+                        disabled={agentPostureLoading}
+                      >
+                        {agentPostureLoading ? 'Refreshing…' : 'Refresh'}
+                      </button>
+                      <button
+                        onClick={() => saveRow(selectedProfile)}
+                        className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-sm bg-white hover:bg-slate-50 font-semibold"
+                        disabled={settingsLoading}
+                      >
+                        {settingsLoading ? 'Working…' : 'Regenerate'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-[10px] overflow-hidden shadow-sm">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '10px 14px', borderBottom: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#334155' }}>Configuration</div>
+                    <div style={{ fontSize: 10, color: '#94a3b8' }}>
+                      {selectedProfile.last_generated_at ? `Generated ${relativeTime(selectedProfile.last_generated_at)}` : 'Not generated yet'}
+                    </div>
                   </div>
 
-                  <div className="text-[11px] text-[var(--text-secondary)] mb-3">{row.rationale || ''}</div>
-                  <div className="posture-signals">
-                    {boolSignals.map(([k, v]) => (
-                      <span key={`${row.profile_id}-${k}`} className="signal-indicator">
-                        <span className={`dot ${v ? 'active' : 'inactive'}`} />
-                        <span>{k.replaceAll('_', ' ')}</span>
-                      </span>
+                  <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0,1fr) 36px', gap: 8, padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Agent type</div>
+                    <select
+                      value={selectedProfile.agent_type || 'claude_code'}
+                      onChange={(e) => updateProfile(selectedProfile.profile_id, { agent_type: e.target.value })}
+                      style={{ maxWidth: 240, fontSize: 12 }}
+                    >
+                      {agentTypes.map((opt) => <option key={opt.id} value={opt.id}>{opt.label}</option>)}
+                    </select>
+                    <div />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0,1fr) 36px', gap: 8, padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Agent ID</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#111827', wordBreak: 'break-all' }}>
+                      {selectedProfile.agent_id || '-'}
+                    </div>
+                    <button
+                      title="Edit agent ID"
+                      style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+                      onClick={() => {
+                        const next = window.prompt('Agent ID', String(selectedProfile.agent_id || ''))
+                        if (next === null) return
+                        updateProfile(selectedProfile.profile_id, { agent_id: next })
+                      }}
+                    >
+                      ✎
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0,1fr) 36px', gap: 8, padding: '10px 14px', alignItems: 'center' }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Workspace</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#111827', wordBreak: 'break-all' }}>
+                      {selectedProfile.workspace || '-'}
+                    </div>
+                    <button
+                      title="Edit workspace"
+                      style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer' }}
+                      onClick={() => {
+                        const next = window.prompt('Workspace', String(selectedProfile.workspace || runtimePaths.AIRG_WORKSPACE || ''))
+                        if (next === null) return
+                        updateProfile(selectedProfile.profile_id, { workspace: next })
+                      }}
+                    >
+                      ✎
+                    </button>
+                  </div>
+
+                  <div style={{ padding: '12px 14px', borderTop: '1px solid #e5e7eb', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => copyJson(selectedProfile)}
+                      className="px-3 py-2 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50 text-sm font-semibold"
+                      disabled={settingsLoading}
+                    >
+                      Copy MCP JSON
+                    </button>
+                    <button
+                      onClick={() => copyCli(selectedProfile)}
+                      className="px-3 py-2 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50 text-sm font-semibold"
+                      disabled={settingsLoading}
+                    >
+                      Copy CLI command
+                    </button>
+                    <button
+                      onClick={() => openConfig(selectedProfile)}
+                      className="px-3 py-2 border border-slate-300 rounded-[10px] bg-white hover:bg-slate-50 text-sm"
+                      disabled={!selectedProfile.last_saved_path || settingsLoading}
+                    >
+                      Open config
+                    </button>
+                    <button
+                      onClick={() => deleteRow(selectedProfile)}
+                      className="px-3 py-2 border border-red-300 text-red-700 rounded-[10px] bg-red-50 hover:bg-red-100 text-sm"
+                      disabled={settingsLoading}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  className="rounded-[10px] border shadow-sm overflow-hidden"
+                  style={{ borderColor: selectedTheme.border, background: selectedTheme.bg }}
+                >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '48px minmax(0,1fr) auto',
+                      gap: 12,
+                      alignItems: 'center',
+                      padding: '12px 14px',
+                      borderBottom: `1px solid ${selectedTheme.border}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: '50%',
+                        background: selectedTheme.iconBg,
+                        color: selectedTheme.iconFg,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 16,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {selectedTheme.icon}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: selectedTheme.iconFg }}>
+                        {selectedTheme.label}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{ceilingNote}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {canApplyHardening && (
+                        <button
+                          onClick={() => applyHardeningForProfile(selectedPosture || selectedProfile)}
+                          className="px-3 py-2 rounded-[10px] bg-white border border-slate-300 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+                          disabled={Boolean(agentConfigActionLoading[selectedProfile.profile_id])}
+                        >
+                          {agentConfigActionLoading[selectedProfile.profile_id] ? 'Applying…' : 'Apply hardening'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => undoHardeningForProfile(selectedPosture || selectedProfile)}
+                        className="px-3 py-2 rounded-[10px] bg-white border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-50"
+                        disabled={Boolean(agentConfigActionLoading[selectedProfile.profile_id]) || !Boolean(selectedPosture?.undo_available)}
+                      >
+                        Undo last apply
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ background: 'white' }}>
+                    {signalRows.map((row) => (
+                      <div
+                        key={row.key}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '20px minmax(0,1fr) minmax(0,220px)',
+                          gap: 10,
+                          alignItems: 'start',
+                          padding: '10px 14px',
+                          borderBottom: '1px solid #f1f5f9',
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 11,
+                            marginTop: 2,
+                            background: row.state === 'pass' ? '#dcfce7' : row.state === 'na' ? '#f3f4f6' : '#fee2e2',
+                            color: row.state === 'pass' ? '#15803d' : row.state === 'na' ? '#94a3b8' : '#dc2626',
+                          }}
+                        >
+                          {row.state === 'pass' ? '✓' : row.state === 'na' ? '—' : '✕'}
+                        </span>
+                        <div style={{ fontSize: 12, color: '#1f2937', lineHeight: 1.3 }}>{row.label}</div>
+                        <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.3 }}>{row.detail}</div>
+                      </div>
                     ))}
                   </div>
-
-                  {Array.isArray(row?.missing_controls) && row.missing_controls.length > 0 && (
-                    <div className="posture-recommendations mt-2">
-                      {row.missing_controls.map((item) => (
-                        <span key={`${row.profile_id}-${item}`} className="recommendation-chip">{item}</span>
-                      ))}
-                    </div>
-                  )}
-
-                  {['claude_code', 'claude_desktop', 'cursor'].includes(String(row?.agent_type || '').toLowerCase()) && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        onClick={() => applyHardeningForProfile(row)}
-                        className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50 disabled:opacity-50"
-                        disabled={Boolean(agentConfigActionLoading[row.profile_id])}
-                      >
-                        {agentConfigActionLoading[row.profile_id] ? 'Applying…' : 'Apply Hardening'}
-                      </button>
-                      <button
-                        onClick={() => undoHardeningForProfile(row)}
-                        className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50 disabled:opacity-50"
-                        disabled={Boolean(agentConfigActionLoading[row.profile_id]) || !Boolean(row?.undo_available)}
-                      >
-                        Undo Last Apply
-                      </button>
-                    </div>
-                  )}
                 </div>
-              )
-            })}
-          </div>
 
-          {!postureRows.length && !agentPostureLoading && <div className="text-sm text-slate-500 py-4 text-center">No posture data available yet.</div>}
-
-          <div className="mt-3 pt-3 border-t border-slate-200">
-            <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Claude Hook Setup Snippet</div>
-            <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-slate-50 border border-slate-200 rounded p-2 mb-2">{hookSnippet}</pre>
-            <div className="flex flex-wrap gap-2 mb-2">
-              <button
-                onClick={() => setCopyAssistModal({ open: true, title: 'Claude Hook Setup Snippet', content: hookSnippet })}
-                className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50"
-              >
-                Copy Hook Snippet
-              </button>
-              <button
-                onClick={() => setCopyAssistModal({ open: true, title: 'Claude Baseline Hardening Snippet', content: claudeHardenSnippet })}
-                className="px-2 py-1 border border-slate-300 rounded text-xs bg-white hover:bg-slate-50"
-              >
-                Copy Hardening Snippet
-              </button>
-            </div>
-            <div className="text-xs text-slate-500 mb-3">Dev2 can apply/undo baseline hardening directly for supported profiles. Keep snippets for manual review/customization.</div>
-          </div>
-
-          <div className="mt-1 pt-3 border-t border-slate-200">
-            <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Recommended Next Actions</div>
-            {postureRows.length ? (
-              <div className="space-y-2 mb-3">
-                {postureRows.map((row, idx) => (
-                  <div key={`advice-${row.profile_id || idx}`} className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-50">
-                    <div className="font-medium text-slate-700 mb-1">{row.name || row.profile_id || row.agent_id || 'Agent'}</div>
-                    {Array.isArray(row?.recommended_actions) && row.recommended_actions.length ? (
-                      row.recommended_actions.map((line, ix) => (
-                        <div key={`${row.profile_id || idx}-line-${ix}`} className="text-slate-600">- {line}</div>
-                      ))
-                    ) : (
-                      <div className="text-slate-500">No recommendations.</div>
-                    )}
+                {selectedRecommendations.length > 0 && selectedStatusNormalized !== 'green' && (
+                  <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8', marginBottom: 8 }}>
+                      RECOMMENDED NEXT ACTIONS
+                    </div>
+                    <ul style={{ paddingLeft: 16, margin: 0 }}>
+                      {selectedRecommendations.map((line, idx) => (
+                        <li key={`rec-${idx}`} style={{ fontSize: 12, color: '#334155', marginBottom: 6, lineHeight: 1.4 }}>
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-slate-500 mb-3">No posture rows available.</div>
-            )}
-          </div>
+                )}
 
-          <div className="mt-1 pt-3 border-t border-slate-200">
-            <div className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">Unregistered Agent Configs Detected</div>
-            {postureDiscovered.length ? (
-              <div className="space-y-1">
-                {postureDiscovered.map((item, idx) => (
-                  <div key={`${item.path}-${idx}`} className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-50">
-                    <span className="font-medium text-slate-700">{item.agent_type || 'agent'}</span>
-                    <span className="text-slate-500"> ({item.scope || 'unknown'})</span>
-                    <div className="font-mono text-[11px] text-slate-600 break-all">{item.path}</div>
+                {(selectedDirty || selectedNeedsReconfigure) && (
+                  <div className="bg-white border border-slate-200 rounded-[10px] px-3 py-2 text-xs text-slate-600 shadow-sm">
+                    {selectedDirty && <div>Unsaved profile changes detected.</div>}
+                    {selectedNeedsReconfigure && <div>MCP reconfiguration required for this agent after profile changes.</div>}
                   </div>
-                ))}
+                )}
               </div>
-            ) : (
-              <div className="text-xs text-slate-500">No additional config files detected outside registered profiles.</div>
             )}
           </div>
         </div>
 
+        {postureDiscovered.length > 0 && (
+          <div className="bg-white border border-slate-200 rounded-[10px] p-3 shadow-sm">
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8', marginBottom: 8 }}>
+              UNREGISTERED AGENT CONFIGS DETECTED
+            </div>
+            <div className="space-y-1">
+              {postureDiscovered.map((item, idx) => (
+                <div key={`${item.path}-${idx}`} className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-50">
+                  <span className="font-medium text-slate-700">{item.agent_type || 'agent'}</span>
+                  <span className="text-slate-500"> ({item.scope || 'unknown'})</span>
+                  <div className="font-mono text-[11px] text-slate-600 break-all">{item.path}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -4743,6 +5894,182 @@ export default function App() {
     )
   }
 
+  function OverrideDiffModal() {
+    if (!overrideDiffModal.open) return null
+    return (
+      <div
+        className="fixed inset-0 z-30 flex items-center justify-center p-4"
+        style={{ background: 'rgba(0,0,0,0.35)' }}
+        onClick={() => setOverrideDiffModal({ open: false, agentId: '', lines: [] })}
+      >
+        <div
+          className="bg-white border border-slate-200 rounded-[10px] p-4 w-full"
+          style={{ minWidth: 380, maxWidth: 500, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', marginBottom: 4 }}>
+            Policy diff — {overrideDiffModal.agentId}
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>
+            Changes from baseline for this agent
+          </div>
+
+          {overrideDiffModal.lines.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#9ca3af', fontStyle: 'italic' }}>
+              No differences from baseline.
+            </div>
+          ) : overrideDiffModal.lines.map((line, i) => (
+            <div
+              key={`diff-${i}-${line.text}`}
+              style={{
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: 8,
+                padding: '3px 8px',
+                borderRadius: 4,
+                marginBottom: 3,
+                fontSize: 12,
+                fontFamily: 'monospace',
+                background: line.type === 'added' ? '#f0fdf4' : '#fff5f5',
+                color: line.type === 'added' ? '#15803d' : '#dc2626',
+              }}
+            >
+              <span style={{ fontWeight: 700, flexShrink: 0 }}>{line.type === 'added' ? '+' : '−'}</span>
+              <span>{line.text}</span>
+            </div>
+          ))}
+
+          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setOverrideDiffModal({ open: false, agentId: '', lines: [] })}
+              style={{
+                background: '#4f46e5',
+                color: 'white',
+                border: 'none',
+                borderRadius: 5,
+                padding: '6px 16px',
+                fontSize: 11,
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function OverrideBaselineModal() {
+    if (!overrideBaselineModal.open) return null
+    const baselineData = isPlainObject(overrideBaselineModal.baselineData) ? overrideBaselineModal.baselineData : {}
+    const fieldLabels = {
+      commands: 'Commands',
+      paths: 'Paths',
+      extensions: 'Extensions',
+      paths_whitelist: 'Paths whitelist',
+      blocked_domains: 'Blocked domains',
+      allowed_domains: 'Allowed domains',
+      exempt_commands: 'Exempt commands',
+    }
+    const arrayEntries = Object.entries(baselineData).filter(([, values]) => Array.isArray(values) && values.length > 0)
+    const scalarEntries = Object.entries(baselineData).filter(([, values]) => !Array.isArray(values) && (typeof values === 'string' || typeof values === 'number' || typeof values === 'boolean'))
+
+    return (
+      <div
+        className="fixed inset-0 z-30 flex items-center justify-center p-4"
+        style={{ background: 'rgba(0,0,0,0.35)' }}
+        onClick={() => setOverrideBaselineModal({ open: false, sectionLabel: '', baselineData: {} })}
+      >
+        <div
+          className="bg-white border border-slate-200 rounded-[10px] p-4 w-full"
+          style={{ minWidth: 340, maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', marginBottom: 4 }}>
+            {overrideBaselineModal.sectionLabel} — baseline
+          </div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>
+            Current global policy values for this section
+          </div>
+
+          {arrayEntries.map(([field, values]) => (
+            <div key={`baseline-array-${field}`} style={{ marginBottom: 12 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: '#9ca3af',
+                  marginBottom: 6,
+                }}
+              >
+                {fieldLabels[field] || field}
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#374151', lineHeight: 1.8 }}>
+                {values.map((value, i) => (
+                  <div key={`baseline-item-${field}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#9ca3af' }}>·</span> {value}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {scalarEntries.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: '#9ca3af',
+                  marginBottom: 6,
+                }}
+              >
+                Settings
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, color: '#374151', lineHeight: 1.8 }}>
+                {scalarEntries.map(([field, value]) => (
+                  <div key={`baseline-scalar-${field}`} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: '#9ca3af' }}>·</span> {field}: {String(value)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {arrayEntries.length === 0 && scalarEntries.length === 0 && (
+            <div style={{ fontSize: 12, color: '#9ca3af', fontStyle: 'italic' }}>
+              No baseline values configured for this section.
+            </div>
+          )}
+
+          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setOverrideBaselineModal({ open: false, sectionLabel: '', baselineData: {} })}
+              style={{
+                background: '#4f46e5',
+                color: 'white',
+                border: 'none',
+                borderRadius: 5,
+                padding: '6px 16px',
+                fontSize: 11,
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className='airg-app-shell relative min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] overflow-hidden'>
       <div className="relative z-10 mx-auto max-w-[1720px] border border-[var(--border-default)] overflow-hidden bg-[var(--bg-app)] shadow-sm h-screen grid grid-cols-[var(--sidebar-width)_1fr]">
@@ -4778,7 +6105,12 @@ export default function App() {
               <div className="text-lg font-semibold text-[var(--text-primary)] title">{pageTitle}</div>
               <div className="text-xs text-[var(--text-secondary)] mt-0.5 flex flex-wrap items-center gap-3">
                 {policyHash && <span className="font-mono hash">hash {String(policyHash).slice(0, 12)}</span>}
-                {unsaved && <span className="inline-flex items-center gap-1 text-[var(--status-amber)]"><span className="w-1.5 h-1.5 rounded-full bg-[var(--status-amber)]" />Unsaved changes</span>}
+                {unsaved && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#d97706' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                    Unsaved changes
+                  </span>
+                )}
               </div>
             </div>
             {activeRail === 'policy' && (
@@ -4830,6 +6162,8 @@ export default function App() {
       {CommandEditModal()}
       {ValidationErrorModal()}
       {CopyAssistModal()}
+      {OverrideDiffModal()}
+      {OverrideBaselineModal()}
     </div>
   )
 }
