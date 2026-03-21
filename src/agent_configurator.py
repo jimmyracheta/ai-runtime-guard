@@ -9,50 +9,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-SENSITIVE_READ_DENY = [
-    "Read(.env*)",
-    "Read(**/*.key)",
-    "Read(**/*.pem)",
-    "Read(**/secrets/**)",
-]
-
-CLAUDE_HARDEN_FRAGMENT: dict[str, Any] = {
-    "permissions": {
-        "deny": ["Bash", "Write", "Edit", "MultiEdit", *SENSITIVE_READ_DENY],
-        "allow": [
-            "mcp__ai-runtime-guard__execute_command",
-            "mcp__ai-runtime-guard__write_file",
-            "mcp__ai-runtime-guard__read_file",
-            "mcp__ai-runtime-guard__list_directory",
-            "mcp__ai-runtime-guard__restore_backup",
-            "Read",
-            "Glob",
-            "Grep",
-            "LS",
-            "Task",
-            "WebSearch",
-        ],
-        "disableBypassPermissionsMode": "disable",
-    },
-    "hooks": {
-        "PreToolUse": [
-            {
-                "matcher": "*",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "airg-hook",
-                    }
-                ],
-            }
-        ]
-    },
-    "sandbox": {
-        "enabled": True,
-        "autoAllowBashIfSandboxed": False,
-        "allowUnsandboxedCommands": False,
-    },
-}
+CLAUDE_NATIVE_TOOLS = ["Bash", "Glob", "Grep", "Read", "Write", "Edit", "MultiEdit"]
+CLAUDE_SCOPES = {"local", "project", "user"}
 
 
 def _now_iso() -> str:
@@ -236,6 +194,168 @@ def _workspace_path(profile: dict[str, Any]) -> pathlib.Path:
 
 def _settings_local_path(workspace: pathlib.Path) -> pathlib.Path:
     return workspace / ".claude" / "settings.local.json"
+
+
+def _settings_project_path(workspace: pathlib.Path) -> pathlib.Path:
+    return workspace / ".claude" / "settings.json"
+
+
+def _settings_user_path() -> pathlib.Path:
+    return _home() / ".claude" / "settings.json"
+
+
+def _claude_settings_path_for_scope(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    normalized = str(scope or "").strip().lower()
+    if normalized == "project":
+        return _settings_project_path(workspace)
+    if normalized == "user":
+        return _settings_user_path()
+    return _settings_local_path(workspace)
+
+
+def _normalize_claude_scope(raw_scope: Any) -> str:
+    requested = str(raw_scope or "").strip().lower()
+    if requested in CLAUDE_SCOPES:
+        return requested
+    return "local"
+
+
+def _normalize_claude_hardening_options(profile: dict[str, Any], options: dict[str, Any] | None) -> dict[str, Any]:
+    payload = options if isinstance(options, dict) else {}
+    selected_scope = _normalize_claude_scope(payload.get("scope") or profile.get("agent_scope") or "local")
+
+    raw_tools = payload.get("native_tools", CLAUDE_NATIVE_TOOLS)
+    if isinstance(raw_tools, dict):
+        selected_tools = [tool for tool in CLAUDE_NATIVE_TOOLS if bool(raw_tools.get(tool, False))]
+    elif isinstance(raw_tools, list):
+        selected_tools = [tool for tool in CLAUDE_NATIVE_TOOLS if tool in {str(t).strip() for t in raw_tools}]
+    else:
+        selected_tools = list(CLAUDE_NATIVE_TOOLS)
+
+    return {
+        "scope": selected_scope,
+        "hook_enabled": bool(payload.get("hook_enabled", True)),
+        "restrict_native_tools": bool(payload.get("restrict_native_tools", True)),
+        "native_tools": selected_tools,
+        "sandbox_enabled": bool(payload.get("sandbox_enabled", True)),
+        "sandbox_escape_closed": bool(payload.get("sandbox_escape_closed", True)),
+    }
+
+
+def _set_deny_tools(settings: dict[str, Any], *, enabled: bool, tools: list[str]) -> None:
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        permissions = {}
+        settings["permissions"] = permissions
+    deny = permissions.get("deny")
+    deny_list = [str(item).strip() for item in deny if str(item).strip()] if isinstance(deny, list) else []
+    managed_set = set(CLAUDE_NATIVE_TOOLS)
+    selected = {tool for tool in tools if tool in managed_set}
+    if enabled:
+        for tool in selected:
+            if tool not in deny_list:
+                deny_list.append(tool)
+    else:
+        deny_list = [item for item in deny_list if item not in managed_set]
+    if deny_list:
+        permissions["deny"] = deny_list
+    else:
+        permissions.pop("deny", None)
+    if not permissions:
+        settings.pop("permissions", None)
+
+
+def _set_airg_hook(settings: dict[str, Any], *, enabled: bool) -> None:
+    hooks_payload = settings.get("hooks")
+    hooks = hooks_payload if isinstance(hooks_payload, dict) else {}
+    pre = hooks.get("PreToolUse")
+    pre_list = pre if isinstance(pre, list) else []
+
+    if enabled:
+        for matcher in pre_list:
+            if not isinstance(matcher, dict):
+                continue
+            hook_list = matcher.get("hooks")
+            if not isinstance(hook_list, list):
+                continue
+            for hook in hook_list:
+                if isinstance(hook, dict) and str(hook.get("command", "")).strip() == "airg-hook":
+                    settings["hooks"] = hooks
+                    return
+        pre_list.append(
+            {
+                "matcher": "*",
+                "hooks": [{"type": "command", "command": "airg-hook"}],
+            }
+        )
+        hooks["PreToolUse"] = pre_list
+        settings["hooks"] = hooks
+        return
+
+    cleaned_pre: list[dict[str, Any]] = []
+    for matcher in pre_list:
+        if not isinstance(matcher, dict):
+            continue
+        hook_list = matcher.get("hooks")
+        if not isinstance(hook_list, list):
+            continue
+        filtered_hooks = [
+            hook
+            for hook in hook_list
+            if not (isinstance(hook, dict) and str(hook.get("command", "")).strip() == "airg-hook")
+        ]
+        if filtered_hooks:
+            next_matcher = dict(matcher)
+            next_matcher["hooks"] = filtered_hooks
+            cleaned_pre.append(next_matcher)
+    if cleaned_pre:
+        hooks["PreToolUse"] = cleaned_pre
+    else:
+        hooks.pop("PreToolUse", None)
+    if hooks:
+        settings["hooks"] = hooks
+    else:
+        settings.pop("hooks", None)
+
+
+def _set_sandbox_flags(
+    settings: dict[str, Any],
+    *,
+    sandbox_enabled: bool,
+    sandbox_escape_closed: bool,
+) -> None:
+    sandbox_payload = settings.get("sandbox")
+    sandbox = sandbox_payload if isinstance(sandbox_payload, dict) else {}
+    if sandbox_enabled:
+        sandbox["enabled"] = True
+        sandbox["autoAllowBashIfSandboxed"] = False
+    else:
+        sandbox.pop("enabled", None)
+        sandbox.pop("autoAllowBashIfSandboxed", None)
+    if sandbox_escape_closed:
+        sandbox["allowUnsandboxedCommands"] = False
+    else:
+        sandbox.pop("allowUnsandboxedCommands", None)
+    if sandbox:
+        settings["sandbox"] = sandbox
+    else:
+        settings.pop("sandbox", None)
+
+
+def _apply_claude_hardening_to_settings(before: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
+    after = _deep_copy(before)
+    _set_airg_hook(after, enabled=bool(options.get("hook_enabled", True)))
+    _set_deny_tools(
+        after,
+        enabled=bool(options.get("restrict_native_tools", True)),
+        tools=list(options.get("native_tools", []) or []),
+    )
+    _set_sandbox_flags(
+        after,
+        sandbox_enabled=bool(options.get("sandbox_enabled", True)),
+        sandbox_escape_closed=bool(options.get("sandbox_escape_closed", True)),
+    )
+    return after
 
 
 def _cursor_mcp_path(workspace: pathlib.Path) -> pathlib.Path:
@@ -425,20 +545,74 @@ def _mcp_present_for_claude(workspace: pathlib.Path) -> bool:
     return bool(_detect_claude_mcp_locations(workspace))
 
 
+def _apply_claude_mcp_for_scope(
+    paths: dict[str, pathlib.Path],
+    workspace: pathlib.Path,
+    agent_id: str,
+    scope: str,
+) -> dict[str, Any]:
+    normalized_scope = _normalize_claude_scope(scope)
+    server_block = _airg_server_block(paths, workspace, agent_id)
+
+    if normalized_scope == "project":
+        target = _workspace_mcp_path(workspace)
+        before = _read_json_file(target) if target.exists() else {}
+        after = _deep_merge_union(
+            before,
+            {"mcpServers": {"ai-runtime-guard": server_block}},
+        )
+        change = _write_with_backup(target, after)
+        change["scope"] = normalized_scope
+        return change
+
+    claude_local = _home() / ".claude.json"
+    before = _read_json_file(claude_local) if claude_local.exists() else {}
+    after = _deep_copy(before)
+    if normalized_scope == "user":
+        servers = after.get("mcpServers")
+        if not isinstance(servers, dict):
+            servers = {}
+        servers["ai-runtime-guard"] = server_block
+        after["mcpServers"] = servers
+    else:
+        projects = after.get("projects")
+        if not isinstance(projects, dict):
+            projects = {}
+        workspace_key = str(workspace)
+        project_entry = projects.get(workspace_key)
+        if not isinstance(project_entry, dict):
+            project_entry = {}
+        servers = project_entry.get("mcpServers")
+        if not isinstance(servers, dict):
+            servers = {}
+        servers["ai-runtime-guard"] = server_block
+        project_entry["mcpServers"] = servers
+        projects[workspace_key] = project_entry
+        after["projects"] = projects
+    change = _write_with_backup(claude_local, after)
+    change["scope"] = normalized_scope
+    return change
+
+
 def _apply_claude(
     paths: dict[str, pathlib.Path],
     profile: dict[str, Any],
     *,
+    options: dict[str, Any] | None,
     auto_add_mcp: bool,
 ) -> dict[str, Any]:
     workspace = _workspace_path(profile)
     agent_id = str(profile.get("agent_id", "")).strip() or "default"
     profile_id = str(profile.get("profile_id", "")).strip()
+    selected_options = _normalize_claude_hardening_options(profile, options)
+    selected_scope = selected_options["scope"]
 
     changes: list[dict[str, Any]] = []
     preflight = {
         "mcp_locations": _detect_claude_mcp_locations(workspace),
         "mcp_probe_paths": [str(p) for p in _mcp_probe_paths(workspace)],
+        "selected_scope": selected_scope,
+        "settings_target": str(_claude_settings_path_for_scope(workspace, selected_scope)),
     }
     preflight["mcp_present"] = bool(preflight["mcp_locations"])
     preflight["mcp_detected_scopes"] = list(
@@ -462,23 +636,20 @@ def _apply_claude(
                     ],
                     "preflight": preflight,
                 }
-            mcp_target = _workspace_mcp_path(workspace)
-            mcp_overlay = {
-                "mcpServers": {
-                    "ai-runtime-guard": _airg_server_block(paths, workspace, agent_id),
-                }
-            }
-            mcp_before = _read_json_file(mcp_target) if mcp_target.exists() else {}
-            mcp_after = _deep_merge_union(mcp_before, mcp_overlay)
-            changes.append(_write_with_backup(mcp_target, mcp_after))
+            auto_add_scope = selected_scope if selected_scope == "project" else "project"
+            mcp_change = _apply_claude_mcp_for_scope(paths, workspace, agent_id, auto_add_scope)
+            changes.append(mcp_change)
             preflight["mcp_present"] = True
             preflight["mcp_auto_added"] = True
-            preflight["mcp_locations"] = [{"scope": "project", "path": str(mcp_target)}]
-            preflight["mcp_detected_scopes"] = ["project"]
+            preflight["mcp_auto_add_scope"] = auto_add_scope
+            preflight["mcp_locations"] = [
+                {"scope": str(mcp_change.get("scope", auto_add_scope)), "path": str(mcp_change.get("target_path", ""))}
+            ]
+            preflight["mcp_detected_scopes"] = [str(mcp_change.get("scope", auto_add_scope))]
 
-        target = _settings_local_path(workspace)
+        target = _claude_settings_path_for_scope(workspace, selected_scope)
         before = _read_json_file(target) if target.exists() else {}
-        after = _deep_merge_union(before, CLAUDE_HARDEN_FRAGMENT)
+        after = _apply_claude_hardening_to_settings(before, selected_options)
         changes.append(_write_with_backup(target, after))
     except Exception:
         for change in reversed(changes):
@@ -502,6 +673,7 @@ def _apply_claude(
             for c in changes
         ],
         "diff_summary": summary,
+        "applied_options": selected_options,
     }
     _update_profile_state(paths, profile_id, record)
 
@@ -513,6 +685,7 @@ def _apply_claude(
         "changes": changes,
         "diff_summary": summary,
         "preflight": preflight,
+        "applied_options": selected_options,
         "undo_available": True,
     }
 
@@ -562,6 +735,7 @@ def apply_hardening(
     paths: dict[str, pathlib.Path],
     profile: dict[str, Any],
     *,
+    options: dict[str, Any] | None = None,
     auto_add_mcp: bool = False,
 ) -> dict[str, Any]:
     agent_type = str(profile.get("agent_type", "")).strip().lower()
@@ -571,7 +745,7 @@ def apply_hardening(
 
     try:
         if agent_type in {"claude_code", "claude_desktop"}:
-            return _apply_claude(paths, profile, auto_add_mcp=auto_add_mcp)
+            return _apply_claude(paths, profile, options=options, auto_add_mcp=auto_add_mcp)
         if agent_type == "cursor":
             return _apply_cursor(paths, profile)
         return {

@@ -629,6 +629,7 @@ def settings_agents_config_apply():
     payload = request.get_json(silent=True) or {}
     profile_id = str(payload.get("profile_id", "")).strip()
     auto_add_mcp = bool(payload.get("auto_add_mcp", False))
+    options = payload.get("options", {})
     if not profile_id:
         return jsonify({"ok": False, "errors": ["profile_id is required"]}), 400
     paths = _agent_paths()
@@ -636,7 +637,12 @@ def settings_agents_config_apply():
     profile = _profile_by_id(profiles, profile_id)
     if not isinstance(profile, dict):
         return jsonify({"ok": False, "errors": ["Profile not found"]}), 404
-    result = agent_configurator.apply_hardening(paths, profile, auto_add_mcp=auto_add_mcp)
+    result = agent_configurator.apply_hardening(
+        paths,
+        profile,
+        options=options if isinstance(options, dict) else None,
+        auto_add_mcp=auto_add_mcp,
+    )
     if not result.get("ok"):
         status = 409 if result.get("requires_mcp") else 400
         return jsonify(result), status

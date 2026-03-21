@@ -316,12 +316,16 @@ export default function App() {
   const [activeSettingsTab, setActiveSettingsTab] = useState('agents')
   const [agentProfiles, setAgentProfiles] = useState([])
   const [agentTypes, setAgentTypes] = useState([])
+  const [agentScopeOptions, setAgentScopeOptions] = useState({})
   const [settingsConfigsDir, setSettingsConfigsDir] = useState('')
   const [settingsLoading, setSettingsLoading] = useState(false)
   const [settingsError, setSettingsError] = useState('')
   const [selectedSettingsProfileId, setSelectedSettingsProfileId] = useState('')
   const [settingsSavedProfiles, setSettingsSavedProfiles] = useState({})
   const [settingsNeedsReconfigure, setSettingsNeedsReconfigure] = useState({})
+  const [generatedCliByProfile, setGeneratedCliByProfile] = useState({})
+  const [hardeningPanelOpenByProfile, setHardeningPanelOpenByProfile] = useState({})
+  const [hardeningOptionsByProfile, setHardeningOptionsByProfile] = useState({})
   const [agentPosture, setAgentPosture] = useState({ profiles: [], discovered_unregistered: [], totals: { green: 0, yellow: 0, red: 0 } })
   const [agentPostureLoading, setAgentPostureLoading] = useState(false)
   const [agentPostureError, setAgentPostureError] = useState('')
@@ -354,6 +358,11 @@ export default function App() {
     details: '',
   })
   const [copyAssistModal, setCopyAssistModal] = useState({
+    open: false,
+    title: '',
+    content: '',
+  })
+  const [settingsInfoModal, setSettingsInfoModal] = useState({
     open: false,
     title: '',
     content: '',
@@ -451,6 +460,30 @@ export default function App() {
   }, [agentProfiles])
 
   useEffect(() => {
+    setHardeningOptionsByProfile((prev) => {
+      const next = { ...prev }
+      const activeIds = new Set()
+      ;(agentProfiles || []).forEach((profile) => {
+        const profileId = String(profile?.profile_id || '').trim()
+        if (!profileId) return
+        activeIds.add(profileId)
+        if (!next[profileId]) {
+          next[profileId] = defaultHardeningOptionsForProfile(profile)
+        } else {
+          next[profileId] = {
+            ...next[profileId],
+            scope: normalizeScopeForAgentType(profile?.agent_type, next[profileId]?.scope || profile?.agent_scope),
+          }
+        }
+      })
+      Object.keys(next).forEach((profileId) => {
+        if (!activeIds.has(profileId)) delete next[profileId]
+      })
+      return next
+    })
+  }, [agentProfiles, agentScopeOptions])
+
+  useEffect(() => {
     return () => {
       if (validateTimerRef.current) clearTimeout(validateTimerRef.current)
       if (applyTimerRef.current) clearTimeout(applyTimerRef.current)
@@ -516,11 +549,68 @@ export default function App() {
       profile_id: `profile-${Date.now()}`,
       name: '',
       agent_type: 'claude_code',
+      agent_scope: 'local',
       workspace: '',
       agent_id: '',
       last_generated_at: '',
       last_saved_path: '',
       last_saved_instructions_path: '',
+    }
+  }
+
+  function defaultScopeForAgentType(agentType) {
+    const normalized = String(agentType || '').trim().toLowerCase()
+    if (normalized === 'claude_code') return 'local'
+    if (normalized === 'codex') return 'global'
+    return 'default'
+  }
+
+  function scopeOptionsForAgentType(agentType) {
+    const normalized = String(agentType || '').trim().toLowerCase()
+    const configured = Array.isArray(agentScopeOptions?.[normalized]) ? agentScopeOptions[normalized] : []
+    if (configured.length) return configured
+    if (normalized === 'claude_code') {
+      return [
+        { id: 'local', label: 'Local' },
+        { id: 'project', label: 'Project' },
+        { id: 'user', label: 'User' },
+      ]
+    }
+    if (normalized === 'codex') {
+      return [
+        { id: 'global', label: 'Global' },
+        { id: 'project', label: 'Project' },
+      ]
+    }
+    return [{ id: 'default', label: 'Default' }]
+  }
+
+  function normalizeScopeForAgentType(agentType, scopeValue) {
+    const options = scopeOptionsForAgentType(agentType)
+    const allowed = new Set(options.map((item) => String(item?.id || '').trim().toLowerCase()).filter(Boolean))
+    const requested = String(scopeValue || '').trim().toLowerCase()
+    if (allowed.has(requested)) return requested
+    return defaultScopeForAgentType(agentType)
+  }
+
+  function defaultHardeningOptionsForProfile(profile) {
+    const agentType = String(profile?.agent_type || '').trim().toLowerCase()
+    const scope = normalizeScopeForAgentType(agentType, profile?.agent_scope || defaultScopeForAgentType(agentType))
+    return {
+      scope,
+      hook_enabled: true,
+      restrict_native_tools: true,
+      native_tools: {
+        Bash: true,
+        Glob: true,
+        Grep: true,
+        Read: true,
+        Write: true,
+        Edit: true,
+        MultiEdit: true,
+      },
+      sandbox_enabled: true,
+      sandbox_escape_closed: true,
     }
   }
 
@@ -532,6 +622,7 @@ export default function App() {
       out[id] = {
         name: String(p?.name || '').trim(),
         agent_type: String(p?.agent_type || '').trim(),
+        agent_scope: String(p?.agent_scope || '').trim(),
         agent_id: String(p?.agent_id || '').trim(),
         workspace: String(p?.workspace || '').trim(),
       }
@@ -549,6 +640,7 @@ export default function App() {
       setAgentProfiles(payload.profiles || [])
       setSettingsSavedProfiles(profileSnapshotMap(payload.profiles || []))
       setAgentTypes(payload.agent_types || [])
+      setAgentScopeOptions(payload.agent_scopes || {})
       setSettingsConfigsDir(payload.configs_dir || '')
     } catch (err) {
       setSettingsError(String(err.message || err))
@@ -719,11 +811,11 @@ export default function App() {
     }
   }
 
-  async function applyAgentConfigHardening(profileId, { autoAddMcp = false } = {}) {
+  async function applyAgentConfigHardening(profileId, { autoAddMcp = false, options = null } = {}) {
     const res = await fetch(`${API_BASE}/settings/agents/config-apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId, auto_add_mcp: autoAddMcp }),
+      body: JSON.stringify({ profile_id: profileId, auto_add_mcp: autoAddMcp, options }),
     })
     const payload = await res.json().catch(() => ({}))
     if (!res.ok || !payload.ok) {
@@ -4998,13 +5090,20 @@ export default function App() {
 
     const updateProfile = (profileId, patch) => {
       setAgentProfiles((prev) =>
-        prev.map((item) => (item.profile_id === profileId ? { ...item, ...patch } : item))
+        prev.map((item) => {
+          if (item.profile_id !== profileId) return item
+          const candidate = { ...item, ...patch }
+          const nextType = String(candidate?.agent_type || '').trim().toLowerCase()
+          const nextScope = normalizeScopeForAgentType(nextType, candidate?.agent_scope)
+          return { ...candidate, agent_scope: nextScope }
+        })
       )
     }
 
     const profileComparable = (profile) => ({
       name: String(profile?.name || '').trim(),
       agent_type: String(profile?.agent_type || '').trim(),
+      agent_scope: String(profile?.agent_scope || '').trim(),
       agent_id: String(profile?.agent_id || '').trim(),
       workspace: String(profile?.workspace || '').trim(),
     })
@@ -5056,7 +5155,14 @@ export default function App() {
       const hadSavedConfig = Boolean(profile?.last_saved_path)
       try {
         await upsertSettingsProfile(profile)
-        await generateAgentConfig(profile.profile_id, true)
+        const generated = await generateAgentConfig(profile.profile_id, true)
+        setGeneratedCliByProfile((prev) => ({
+          ...prev,
+          [profileId]: {
+            add: String(generated?.generated?.command_text || '').trim(),
+            remove: String(generated?.generated?.remove_command || '').trim(),
+          },
+        }))
         if (profileId === 'default-agent') {
           const reconfig = await reconfigureRuntimeProfile(profileId)
           if (reconfig.runtime_env_updated) {
@@ -5074,7 +5180,14 @@ export default function App() {
           if (ok) {
             try {
               await upsertSettingsProfile(profile, { createWorkspace: true })
-              await generateAgentConfig(profile.profile_id, true)
+              const generated = await generateAgentConfig(profile.profile_id, true)
+              setGeneratedCliByProfile((prev) => ({
+                ...prev,
+                [profileId]: {
+                  add: String(generated?.generated?.command_text || '').trim(),
+                  remove: String(generated?.generated?.remove_command || '').trim(),
+                },
+              }))
               if (profileId === 'default-agent') {
                 const reconfig = await reconfigureRuntimeProfile(profileId)
                 if (reconfig.runtime_env_updated) {
@@ -5112,6 +5225,13 @@ export default function App() {
       try {
         await upsertSettingsProfile(profile)
         const payload = await generateAgentConfig(profile.profile_id, false)
+        setGeneratedCliByProfile((prev) => ({
+          ...prev,
+          [String(profile?.profile_id || '').trim()]: {
+            add: String(payload?.generated?.command_text || '').trim(),
+            remove: String(payload?.generated?.remove_command || '').trim(),
+          },
+        }))
         setCopyAssistModal({
           open: true,
           title: 'Copy JSON Configuration',
@@ -5136,6 +5256,13 @@ export default function App() {
       try {
         await upsertSettingsProfile(profile)
         const payload = await generateAgentConfig(profile.profile_id, false)
+        setGeneratedCliByProfile((prev) => ({
+          ...prev,
+          [String(profile?.profile_id || '').trim()]: {
+            add: String(payload?.generated?.command_text || '').trim(),
+            remove: String(payload?.generated?.remove_command || '').trim(),
+          },
+        }))
         setCopyAssistModal({
           open: true,
           title: 'Copy CLI Command',
@@ -5195,12 +5322,32 @@ export default function App() {
           delete out[profile.profile_id]
           return out
         })
+        setGeneratedCliByProfile((prev) => {
+          const out = { ...prev }
+          delete out[profile.profile_id]
+          return out
+        })
+        setHardeningOptionsByProfile((prev) => {
+          const out = { ...prev }
+          delete out[profile.profile_id]
+          return out
+        })
+        setHardeningPanelOpenByProfile((prev) => {
+          const out = { ...prev }
+          delete out[profile.profile_id]
+          return out
+        })
         setSelectedSettingsProfileId((prev) => (prev === profile.profile_id ? '' : prev))
         setMessage('Profile deleted')
       } catch (err) {
         const msg = String(err.message || err)
         if (msg.toLowerCase().includes('profile not found')) {
           setAgentProfiles((prev) => prev.filter((item) => item.profile_id !== profile.profile_id))
+          setGeneratedCliByProfile((prev) => {
+            const out = { ...prev }
+            delete out[profile.profile_id]
+            return out
+          })
           setSelectedSettingsProfileId((prev) => (prev === profile.profile_id ? '' : prev))
           setMessage('Profile removed')
         } else {
@@ -5215,13 +5362,45 @@ export default function App() {
       setAgentConfigActionLoading((prev) => ({ ...prev, [profileId]: value }))
     }
 
+    const setHardeningOption = (profileId, patch) => {
+      setHardeningOptionsByProfile((prev) => ({
+        ...prev,
+        [profileId]: { ...(prev[profileId] || defaultHardeningOptionsForProfile(selectedProfile || {})), ...patch },
+      }))
+    }
+
+    const setHardeningToolOption = (profileId, tool, enabled) => {
+      setHardeningOptionsByProfile((prev) => {
+        const current = prev[profileId] || defaultHardeningOptionsForProfile(selectedProfile || {})
+        const currentTools = current?.native_tools || {}
+        return {
+          ...prev,
+          [profileId]: {
+            ...current,
+            native_tools: {
+              ...currentTools,
+              [tool]: Boolean(enabled),
+            },
+          },
+        }
+      })
+    }
+
     const applyHardeningForProfile = async (row, { autoAddMcp = false } = {}) => {
       const profileId = String(row?.profile_id || '').trim()
       if (!profileId) return
       setProfileActionLoading(profileId, true)
       setSettingsError('')
+      const rawOptions = hardeningOptionsByProfile[profileId] || defaultHardeningOptionsForProfile(row || {})
+      const toolToggles = rawOptions?.native_tools || {}
+      const selectedTools = ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'MultiEdit'].filter((tool) => Boolean(toolToggles?.[tool]))
+      const optionsPayload = {
+        ...rawOptions,
+        scope: normalizeScopeForAgentType(row?.agent_type, rawOptions?.scope || row?.agent_scope),
+        native_tools: selectedTools,
+      }
       try {
-        const payload = await applyAgentConfigHardening(profileId, { autoAddMcp })
+        const payload = await applyAgentConfigHardening(profileId, { autoAddMcp, options: optionsPayload })
         const diffSummary = Array.isArray(payload?.diff_summary) ? payload.diff_summary : []
         setMessage(`Hardening applied for ${row?.name || row?.agent_id || profileId}`)
         setCopyAssistModal({
@@ -5237,7 +5416,7 @@ export default function App() {
           )
           if (confirmAutoAdd) {
             try {
-              const retry = await applyAgentConfigHardening(profileId, { autoAddMcp: true })
+              const retry = await applyAgentConfigHardening(profileId, { autoAddMcp: true, options: optionsPayload })
               const diffSummary = Array.isArray(retry?.diff_summary) ? retry.diff_summary : []
               setMessage(`Hardening applied for ${row?.name || row?.agent_id || profileId} (MCP auto-added)`)
               setCopyAssistModal({
@@ -5296,6 +5475,12 @@ export default function App() {
     const selectedStatus = String(selectedPosture?.status || 'red').toLowerCase()
     const selectedStatusNormalized = ['green', 'yellow', 'red'].includes(selectedStatus) ? selectedStatus : 'red'
     const selectedAgentType = String(selectedProfile?.agent_type || '').toLowerCase()
+    const selectedProfileId = String(selectedProfile?.profile_id || '').trim()
+    const selectedScopeOptions = scopeOptionsForAgentType(selectedAgentType)
+    const selectedScopeValue = normalizeScopeForAgentType(selectedAgentType, selectedProfile?.agent_scope || defaultScopeForAgentType(selectedAgentType))
+    const selectedHardeningOptions = hardeningOptionsByProfile[selectedProfileId] || (selectedProfile ? defaultHardeningOptionsForProfile(selectedProfile) : null)
+    const selectedHardeningOpen = Boolean(hardeningPanelOpenByProfile[selectedProfileId])
+    const selectedSignalScopes = selectedPosture?.signal_scopes || {}
     const selectedSignals = selectedPosture?.signals || {}
     const selectedRecommendations = Array.isArray(selectedPosture?.recommended_actions) ? selectedPosture.recommended_actions : []
 
@@ -5313,7 +5498,7 @@ export default function App() {
 
     const selectedTheme = postureCardTheme[selectedStatusNormalized]
     const selectedPill = statusPillStyle[selectedStatusNormalized]
-    const isMcpOnlyCeiling = ['cursor'].includes(selectedAgentType)
+    const isMcpOnlyCeiling = selectedAgentType !== 'claude_code'
 
     const ceilingNote = (() => {
       if (selectedAgentType === 'claude_code') return 'Can reach Green — hooks and permissions available for Claude Code.'
@@ -5334,6 +5519,8 @@ export default function App() {
     const mcpScopeSummary = mcpDetectedScopes.length
       ? `Configured in ${mcpDetectedScopes.map((scope) => mcpScopeLabels[scope] || scope).join(', ')} scope${mcpDetectedScopes.length === 1 ? '' : 's'}`
       : 'Configured'
+    const expectedMcpScope = String(selectedPosture?.mcp_expected_scope || selectedScopeValue || '').trim()
+    const mcpScopeMismatch = Boolean(selectedSignals?.airg_mcp_present) && Boolean(expectedMcpScope) && !mcpDetectedScopes.includes(expectedMcpScope)
 
     const signalRows = [
       { key: 'airg_mcp_present', label: 'AIRG MCP configured', failText: 'Not found in project/local/user/managed MCP config scopes' },
@@ -5345,8 +5532,22 @@ export default function App() {
       const notSupported = isMcpOnlyCeiling && row.key !== 'airg_mcp_present'
       const rawValue = selectedSignals?.[row.key]
       const state = notSupported ? 'na' : (rawValue ? 'pass' : 'fail')
+      const scopeList = Array.isArray(selectedSignalScopes?.[row.key]) ? selectedSignalScopes[row.key] : []
+      const scopeDetail = scopeList.length
+        ? `Configured in ${scopeList.map((scope) => mcpScopeLabels[scope] || scope).join(', ')} scope${scopeList.length === 1 ? '' : 's'}`
+        : 'Configured'
       const detail = state === 'pass'
-        ? (row.key === 'airg_mcp_present' ? mcpScopeSummary : 'Configured')
+        ? (
+          row.key === 'airg_mcp_present'
+            ? mcpScopeSummary
+            : row.key === 'native_tools_restricted'
+              ? (
+                Array.isArray(selectedPosture?.native_tools_denied) && selectedPosture.native_tools_denied.length
+                  ? `Denied: ${selectedPosture.native_tools_denied.join(', ')} · ${scopeDetail}`
+                  : scopeDetail
+              )
+              : scopeDetail
+        )
         : state === 'na'
           ? 'Not supported by this client'
           : row.failText
@@ -5355,7 +5556,6 @@ export default function App() {
 
     const canApplyHardening = Boolean(selectedProfile)
       && selectedAgentType === 'claude_code'
-      && selectedStatusNormalized !== 'green'
 
     const selectedDirty = selectedProfile ? isProfileDirty(selectedProfile) : false
     const selectedNeedsReconfigure = selectedProfile ? Boolean(settingsNeedsReconfigure[selectedProfile.profile_id]) : false
@@ -5545,6 +5745,45 @@ export default function App() {
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0,1fr) 36px', gap: 8, padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
+                    <div style={{ fontSize: 12, color: '#94a3b8' }}>Agent scope</div>
+                    <select
+                      value={selectedScopeValue}
+                      onChange={(e) => updateProfile(selectedProfile.profile_id, { agent_scope: e.target.value })}
+                      style={{ maxWidth: 240, fontSize: 12 }}
+                    >
+                      {selectedScopeOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <button
+                      title="Scope info"
+                      style={{ width: 36, height: 36, borderRadius: 8, border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontSize: 12 }}
+                      onClick={() => setSettingsInfoModal({
+                        open: true,
+                        title: 'Agent Scope',
+                        content: [
+                          'Scope controls where MCP and hardening settings are written.',
+                          '',
+                          'Claude Code:',
+                          '- Project: .mcp.json and/or .claude/settings.json in workspace',
+                          '- Local (default): ~/.claude.json project entry + .claude/settings.local.json',
+                          '- User: ~/.claude.json mcpServers + ~/.claude/settings.json',
+                          '',
+                          'Codex:',
+                          '- Global (default): ~/.codex/config.toml',
+                          '- Project: .codex/config.toml in project',
+                          '',
+                          'Official docs:',
+                          '- Claude settings/hooks/sandbox: https://docs.anthropic.com/en/docs/claude-code',
+                          '- Codex MCP: https://platform.openai.com/docs/codex',
+                        ].join('\n'),
+                      })}
+                    >
+                      i
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0,1fr) 36px', gap: 8, padding: '10px 14px', borderBottom: '1px solid #f1f5f9', alignItems: 'center' }}>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>Agent ID</div>
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: '#111827', wordBreak: 'break-all' }}>
                       {selectedProfile.agent_id || '-'}
@@ -5651,11 +5890,35 @@ export default function App() {
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       {canApplyHardening && (
                         <button
-                          onClick={() => applyHardeningForProfile(selectedPosture || selectedProfile)}
+                          onClick={() => {
+                            const pid = String(selectedProfile?.profile_id || '').trim()
+                            if (!pid) return
+                            if (!hardeningPanelOpenByProfile[pid]) {
+                              setHardeningPanelOpenByProfile((prev) => ({ ...prev, [pid]: true }))
+                              return
+                            }
+                            applyHardeningForProfile(selectedPosture || selectedProfile)
+                          }}
                           className="px-3 py-2 rounded-[10px] bg-white border border-slate-300 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
                           disabled={Boolean(agentConfigActionLoading[selectedProfile.profile_id])}
                         >
-                          {agentConfigActionLoading[selectedProfile.profile_id] ? 'Applying…' : 'Apply hardening'}
+                          {agentConfigActionLoading[selectedProfile.profile_id]
+                            ? 'Applying…'
+                            : selectedHardeningOpen
+                              ? 'Apply selected hardening'
+                              : 'Apply hardening'}
+                        </button>
+                      )}
+                      {canApplyHardening && (
+                        <button
+                          onClick={() => {
+                            const pid = String(selectedProfile?.profile_id || '').trim()
+                            if (!pid) return
+                            setHardeningPanelOpenByProfile((prev) => ({ ...prev, [pid]: !prev[pid] }))
+                          }}
+                          className="px-3 py-2 rounded-[10px] bg-white border border-slate-300 text-sm hover:bg-slate-50"
+                        >
+                          {selectedHardeningOpen ? 'Hide options' : 'Show options'}
                         </button>
                       )}
                       <button
@@ -5667,6 +5930,128 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  {selectedHardeningOpen && selectedHardeningOptions && selectedAgentType === 'claude_code' && (
+                    <div style={{ background: '#ffffff', borderBottom: `1px solid ${selectedTheme.border}`, padding: '12px 14px' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8', marginBottom: 10 }}>
+                        HARDENING OPTIONS
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Config scope</div>
+                        <div style={{ maxWidth: 280 }}>
+                          <SegControl
+                            value={normalizeScopeForAgentType(selectedAgentType, selectedHardeningOptions.scope || selectedScopeValue)}
+                            onChange={(value) => setHardeningOption(selectedProfileId, { scope: value })}
+                            options={selectedScopeOptions.map((opt) => ({ label: opt.label, value: opt.id, activeClass: 'm-blue' }))}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr) auto', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Register airg-hook</div>
+                        <div style={{ maxWidth: 120 }}>
+                          <SegControl
+                            value={Boolean(selectedHardeningOptions.hook_enabled)}
+                            onChange={(value) => setHardeningOption(selectedProfileId, { hook_enabled: Boolean(value) })}
+                            options={[
+                              { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                              { label: 'No', value: false, activeClass: 'yn-no' },
+                            ]}
+                          />
+                        </div>
+                        <button
+                          className="px-2 py-1 text-xs border border-slate-300 rounded-[8px] bg-white hover:bg-slate-50"
+                          onClick={() => setSettingsInfoModal({
+                            open: true,
+                            title: 'PreToolUse hooks',
+                            content: [
+                              'airg-hook runs before native tool execution and can redirect usage through AIRG MCP tools.',
+                              '',
+                              'Official docs:',
+                              '- https://docs.anthropic.com/en/docs/claude-code/hooks',
+                            ].join('\n'),
+                          })}
+                        >
+                          Info
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Restrict native tools</div>
+                        <div style={{ maxWidth: 120 }}>
+                          <SegControl
+                            value={Boolean(selectedHardeningOptions.restrict_native_tools)}
+                            onChange={(value) => setHardeningOption(selectedProfileId, { restrict_native_tools: Boolean(value) })}
+                            options={[
+                              { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                              { label: 'No', value: false, activeClass: 'yn-no' },
+                            ]}
+                          />
+                        </div>
+                      </div>
+
+                      {Boolean(selectedHardeningOptions.restrict_native_tools) && (
+                        <div style={{ margin: '-2px 0 12px 220px' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                            {['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'MultiEdit'].map((tool) => (
+                              <div key={tool} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <label className="text-xs border border-slate-300 rounded px-2 py-1 bg-slate-50 flex items-center gap-1 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(selectedHardeningOptions?.native_tools?.[tool])}
+                                    onChange={(e) => setHardeningToolOption(selectedProfileId, tool, e.target.checked)}
+                                  />
+                                  <span>{tool}</span>
+                                </label>
+                                {['Read', 'Grep', 'Glob'].includes(tool) && (
+                                  <button
+                                    title={`${tool} warning`}
+                                    className="w-5 h-5 rounded-full border border-amber-300 text-amber-700 text-[10px] bg-amber-50"
+                                    onClick={() => setSettingsInfoModal({
+                                      open: true,
+                                      title: `${tool} Restriction Warning`,
+                                      content: `${tool} is useful for agent context gathering. Blocking it can slow down agent workflows, but is recommended if you need stricter path access control via AIRG.`,
+                                    })}
+                                  >
+                                    !
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Sandbox enabled</div>
+                        <div style={{ maxWidth: 120 }}>
+                          <SegControl
+                            value={Boolean(selectedHardeningOptions.sandbox_enabled)}
+                            onChange={(value) => setHardeningOption(selectedProfileId, { sandbox_enabled: Boolean(value) })}
+                            options={[
+                              { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                              { label: 'No', value: false, activeClass: 'yn-no' },
+                            ]}
+                          />
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0,1fr)', gap: 8, alignItems: 'center' }}>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>Sandbox escape closed</div>
+                        <div style={{ maxWidth: 120 }}>
+                          <SegControl
+                            value={Boolean(selectedHardeningOptions.sandbox_escape_closed)}
+                            onChange={(value) => setHardeningOption(selectedProfileId, { sandbox_escape_closed: Boolean(value) })}
+                            options={[
+                              { label: 'Yes', value: true, activeClass: 'yn-yes' },
+                              { label: 'No', value: false, activeClass: 'yn-no' },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div style={{ background: 'white' }}>
                     {signalRows.map((row) => (
@@ -5722,7 +6107,20 @@ export default function App() {
                 {(selectedDirty || selectedNeedsReconfigure) && (
                   <div className="bg-white border border-slate-200 rounded-[10px] px-3 py-2 text-xs text-slate-600 shadow-sm">
                     {selectedDirty && <div>Unsaved profile changes detected.</div>}
-                    {selectedNeedsReconfigure && <div>MCP reconfiguration required for this agent after profile changes.</div>}
+                    {selectedNeedsReconfigure && (
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        <div>MCP reconfiguration required for this agent after profile changes.</div>
+                        <div className="font-mono">
+                          {String(generatedCliByProfile?.[selectedProfileId]?.remove || '').trim() || `${selectedAgentType === 'codex' ? 'codex' : 'claude'} mcp remove ai-runtime-guard`}
+                        </div>
+                        <div>Then re-add with the latest command from <span className="font-semibold">Copy CLI command</span>.</div>
+                      </div>
+                    )}
+                    {mcpScopeMismatch && (
+                      <div style={{ marginTop: 4, color: '#b45309' }}>
+                        Scope mismatch: profile expects <span className="font-semibold">{expectedMcpScope}</span> but MCP is detected in {mcpDetectedScopes.join(', ')}.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -5901,6 +6299,28 @@ export default function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function SettingsInfoModal() {
+    if (!settingsInfoModal.open) return null
+    return (
+      <div
+        className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4"
+        onClick={() => setSettingsInfoModal({ open: false, title: '', content: '' })}
+      >
+        <div className="bg-white rounded-[10px] border border-slate-200 shadow-lg w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+            <div className="font-semibold text-slate-800">{settingsInfoModal.title || 'Info'}</div>
+            <button className="text-slate-500 hover:text-slate-700" onClick={() => setSettingsInfoModal({ open: false, title: '', content: '' })}>✕</button>
+          </div>
+          <div className="p-4">
+            <pre className="text-xs whitespace-pre-wrap break-words font-sans text-slate-700">
+              {settingsInfoModal.content || ''}
+            </pre>
           </div>
         </div>
       </div>
@@ -6175,6 +6595,7 @@ export default function App() {
       {CommandEditModal()}
       {ValidationErrorModal()}
       {CopyAssistModal()}
+      {SettingsInfoModal()}
       {OverrideDiffModal()}
       {OverrideBaselineModal()}
     </div>

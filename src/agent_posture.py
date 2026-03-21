@@ -11,6 +11,7 @@ CLAUDE_SIGNAL_LABELS = {
     "sandbox_enabled": "Sandbox enabled",
     "sandbox_escape_closed": "Sandbox unsandboxed-command escape disabled",
 }
+CLAUDE_NATIVE_TOOLS = {"Bash", "Glob", "Grep", "Read", "Write", "Edit", "MultiEdit"}
 
 
 def _read_json(path: pathlib.Path) -> dict[str, Any]:
@@ -85,6 +86,17 @@ def _native_tools_restricted(effective: dict[str, Any]) -> bool:
     return required.issubset(denied)
 
 
+def _native_tools_denied_set(effective: dict[str, Any]) -> set[str]:
+    permissions = effective.get("permissions", {})
+    if not isinstance(permissions, dict):
+        return set()
+    deny = permissions.get("deny", [])
+    if not isinstance(deny, list):
+        return set()
+    denied = {str(x).strip() for x in deny if str(x).strip()}
+    return {tool for tool in denied if tool in CLAUDE_NATIVE_TOOLS}
+
+
 def _sandbox_hardened(effective: dict[str, Any]) -> tuple[bool, bool]:
     sandbox = effective.get("sandbox", {})
     if not isinstance(sandbox, dict):
@@ -152,12 +164,24 @@ def _workspace_from_profile(profile: dict[str, Any]) -> pathlib.Path:
 
 
 def _claude_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
+    scoped = _claude_paths_by_scope(workspace)
+    return [scoped["user"], scoped["project"], scoped["local"]]
+
+
+def _claude_paths_by_scope(workspace: pathlib.Path) -> dict[str, pathlib.Path]:
     home = _home()
-    return [
-        home / ".claude" / "settings.json",
-        workspace / ".claude" / "settings.json",
-        workspace / ".claude" / "settings.local.json",
-    ]
+    return {
+        "user": home / ".claude" / "settings.json",
+        "project": workspace / ".claude" / "settings.json",
+        "local": workspace / ".claude" / "settings.local.json",
+    }
+
+
+def _normalize_claude_scope(raw_scope: Any) -> str:
+    value = str(raw_scope or "").strip().lower()
+    if value in {"project", "local", "user"}:
+        return value
+    return "local"
 
 
 def _cursor_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
@@ -242,17 +266,27 @@ def _detect_claude_mcp_locations(workspace: pathlib.Path) -> list[dict[str, str]
 
 def _build_claude_posture(profile: dict[str, Any]) -> dict[str, Any]:
     workspace = _workspace_from_profile(profile)
-    settings_paths = _claude_paths(workspace)
+    settings_by_scope = _claude_paths_by_scope(workspace)
+    settings_paths = [settings_by_scope["user"], settings_by_scope["project"], settings_by_scope["local"]]
     effective: dict[str, Any] = {}
     for p in settings_paths:
         effective = _deep_merge(effective, _read_json(p))
+    payload_by_scope = {scope: _read_json(path) for scope, path in settings_by_scope.items()}
     mcp_probe_paths = _claude_mcp_probe_paths(workspace)
     mcp_locations = _detect_claude_mcp_locations(workspace)
     mcp_scopes = list(dict.fromkeys([str(item.get("scope", "")) for item in mcp_locations if str(item.get("scope", ""))]))
+    expected_scope = _normalize_claude_scope(profile.get("agent_scope"))
     has_mcp = bool(mcp_locations)
     native_denied = _native_tools_restricted(effective)
     hook_active = _hook_is_active(effective)
     sandbox_enabled, escape_closed = _sandbox_hardened(effective)
+    native_tool_denied = sorted(list(_native_tools_denied_set(effective)))
+    signal_scopes = {
+        "hook_active": [scope for scope, payload in payload_by_scope.items() if _hook_is_active(payload)],
+        "native_tools_restricted": [scope for scope, payload in payload_by_scope.items() if _native_tools_restricted(payload)],
+        "sandbox_enabled": [scope for scope, payload in payload_by_scope.items() if bool((_sandbox_hardened(payload))[0])],
+        "sandbox_escape_closed": [scope for scope, payload in payload_by_scope.items() if bool((_sandbox_hardened(payload))[1])],
+    }
     status, rationale = _score_claude(
         has_mcp=has_mcp,
         native_denied=native_denied,
@@ -271,8 +305,12 @@ def _build_claude_posture(profile: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "rationale": rationale,
         "signals": signals,
+        "signal_scopes": signal_scopes,
         "mcp_detected_scopes": mcp_scopes,
         "mcp_detected_locations": mcp_locations,
+        "mcp_expected_scope": expected_scope,
+        "mcp_scope_match": (expected_scope in mcp_scopes) if has_mcp else False,
+        "native_tools_denied": native_tool_denied,
         "missing_controls": _missing_controls_from_signals(signals, labels=CLAUDE_SIGNAL_LABELS),
         "recommended_actions": _claude_recommendations(signals),
         "paths_checked": [str(p) for p in settings_paths + mcp_probe_paths],
@@ -329,6 +367,7 @@ def build_posture_for_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "profile_id": str(profile.get("profile_id", "")).strip(),
         "name": str(profile.get("name", "")).strip(),
         "agent_type": str(profile.get("agent_type", "")).strip().lower(),
+        "agent_scope": str(profile.get("agent_scope", "")).strip().lower(),
         "agent_id": str(profile.get("agent_id", "")).strip(),
         "workspace": str(profile.get("workspace", "")).strip(),
     }

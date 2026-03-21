@@ -19,6 +19,21 @@ AGENT_TYPES = [
 ]
 _ALLOWED_AGENT_TYPES = {item["id"] for item in AGENT_TYPES}
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_SCOPE_OPTIONS: dict[str, list[dict[str, str]]] = {
+    "claude_code": [
+        {"id": "local", "label": "Local"},
+        {"id": "project", "label": "Project"},
+        {"id": "user", "label": "User"},
+    ],
+    "codex": [
+        {"id": "global", "label": "Global"},
+        {"id": "project", "label": "Project"},
+    ],
+}
+_DEFAULT_SCOPE_BY_AGENT = {
+    "claude_code": "local",
+    "codex": "global",
+}
 
 
 def _now_iso() -> str:
@@ -34,6 +49,29 @@ def _safe_slug(value: str) -> str:
 def _shell_single_quote(value: str) -> str:
     # Safe single-quote shell encoding: 'abc' -> 'abc', a'b -> 'a'"'"'b'
     return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _shell_join(tokens: list[str]) -> str:
+    return " ".join(shlex.quote(str(token)) for token in tokens if str(token))
+
+
+def _scope_options_for(agent_type: str) -> list[dict[str, str]]:
+    key = str(agent_type or "").strip().lower()
+    return list(_SCOPE_OPTIONS.get(key, [{"id": "default", "label": "Default"}]))
+
+
+def _default_scope_for(agent_type: str) -> str:
+    key = str(agent_type or "").strip().lower()
+    return str(_DEFAULT_SCOPE_BY_AGENT.get(key, "default"))
+
+
+def _normalize_scope(agent_type: str, raw_scope: Any) -> str:
+    options = _scope_options_for(agent_type)
+    allowed = {str(item.get("id", "")).strip().lower() for item in options}
+    requested = str(raw_scope or "").strip().lower()
+    if requested in allowed:
+        return requested
+    return _default_scope_for(agent_type)
 
 
 def _state_dir(paths: dict[str, pathlib.Path]) -> pathlib.Path:
@@ -67,10 +105,12 @@ def _write_json(path: pathlib.Path, payload: Any) -> None:
 
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    agent_type = str(profile.get("agent_type") or "claude_code").strip().lower()
     return {
         "profile_id": str(profile.get("profile_id") or uuid.uuid4()),
         "name": str(profile.get("name") or "").strip(),
-        "agent_type": str(profile.get("agent_type") or "claude_code").strip().lower(),
+        "agent_type": agent_type,
+        "agent_scope": _normalize_scope(agent_type, profile.get("agent_scope")),
         "workspace": str(profile.get("workspace") or "").strip(),
         "agent_id": str(profile.get("agent_id") or "").strip(),
         "last_generated_at": str(profile.get("last_generated_at") or ""),
@@ -152,6 +192,7 @@ def _server_process() -> tuple[str, list[str]]:
 
 
 def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+    scope = _normalize_scope("claude_code", profile.get("agent_scope"))
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
     server_command, server_args = _server_process()
     add_json_payload = {
@@ -169,20 +210,64 @@ def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]
             }
         }
     }
-    compact = json.dumps(add_json_payload, separators=(",", ":"))
-    command = f"claude mcp add-json ai-runtime-guard {_shell_single_quote(compact)}"
+    env_flags = " ".join(
+        [
+            f"--env {shlex.quote(f'AIRG_AGENT_ID={profile['agent_id']}')}",
+            f"--env {shlex.quote(f'AIRG_WORKSPACE={profile['workspace']}')}",
+        ]
+    )
+    server_cmd = _shell_join([server_command, *server_args])
+    command = f"claude mcp add ai-runtime-guard --scope {scope} {env_flags} -- {server_cmd}".strip()
+    remove_command = "claude mcp remove ai-runtime-guard"
     instructions = (
         "Claude Code preferred setup (CLI):\n"
-        f"1. Run:\n   {command}\n\n"
+        f"1. Remove previous config if this profile changed:\n   {remove_command}\n"
+        f"2. Run:\n   {command}\n\n"
         "Alternative file-based setup:\n"
         "1. Open project MCP config scope (for example .claude.json in the project root, depending on your Claude Code setup).\n"
         "2. Insert the JSON from this file under mcpServers.ai-runtime-guard.\n"
         "3. Restart Claude Code."
     )
-    return add_json_payload, file_payload, command, instructions
+    return add_json_payload, file_payload, command, instructions, remove_command
 
 
-def _placeholder_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+def _codex_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
+    scope = _normalize_scope("codex", profile.get("agent_scope"))
+    env = _shared_env(paths, profile["workspace"], profile["agent_id"])
+    server_command, server_args = _server_process()
+    server_block = {
+        "command": server_command,
+        "args": server_args,
+        "env": env,
+    }
+    file_payload = {
+        "mcpServers": {
+            "ai-runtime-guard": server_block,
+        }
+    }
+    env_flags = " ".join(
+        [
+            f"--env {shlex.quote(f'AIRG_AGENT_ID={profile['agent_id']}')}",
+            f"--env {shlex.quote(f'AIRG_WORKSPACE={profile['workspace']}')}",
+        ]
+    )
+    scope_flag = "--scope project " if scope == "project" else ""
+    server_cmd = _shell_join([server_command, *server_args])
+    command = f"codex mcp add ai-runtime-guard {scope_flag}{env_flags} -- {server_cmd}".strip()
+    remove_command = "codex mcp remove ai-runtime-guard"
+    instructions = (
+        "Codex preferred setup (CLI):\n"
+        f"1. Remove previous config if this profile changed:\n   {remove_command}\n"
+        f"2. Run:\n   {command}\n\n"
+        "Alternative file-based setup:\n"
+        "1. Open ~/.codex/config.toml for global scope or .codex/config.toml in your project for project scope.\n"
+        "2. Add ai-runtime-guard under mcp_servers.\n"
+        "3. Restart Codex."
+    )
+    return server_block, file_payload, command, instructions, remove_command
+
+
+def _placeholder_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
     server_command, server_args = _server_process()
     server_block = {
@@ -192,13 +277,14 @@ def _placeholder_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]
     }
     file_payload = {"mcpServers": {"ai-runtime-guard": server_block}}
     command = f"# Placeholder: {profile['agent_type']} CLI command generation is not implemented yet"
+    remove_command = f"# Placeholder: remove command for {profile['agent_type']} is not implemented yet"
     instructions = (
         f"{profile['agent_type']} config guidance (placeholder):\n"
         "1. Use the generated JSON block in the agent's MCP configuration file.\n"
         "2. Insert under mcpServers.ai-runtime-guard.\n"
         "3. Restart the agent client."
     )
-    return server_block, file_payload, command, instructions
+    return server_block, file_payload, command, instructions, remove_command
 
 
 def _profile_file_paths(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[pathlib.Path, pathlib.Path]:
@@ -231,6 +317,7 @@ def list_profiles(paths: dict[str, pathlib.Path]) -> dict[str, Any]:
     return {
         "profiles": payload.get("profiles", []),
         "agent_types": AGENT_TYPES,
+        "agent_scopes": {item["id"]: _scope_options_for(item["id"]) for item in AGENT_TYPES},
         "registry_path": str(_registry_path(paths)),
         "configs_dir": str(_registry_dir(paths)),
         "mcp_env_required": ["AIRG_AGENT_ID", "AIRG_WORKSPACE"],
@@ -309,10 +396,13 @@ def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_
         return {"ok": False, "errors": errors}
 
     if normalized["agent_type"] == "claude_code":
-        command_json, file_json, command_text, instructions = _claude_code_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _claude_code_payload(paths, normalized)
+        placeholder = False
+    elif normalized["agent_type"] == "codex":
+        command_json, file_json, command_text, instructions, remove_command = _codex_payload(paths, normalized)
         placeholder = False
     else:
-        command_json, file_json, command_text, instructions = _placeholder_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _placeholder_payload(paths, normalized)
         placeholder = True
 
     generated_at = _now_iso()
@@ -349,6 +439,7 @@ def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_
             "placeholder": placeholder,
             "command_json": command_json,
             "command_text": command_text,
+            "remove_command": remove_command,
             "file_json": file_json,
             "instructions": instructions,
             "saved_json_path": saved_json_path,

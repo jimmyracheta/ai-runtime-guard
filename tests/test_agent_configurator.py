@@ -159,6 +159,48 @@ class AgentConfiguratorTests(unittest.TestCase):
         self.assertIn("local", applied.get("preflight", {}).get("mcp_detected_scopes", []))
         self.assertFalse((self.workspace / ".mcp.json").exists())
 
+    def test_claude_apply_scope_and_options_are_respected(self) -> None:
+        profile = {
+            "profile_id": "p-claude-options",
+            "agent_type": "claude_code",
+            "workspace": str(self.workspace),
+            "agent_id": "claude-code-options",
+            "agent_scope": "project",
+        }
+        mcp_file = self.workspace / ".mcp.json"
+        mcp_file.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "ai-runtime-guard": {
+                            "command": "airg-server",
+                            "args": [],
+                        }
+                    }
+                },
+                indent=2,
+            )
+        )
+
+        options = {
+            "scope": "project",
+            "hook_enabled": True,
+            "restrict_native_tools": True,
+            "native_tools": ["Bash", "Write"],
+            "sandbox_enabled": False,
+            "sandbox_escape_closed": False,
+        }
+        applied = agent_configurator.apply_hardening(self.paths, profile, options=options, auto_add_mcp=False)
+        self.assertTrue(applied.get("ok"), msg=applied)
+        target = self.workspace / ".claude" / "settings.json"
+        self.assertTrue(target.exists())
+        payload = json.loads(target.read_text())
+        deny = payload.get("permissions", {}).get("deny", [])
+        self.assertIn("Bash", deny)
+        self.assertIn("Write", deny)
+        self.assertNotIn("Read", deny)
+        self.assertFalse(bool(payload.get("sandbox", {}).get("enabled", False)))
+
 
 if __name__ == "__main__":
     unittest.main()
