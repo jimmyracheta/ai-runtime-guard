@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Bumped package version to `2.3.1.dev1`.
+- Bumped package version to `2.3.1.dev2`.
 - Telemetry architecture moved to an hourly scheduler that runs generator/uploader workers in parallel.
 - Telemetry state now tracks `telemetry.last_payload_generated_date` and `telemetry.last_payload_uploaded_at` in policy.
 
@@ -23,6 +23,8 @@ All notable changes to this project are documented in this file.
 - Telemetry no longer depends on UTC day-rollover wake logic only; hourly scheduler runs continue while backend is active and stand down when no action is needed.
 - Upload retries now persist naturally through outbox files instead of dropping failed sends.
 - Fixed `write_file`/`edit_file` tool crashes caused by `NameError: name 'lower' is not defined` in `check_path_policy` extension checks.
+- Reports -> Log table now enforces fixed-width column truncation for long event/rule/command/path values so oversized text no longer expands row/cell boundaries.
+- Reports -> Log now exposes consistent `Show more` actions for trimmed `Event`, `Matched Rule`, and `Command / Path` values via modal expansion.
 
 ## [2.3.0] - 2026-04-24
 

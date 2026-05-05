@@ -1,15 +1,15 @@
 # STATUS
 
-Last updated: 2026-04-28 (v2.3.1.dev)
+Last updated: 2026-05-05 (v2.3.1.dev2)
 
 ## Branches
 1. Active integration branch: `dev`
 2. Stable release branch: `main`
 
 ## Release state
-1. Current release candidate on `dev`: `v2.3.1.dev`
+1. Current release candidate on `dev`: `v2.3.1.dev2`
 2. Latest stable release on `main`: `v2.2.2`
-3. Package version in source: `2.3.1.dev`
+3. Package version in source: `2.3.1.dev2`
 4. Stable release notes: `CHANGELOG.md`
 5. Development history: `docs/CHANGELOG_DEV.md`
 
@@ -22,6 +22,7 @@ Last updated: 2026-04-28 (v2.3.1.dev)
 6. Setup flow is `airg-setup` plus manual agent onboarding in `Settings -> Agents`.
 7. Optional anonymous telemetry now uses an hourly scheduler with parallel generator/uploader workers, outbox spool files, and policy-driven stand-down behavior.
 8. Telemetry UI includes payload preview, service status modal, warning banner for stale/failed workers, and restart action.
+9. Reports -> Log table now enforces fixed-width truncation for long event/rule/command/path values and provides `Show more` expansion to keep layouts stable across resolutions.
 
 ## v2.1 highlights
 1. Security hardening for command substitution parsing in `execute_command` now covers nested `$(...)`, backticks, and process substitution contexts for network/tier enforcement.

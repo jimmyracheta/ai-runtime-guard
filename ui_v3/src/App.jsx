@@ -3243,6 +3243,27 @@ export default function App() {
       setReportsFilters((prev) => ({ ...(clear ? {} : prev), ...patch }))
     }
 
+    const longCellThreshold = 120
+    const renderTrimmedCell = (value, label, alwaysShowMore = false) => {
+      const text = String(value || '-')
+      const isLong = text.length > longCellThreshold
+      const canExpand = text !== '-' && (alwaysShowMore || isLong)
+      return (
+        <div className="min-w-0 max-w-full">
+          <div className="truncate font-mono" title={text}>{text}</div>
+          {canExpand && (
+            <button
+              type="button"
+              className="mt-0.5 text-[10px] text-indigo-600 hover:text-indigo-700"
+              onClick={() => setSettingsInfoModal({ open: true, title: `${label} (full)`, content: text })}
+            >
+              Show more
+            </button>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="space-y-3">
         {reportsTab === 'log' && (
@@ -3487,7 +3508,18 @@ export default function App() {
               </div>
             </div>
             <div className="overflow-auto border border-slate-200 rounded-[10px]">
-              <table className="min-w-full text-xs">
+              <table className="w-full table-fixed text-xs">
+                <colgroup>
+                  <col style={{ width: '2.5%' }} />
+                  <col style={{ width: '13%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '24.5%' }} />
+                </colgroup>
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>
                     <th className="text-left px-2 py-1"> </th>
@@ -3546,17 +3578,26 @@ export default function App() {
                           <td className="px-2 py-1">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${decisionClass}`}>{decision}</span>
                           </td>
-                          <td className="px-2 py-1">
+                          <td className="px-2 py-1 min-w-0 overflow-hidden">
                             {e.event ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-mono bg-amber-100 text-amber-800 border-amber-200">
-                                {e.event}
-                              </span>
+                              <div className="min-w-0 max-w-full">
+                                <span className="inline-flex min-w-0 max-w-full items-center px-2 py-0.5 rounded border text-[11px] font-mono bg-amber-100 text-amber-800 border-amber-200">
+                                  <span className="truncate block min-w-0 max-w-full" title={String(e.event)}>{e.event}</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  className="mt-0.5 text-[10px] text-indigo-600 hover:text-indigo-700"
+                                  onClick={() => setSettingsInfoModal({ open: true, title: 'Event (full)', content: String(e.event) })}
+                                >
+                                  Show more
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-slate-400">-</span>
                             )}
                           </td>
-                          <td className="px-2 py-1 font-mono">{e.matched_rule || '-'}</td>
-                          <td className="px-2 py-1 font-mono">{e.command || e.path || '-'}</td>
+                          <td className="px-2 py-1 min-w-0">{renderTrimmedCell(e.matched_rule || '-', 'Matched Rule', true)}</td>
+                          <td className="px-2 py-1 min-w-0">{renderTrimmedCell(e.command || e.path || '-', 'Command / Path', true)}</td>
                         </tr>
                         {expanded && (
                           <tr className="bg-indigo-50/40 border-t border-slate-100">

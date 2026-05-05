@@ -2,6 +2,15 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-05-05 (v2.3.1.dev2 reports log truncation + expansion consistency)
+- Fixed policy path extension checks in `src/policy_engine.py` (`check_path_policy`) to eliminate `NameError: name 'lower' is not defined` affecting `write_file`/`edit_file`.
+- Added regression coverage in `tests/test_attacker_suite.py` to guard blocked-extension write paths against this crash.
+- Updated Reports -> Log table rendering in `ui_v3/src/App.jsx`:
+  - fixed table layout and explicit column widths for stable responsive boundaries
+  - truncation guards for long values in `Event`, `Matched Rule`, and `Command / Path` cells
+  - consistent `Show more` modal expansion controls for all non-empty event/rule/command-path values.
+- Rebuilt frontend artifacts after log-table UI changes.
+
 ## 2026-04-28 (v2.3.1.dev telemetry scheduler rewrite)
 - Reworked telemetry runtime architecture in `src/telemetry.py`:
   - split into generator and uploader workers
