@@ -239,6 +239,35 @@ def _update_telemetry_fields(policy_path: pathlib.Path, **updates: str) -> None:
     _save_policy(policy_path, policy)
 
 
+def _ensure_telemetry_defaults(policy: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    section = _telemetry_section(policy)
+    updated = dict(section)
+    changed = False
+
+    if "enabled" not in updated:
+        updated["enabled"] = True
+        changed = True
+
+    endpoint = str(updated.get("endpoint", "")).strip()
+    if not endpoint:
+        updated["endpoint"] = DEFAULT_ENDPOINT
+        changed = True
+
+    last_sent = updated.get("last_sent_date", "")
+    if not isinstance(last_sent, str):
+        updated["last_sent_date"] = str(last_sent).strip()
+        changed = True
+    elif "last_sent_date" not in updated:
+        updated["last_sent_date"] = ""
+        changed = True
+
+    if changed:
+        normalized = dict(policy)
+        normalized["telemetry"] = updated
+        return normalized, True
+    return policy, False
+
+
 def _load_profiles(approval_db_path: pathlib.Path) -> list[dict[str, Any]]:
     try:
         registry = agent_configs.load_registry({"approval_db_path": approval_db_path})
