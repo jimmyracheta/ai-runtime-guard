@@ -25,7 +25,7 @@ ALWAYS_ALLOW = {
     "WebSearch",
 }
 SENSITIVE_READ_SUFFIXES = (".env", ".pem", ".key")
-HOOK_VERSION = "v2.3.1.dev4"
+HOOK_VERSION = "v2.3.1"
 _POLICY_CACHE: dict[str, Any] = {"path": "", "mtime_ns": None, "blocked_paths": [], "blocked_extensions": []}
 
 

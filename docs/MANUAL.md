@@ -1,6 +1,6 @@
 # AI Runtime Guard Manual
 
-This manual documents current runtime behavior for v2.3.1.dev4.
+This manual documents current runtime behavior for v2.3.1.
 
 ## 1. Runtime Surface
 AIRG MCP tools:
