@@ -1,5 +1,6 @@
 import json
 import pathlib
+import re
 import shutil
 import tempfile
 import unittest
@@ -342,7 +343,7 @@ class AgentConfiguratorTests(unittest.TestCase):
             self.assertIn("AIRG_CODEX_TIER1_BEGIN", agents_text)
             self.assertIn("mcp__ai-runtime-guard__execute_command", agents_text)
 
-            rules_file = home_dir / ".codex" / "rules" / "default.rules"
+            rules_file = home_dir / ".codex" / "rules" / "airg.rules"
             self.assertTrue(rules_file.exists())
             rules_text = rules_file.read_text()
             self.assertIn("AIRG_CODEX_TIER2_BEGIN", rules_text)
@@ -361,6 +362,100 @@ class AgentConfiguratorTests(unittest.TestCase):
             undone_cfg_text = codex_cfg.read_text()
             self.assertIn('[mcp_servers.ai-runtime-guard]', undone_cfg_text)
             self.assertNotIn('sandbox_mode = "workspace-write"', undone_cfg_text)
+
+    def test_codex_project_scope_writes_project_artifacts(self) -> None:
+        profile = {
+            "profile_id": "p-codex-project-hardening",
+            "agent_type": "codex",
+            "agent_scope": "project",
+            "workspace": str(self.workspace),
+            "agent_id": "codex-project-1",
+        }
+        options = {
+            "tier1_guidance": True,
+            "tier2_mirror": True,
+            "tier2_mirror_approvals_mode": "approve",
+            "tier3_sandbox_mode": "workspace-write",
+            "tier3_approval_policy": "on-request",
+            "tier3_workspace_write_network_access": False,
+            "tier3_workspace_write_exclude_slash_tmp": True,
+            "tier3_workspace_write_exclude_tmpdir_env_var": True,
+            "tier3_workspace_write_writable_roots": [],
+        }
+        self.paths["policy_path"].write_text(
+            json.dumps(
+                {
+                    "blocked": {"commands": ["rm -rf"], "paths": [], "extensions": []},
+                    "requires_confirmation": {"commands": ["git push"], "paths": []},
+                    "allowed": {"paths_whitelist": []},
+                    "agent_overrides": {},
+                }
+            )
+        )
+        home_dir = self.base / "home"
+        home_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch("agent_configurator.pathlib.Path.home", return_value=home_dir), patch(
+            "agent_configurator.shutil.which",
+            side_effect=lambda name: None if name == "codex" else shutil.which(name),
+        ):
+            applied = agent_configurator.apply_hardening(self.paths, profile, options=options, auto_add_mcp=True)
+        self.assertTrue(applied.get("ok"), msg=applied)
+
+        project_codex_dir = self.workspace / ".codex"
+        self.assertTrue((project_codex_dir / "AGENTS.md").exists())
+        self.assertTrue((project_codex_dir / "rules" / "airg.rules").exists())
+        self.assertTrue((project_codex_dir / "config.toml").exists())
+        self.assertIn('[mcp_servers.ai-runtime-guard]', (project_codex_dir / "config.toml").read_text())
+        self.assertFalse((home_dir / ".codex" / "AGENTS.md").exists())
+
+    def test_codex_project_scope_hardening_is_idempotent(self) -> None:
+        profile = {
+            "profile_id": "p-codex-project-idempotent",
+            "agent_type": "codex",
+            "agent_scope": "project",
+            "workspace": str(self.workspace),
+            "agent_id": "codex-project-idempotent",
+        }
+        codex_root = self.workspace / ".codex"
+        codex_root.mkdir(parents=True, exist_ok=True)
+        (codex_root / "AGENTS.md").write_text("Intro line\n\n")
+        (codex_root / "config.toml").write_text('model = "gpt-5"\n\n')
+        (codex_root / "rules").mkdir(parents=True, exist_ok=True)
+        (codex_root / "rules" / "airg.rules").write_text("# existing heading\n\n")
+
+        home_dir = self.base / "home"
+        home_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch("agent_configurator.pathlib.Path.home", return_value=home_dir), patch(
+            "agent_configurator.shutil.which",
+            side_effect=lambda name: None if name == "codex" else shutil.which(name),
+        ):
+            first = agent_configurator.apply_hardening(self.paths, profile, auto_add_mcp=True)
+        self.assertTrue(first.get("ok"), msg=first)
+
+        agents_once = (codex_root / "AGENTS.md").read_text()
+        config_once = (codex_root / "config.toml").read_text()
+        rules_once = (codex_root / "rules" / "airg.rules").read_text()
+
+        with patch("agent_configurator.pathlib.Path.home", return_value=home_dir), patch(
+            "agent_configurator.shutil.which",
+            side_effect=lambda name: None if name == "codex" else shutil.which(name),
+        ):
+            second = agent_configurator.apply_hardening(self.paths, profile, auto_add_mcp=True)
+        self.assertTrue(second.get("ok"), msg=second)
+
+        self.assertEqual((codex_root / "AGENTS.md").read_text(), agents_once)
+        self.assertEqual((codex_root / "config.toml").read_text(), config_once)
+        rules_twice = (codex_root / "rules" / "airg.rules").read_text()
+        self.assertEqual(rules_twice.count("AIRG_CODEX_TIER2_BEGIN"), 1)
+        self.assertEqual(rules_twice.count("AIRG_CODEX_TIER2_END"), 1)
+        normalize_generated_at = lambda text: re.sub(
+            r'"generated_at":\s*"[^"]+"',
+            '"generated_at":"<normalized>"',
+            text,
+        )
+        self.assertEqual(normalize_generated_at(rules_twice), normalize_generated_at(rules_once))
 
 
 if __name__ == "__main__":

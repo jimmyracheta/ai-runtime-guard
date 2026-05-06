@@ -31,6 +31,7 @@ CODEX_AGENT_DOC_BEGIN = "<!-- AIRG_CODEX_TIER1_BEGIN -->"
 CODEX_AGENT_DOC_END = "<!-- AIRG_CODEX_TIER1_END -->"
 CODEX_RULES_BEGIN = "# AIRG_CODEX_TIER2_BEGIN"
 CODEX_RULES_END = "# AIRG_CODEX_TIER2_END"
+CODEX_AIRG_RULES_FILE = "airg.rules"
 CURSORIGNORE_MANAGED_BEGIN = "# AIRG_CURSORIGNORE_BEGIN"
 CURSORIGNORE_MANAGED_END = "# AIRG_CURSORIGNORE_END"
 _CODEX_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
@@ -395,12 +396,16 @@ def _codex_paths(workspace: pathlib.Path) -> list[pathlib.Path]:
     ]
 
 
-def _codex_agents_doc_path() -> pathlib.Path:
-    return _home() / ".codex" / "AGENTS.md"
+def _codex_scope_root(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return workspace / ".codex" if str(scope or "").strip().lower() == "project" else _home() / ".codex"
 
 
-def _codex_rules_path() -> pathlib.Path:
-    return _home() / ".codex" / "rules" / "default.rules"
+def _codex_agents_doc_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_root(workspace, scope) / "AGENTS.md"
+
+
+def _codex_rules_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_root(workspace, scope) / "rules" / CODEX_AIRG_RULES_FILE
 
 
 def _read_text_optional(path: pathlib.Path) -> str:
@@ -1049,12 +1054,14 @@ def _build_cursor_posture(profile: dict[str, Any]) -> dict[str, Any]:
 def _build_codex_posture(profile: dict[str, Any]) -> dict[str, Any]:
     workspace = _workspace_from_profile(profile)
     paths = _codex_paths(workspace)
+    expected_scope = str(profile.get("agent_scope", "")).strip().lower() or "global"
+    scope_index = 1 if expected_scope == "project" else 0
     has_global = _codex_has_airg_mcp(paths[0])
     has_project = _codex_has_airg_mcp(paths[1])
     has_mcp = has_global or has_project
-    tier1_path = _codex_agents_doc_path()
-    tier2_path = _codex_rules_path()
-    tier3_path = paths[0]
+    tier1_path = _codex_agents_doc_path(workspace, expected_scope)
+    tier2_path = _codex_rules_path(workspace, expected_scope)
+    tier3_path = paths[scope_index]
     tier1_guidance = _codex_tier1_guidance_present(tier1_path)
     tier2_state = _codex_rules_state(tier2_path, str(profile.get("agent_id", "")).strip())
     tier2_present = bool(tier2_state.get("present", False))
@@ -1094,7 +1101,6 @@ def _build_codex_posture(profile: dict[str, Any]) -> dict[str, Any]:
         detected_scopes.append("global")
     if has_project:
         detected_scopes.append("project")
-    expected_scope = str(profile.get("agent_scope", "")).strip().lower() or "global"
     locations = []
     if has_global:
         locations.append({"scope": "global", "path": str(paths[0])})
@@ -1133,9 +1139,9 @@ def _build_codex_posture(profile: dict[str, Any]) -> dict[str, Any]:
         recommendations.append("Add ai-runtime-guard MCP server to Codex config.toml (global or project scope).")
     else:
         if not tier1_guidance:
-            recommendations.append("Apply Codex guidance in ~/.codex/AGENTS.md.")
+            recommendations.append("Apply Codex guidance in the selected Codex scope AGENTS.md.")
         if not tier2_present:
-            recommendations.append("Apply Codex AIRG policy mirror to ~/.codex/rules/default.rules.")
+            recommendations.append("Apply Codex AIRG policy mirror to the selected scope rules/airg.rules.")
         elif not tier2_in_sync:
             recommendations.append("Codex policy mirror drifted from AIRG policy. Reapply enforcement.")
         if strict_ready and not sandbox_mode_maximum:
@@ -1149,15 +1155,15 @@ def _build_codex_posture(profile: dict[str, Any]) -> dict[str, Any]:
         "signals": signals,
         "signal_scopes": {
             "airg_mcp_present": detected_scopes,
-            "tier1_guidance_present": (["global"] if tier1_guidance else []),
-            "tier2_rules_present": (["global"] if tier2_present else []),
-            "tier2_rules_in_sync": (["global"] if tier2_in_sync else []),
-            "tier2_mirror_approvals_configured": (["global"] if tier2_present else []),
-            "sandbox_mode_maximum": (["global"] if tier3_present else []),
-            "approval_policy_maximum": (["global"] if tier3_present else []),
-            "workspace_write_network_blocked": (["global"] if tier3_present else []),
-            "workspace_write_slash_tmp_blocked": (["global"] if tier3_present else []),
-            "workspace_write_tmpdir_blocked": (["global"] if tier3_present else []),
+            "tier1_guidance_present": ([expected_scope] if tier1_guidance else []),
+            "tier2_rules_present": ([expected_scope] if tier2_present else []),
+            "tier2_rules_in_sync": ([expected_scope] if tier2_in_sync else []),
+            "tier2_mirror_approvals_configured": ([expected_scope] if tier2_present else []),
+            "sandbox_mode_maximum": ([expected_scope] if tier3_present else []),
+            "approval_policy_maximum": ([expected_scope] if tier3_present else []),
+            "workspace_write_network_blocked": ([expected_scope] if tier3_present else []),
+            "workspace_write_slash_tmp_blocked": ([expected_scope] if tier3_present else []),
+            "workspace_write_tmpdir_blocked": ([expected_scope] if tier3_present else []),
         },
         "mcp_detected_scopes": detected_scopes,
         "mcp_detected_locations": locations,
@@ -1165,8 +1171,8 @@ def _build_codex_posture(profile: dict[str, Any]) -> dict[str, Any]:
         "mcp_scope_match": (expected_scope in detected_scopes) if has_mcp else False,
         "missing_controls": missing_controls,
         "recommended_actions": recommendations,
-        "paths_checked": [str(p) for p in paths + [tier1_path, tier2_path]],
-        "existing_paths": [str(p) for p in paths + [tier1_path, tier2_path] if p.exists()],
+        "paths_checked": [str(p) for p in paths + [tier1_path, tier2_path, tier3_path]],
+        "existing_paths": [str(p) for p in paths + [tier1_path, tier2_path, tier3_path] if p.exists()],
         "codex_tier2_include_requires_confirmation": bool(tier2_state.get("include_requires_confirmation", False)),
         "codex_tier2_mirror_approvals_mode": tier2_approvals_mode or "allow",
         "codex_tier2_policy_hash_match": bool(tier2_state.get("policy_hash_match", False)),

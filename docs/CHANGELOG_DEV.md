@@ -2,6 +2,34 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-05-06 (v2.3.1.dev3 Codex scope/trust refactor)
+- Refactored Codex MCP apply/remove in `src/mcp_config_manager.py`:
+  - project/global MCP targets remain scope-aware
+  - added explicit project-trust planning and apply/remove support for `~/.codex/config.toml` (`[projects."<workspace>"].trust_level = "trusted"`)
+  - trust state is now tracked in profile `last_applied` metadata for safe restoration on workspace changes or profile removal
+  - tightened Codex TOML write verification and improved MCP idempotency.
+- Refactored Codex hardening in `src/agent_configurator.py`:
+  - `config.toml`, `AGENTS.md`, and rules are now written to the selected scope (`~/.codex/` or `<workspace>/.codex/`)
+  - AIRG now uses dedicated `rules/airg.rules` instead of Codex `default.rules`
+  - Tier 3 sandbox/approval settings are managed as an explicit AIRG block in scoped `config.toml`.
+- Updated Codex posture detection in `src/agent_posture.py`:
+  - Tier 1/Tier 2/Tier 3 signals now resolve from the selected scope
+  - recommendations and signal scopes reference scoped Codex artifacts instead of fixed global paths.
+- Updated GUI flows in `ui_v3/src/App.jsx` and backend routes in `src/ui/backend_flask.py`:
+  - `Apply MCP Config` for project-scoped Codex profiles now prompts for workspace trust
+  - profile deletion can optionally remove AIRG-managed Codex trust state
+  - fixed false `Pending Changes` badge behavior by baselining hardening options from live posture instead of static defaults.
+- Added regression coverage:
+  - Codex project-trust apply/remove behavior in `tests/test_mcp_config_manager.py`
+  - Codex project-scope hardening targets in `tests/test_agent_configurator.py`
+  - Codex project-scope posture detection in `tests/test_agent_posture.py`.
+- Updated documentation/context:
+  - `docs/AGENT_MCP_CONFIGS.md`
+  - `docs/MANUAL.md`
+  - `AGENT_CONTEXT.md`
+  - `STATUS.md`
+- Bumped package/dev version to `2.3.1.dev3`.
+
 ## 2026-05-05 (v2.3.1.dev2 reports log truncation + expansion consistency)
 - Fixed policy path extension checks in `src/policy_engine.py` (`check_path_policy`) to eliminate `NameError: name 'lower' is not defined` affecting `write_file`/`edit_file`.
 - Added regression coverage in `tests/test_attacker_suite.py` to guard blocked-extension write paths against this crash.

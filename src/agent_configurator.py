@@ -29,6 +29,9 @@ CODEX_AGENT_DOC_BEGIN = "<!-- AIRG_CODEX_TIER1_BEGIN -->"
 CODEX_AGENT_DOC_END = "<!-- AIRG_CODEX_TIER1_END -->"
 CODEX_RULES_BEGIN = "# AIRG_CODEX_TIER2_BEGIN"
 CODEX_RULES_END = "# AIRG_CODEX_TIER2_END"
+CODEX_TIER3_BEGIN = "# AIRG_CODEX_TIER3_BEGIN"
+CODEX_TIER3_END = "# AIRG_CODEX_TIER3_END"
+CODEX_AIRG_RULES_FILE = "airg.rules"
 CURSORIGNORE_MANAGED_BEGIN = "# AIRG_CURSORIGNORE_BEGIN"
 CURSORIGNORE_MANAGED_END = "# AIRG_CURSORIGNORE_END"
 _CODEX_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
@@ -343,16 +346,24 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _codex_config_path() -> pathlib.Path:
-    return _home() / ".codex" / "config.toml"
+def _codex_scope_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return workspace / ".codex" if str(scope or "").strip().lower() == "project" else _home() / ".codex"
 
 
-def _codex_rules_path() -> pathlib.Path:
-    return _home() / ".codex" / "rules" / "default.rules"
+def _codex_config_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_path(workspace, scope) / "config.toml"
 
 
-def _codex_agents_doc_path() -> pathlib.Path:
-    return _home() / ".codex" / "AGENTS.md"
+def _codex_rules_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_path(workspace, scope) / "rules" / CODEX_AIRG_RULES_FILE
+
+
+def _codex_legacy_rules_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_path(workspace, scope) / "rules" / "default.rules"
+
+
+def _codex_agents_doc_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
+    return _codex_scope_path(workspace, scope) / "AGENTS.md"
 
 
 def _read_text_optional(path: pathlib.Path) -> str:
@@ -380,10 +391,10 @@ def _find_managed_block(text: str, begin_token: str, end_token: str) -> tuple[in
 def _upsert_managed_block(text: str, begin_token: str, end_token: str, block: str) -> str:
     start, end = _find_managed_block(text, begin_token, end_token)
     if start >= 0 and end >= 0:
-        before = text[:start].rstrip()
-        after = text[end:].lstrip("\r\n")
-        merged = "\n\n".join(part for part in [before, block.strip(), after] if part)
-        return (merged.rstrip() + "\n") if merged else ""
+        if not block.strip():
+            updated = text[:start] + text[end:]
+            return updated if updated else ""
+        return text[:start] + block.strip() + "\n" + text[end:]
     if not block.strip():
         return (text.rstrip() + "\n") if text.strip() else ""
     if not text.strip():
@@ -698,7 +709,7 @@ def _codex_airg_mcp_block(paths: dict[str, pathlib.Path], workspace: pathlib.Pat
 
 
 def _apply_codex_mcp(paths: dict[str, pathlib.Path], workspace: pathlib.Path, agent_id: str, scope: str) -> dict[str, Any]:
-    target = (workspace / ".codex" / "config.toml") if scope == "project" else _codex_config_path()
+    target = _codex_config_path(workspace, scope)
     before = _read_text_optional(target)
     cleaned = _remove_codex_airg_sections(before)
     block = _codex_airg_mcp_block(paths, workspace, agent_id)
@@ -754,12 +765,12 @@ def _render_codex_tier3_config(options: dict[str, Any]) -> str:
     exclude_tmpdir_env_var = bool(options.get("tier3_workspace_write_exclude_tmpdir_env_var", True))
     writable_roots = options.get("tier3_workspace_write_writable_roots", [])
     roots = writable_roots if isinstance(writable_roots, list) else []
-    lines = [
+    body_lines = [
         f"sandbox_mode = {_toml_string(sandbox_mode)}",
         f"approval_policy = {_toml_string(approval_policy)}",
     ]
     if sandbox_mode == "workspace-write":
-        lines.extend(
+        body_lines.extend(
             [
                 "",
                 "[sandbox_workspace_write]",
@@ -769,26 +780,8 @@ def _render_codex_tier3_config(options: dict[str, Any]) -> str:
                 f"writable_roots = {_toml_string_list([str(r) for r in roots if str(r).strip()])}",
             ]
         )
-    return "\n".join(lines).strip() + "\n"
-
-
-def _inject_codex_tier3_top_level(config_text: str, tier3_block: str) -> str:
-    lines = config_text.splitlines()
-    first_section = None
-    for idx, line in enumerate(lines):
-        if _CODEX_SECTION_RE.match(line):
-            first_section = idx
-            break
-    tier3_lines = tier3_block.strip().splitlines()
-    if first_section is None:
-        merged = lines + ([""] if lines and lines[-1].strip() else []) + tier3_lines
-        return ("\n".join(merged).rstrip() + "\n") if merged else ""
-
-    prefix = lines[:first_section]
-    suffix = lines[first_section:]
-    merged_prefix = prefix + ([""] if prefix and prefix[-1].strip() else []) + tier3_lines + [""]
-    merged = merged_prefix + suffix
-    return "\n".join(merged).rstrip() + "\n"
+    body = "\n".join(body_lines).strip()
+    return "\n".join([CODEX_TIER3_BEGIN, body, CODEX_TIER3_END]).strip() + "\n"
 
 
 def _resolve_airg_hook_command() -> str:
@@ -1654,6 +1647,7 @@ def _apply_codex(
     workspace = _workspace_path(profile)
     agent_id = str(profile.get("agent_id", "")).strip() or "default"
     profile_id = str(profile.get("profile_id", "")).strip()
+    selected_scope = "project" if str(profile.get("agent_scope", "")).strip().lower() == "project" else "global"
     selected_options = _normalize_codex_hardening_options(options)
 
     changes: list[dict[str, Any]] = []
@@ -1661,7 +1655,7 @@ def _apply_codex(
     warnings: list[str] = []
 
     preflight = {
-        "selected_scope": str(profile.get("agent_scope", "")).strip().lower() or "global",
+        "selected_scope": selected_scope,
         "mcp_locations": _detect_codex_mcp_locations(workspace),
     }
     preflight["mcp_present"] = bool(preflight["mcp_locations"])
@@ -1705,7 +1699,7 @@ def _apply_codex(
                 )
             )
 
-        agents_path = _codex_agents_doc_path()
+        agents_path = _codex_agents_doc_path(workspace, selected_scope)
         tier1_before = _read_text_optional(agents_path)
         tier1_after = _upsert_managed_block(
             tier1_before,
@@ -1718,8 +1712,9 @@ def _apply_codex(
             hardening_changes.append(tier1_change)
             changes.append(tier1_change)
 
-        rules_path = _codex_rules_path()
+        rules_path = _codex_rules_path(workspace, selected_scope)
         rules_before = _read_text_optional(rules_path)
+        legacy_rules_path = _codex_legacy_rules_path(workspace, selected_scope)
         mirror_approvals_mode = str(selected_options.get("tier2_mirror_approvals_mode", "allow")).strip().lower()
         if mirror_approvals_mode not in CODEX_MIRROR_APPROVAL_MODES:
             mirror_approvals_mode = "allow"
@@ -1754,11 +1749,24 @@ def _apply_codex(
                 changes.append(rules_change)
             generated_rules_hash = ""
 
-        codex_cfg_path = _codex_config_path()
+        legacy_rules_before = _read_text_optional(legacy_rules_path)
+        legacy_rules_after = _upsert_managed_block(legacy_rules_before, CODEX_RULES_BEGIN, CODEX_RULES_END, "")
+        legacy_rules_change = _write_text_with_backup(paths, legacy_rules_path, legacy_rules_after, agent_id)
+        if legacy_rules_change.get("changed"):
+            hardening_changes.append(legacy_rules_change)
+            changes.append(legacy_rules_change)
+
+        codex_cfg_path = _codex_config_path(workspace, selected_scope)
         config_before = _read_text_optional(codex_cfg_path)
-        stripped = _strip_codex_tier3_config(config_before)
+        stripped_managed = _upsert_managed_block(
+            config_before,
+            CODEX_TIER3_BEGIN,
+            CODEX_TIER3_END,
+            "",
+        )
+        stripped = _strip_codex_tier3_config(stripped_managed)
         tier3_block = _render_codex_tier3_config(selected_options)
-        config_after = _inject_codex_tier3_top_level(stripped, tier3_block)
+        config_after = _upsert_managed_block(stripped, CODEX_TIER3_BEGIN, CODEX_TIER3_END, tier3_block)
         try:
             tomllib.loads(config_after)
         except Exception as exc:

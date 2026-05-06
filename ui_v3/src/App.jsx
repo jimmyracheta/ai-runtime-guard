@@ -646,6 +646,7 @@ export default function App() {
     profile_name: '',
     plan: null,
     remove_previous_choice: null,
+    manage_codex_trust_choice: null,
     result_ok: false,
     result_message: '',
   })
@@ -653,6 +654,7 @@ export default function App() {
     open: false,
     profile: null,
     stage: 'choose',
+    remove_codex_trust: false,
   })
   const [settingsInfoModal, setSettingsInfoModal] = useState({
     open: false,
@@ -767,9 +769,7 @@ export default function App() {
         const profileId = String(profile?.profile_id || '').trim()
         if (!profileId) return
         activeIds.add(profileId)
-        if (!next[profileId]) {
-          next[profileId] = defaultHardeningOptionsForProfile(profile)
-        } else {
+        if (next[profileId]) {
           next[profileId] = {
             ...next[profileId],
             scope: normalizeScopeForAgentType(profile?.agent_type, next[profileId]?.scope || profile?.agent_scope),
@@ -1134,11 +1134,11 @@ export default function App() {
     return payload
   }
 
-  async function deleteSettingsProfile(profileId, removeMode = 'agent_only') {
+  async function deleteSettingsProfile(profileId, removeMode = 'agent_only', { removeCodexTrust = false } = {}) {
     const res = await fetch(`${API_BASE}/settings/agents/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId, remove_mode: removeMode }),
+      body: JSON.stringify({ profile_id: profileId, remove_mode: removeMode, remove_codex_trust: Boolean(removeCodexTrust) }),
     })
     const payload = await res.json()
     if (!res.ok || !payload.ok) {
@@ -1149,7 +1149,7 @@ export default function App() {
     return payload
   }
 
-  async function applyMcpConfig(profileId, { dryRun = false, removePrevious = null } = {}) {
+  async function applyMcpConfig(profileId, { dryRun = false, removePrevious = null, manageCodexTrust = null } = {}) {
     const res = await fetch(`${API_BASE}/settings/agents/mcp-apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1157,6 +1157,7 @@ export default function App() {
         profile_id: profileId,
         dry_run: Boolean(dryRun),
         remove_previous: removePrevious,
+        manage_codex_trust: manageCodexTrust,
       }),
     })
     const payload = await res.json().catch(() => ({}))
@@ -1337,6 +1338,7 @@ export default function App() {
       profile_name: '',
       plan: null,
       remove_previous_choice: null,
+      manage_codex_trust_choice: null,
       result_ok: false,
       result_message: '',
     })
@@ -1360,6 +1362,7 @@ export default function App() {
         profile_name: '',
         plan: payload?.plan || null,
         remove_previous_choice: payload?.plan?.must_remove_previous ? true : null,
+        manage_codex_trust_choice: payload?.plan?.codex_project_trust?.manage_choice_required ? true : null,
         result_ok: false,
         result_message: '',
       })
@@ -1378,7 +1381,10 @@ export default function App() {
       const removePrevious = applyMcpModal.plan?.requires_previous_choice
         ? Boolean(applyMcpModal.remove_previous_choice)
         : null
-      const result = await applyMcpConfig(profileId, { dryRun: false, removePrevious })
+      const manageCodexTrust = applyMcpModal.plan?.codex_project_trust?.manage_choice_required
+        ? Boolean(applyMcpModal.manage_codex_trust_choice)
+        : null
+      const result = await applyMcpConfig(profileId, { dryRun: false, removePrevious, manageCodexTrust })
       setSettingsNeedsReconfigure((prev) => ({ ...prev, [profileId]: false }))
       setApplyMcpModal((prev) => ({
         ...prev,
@@ -1394,6 +1400,19 @@ export default function App() {
           ...prev,
           phase: 'confirm',
           plan: payload.plan || prev.plan,
+          manage_codex_trust_choice: payload?.plan?.codex_project_trust?.manage_choice_required
+            ? (prev.manage_codex_trust_choice ?? true)
+            : prev.manage_codex_trust_choice,
+          result_message: '',
+        }))
+        return
+      }
+      if (payload?.requires_trust_choice) {
+        setApplyMcpModal((prev) => ({
+          ...prev,
+          phase: 'confirm',
+          plan: payload.plan || prev.plan,
+          manage_codex_trust_choice: prev.manage_codex_trust_choice ?? true,
           result_message: '',
         }))
         return
@@ -1407,7 +1426,7 @@ export default function App() {
     }
   }
 
-  async function deleteProfileWithMode(profile, mode = 'agent_only') {
+  async function deleteProfileWithMode(profile, mode = 'agent_only', { removeCodexTrust = false } = {}) {
     const profileId = String(profile?.profile_id || '').trim()
     if (!profileId) return
     const isUnsavedLocalRow =
@@ -1424,7 +1443,7 @@ export default function App() {
     setSettingsLoading(true)
     setSettingsError('')
     try {
-      await deleteSettingsProfile(profileId, mode)
+      await deleteSettingsProfile(profileId, mode, { removeCodexTrust })
       setSettingsNeedsReconfigure((prev) => {
         const out = { ...prev }
         delete out[profileId]
@@ -1467,7 +1486,7 @@ export default function App() {
   }
 
   function closeDeleteFlow() {
-    setDeleteAgentModal({ open: false, profile: null, stage: 'choose' })
+    setDeleteAgentModal({ open: false, profile: null, stage: 'choose', remove_codex_trust: false })
   }
 
   async function executeDeleteFlow(mode) {
@@ -1484,7 +1503,9 @@ export default function App() {
   async function confirmDeleteEverything() {
     const profile = deleteAgentModal?.profile
     if (!profile) return
-    await deleteProfileWithMode(profile, 'everything')
+    await deleteProfileWithMode(profile, 'everything', {
+      removeCodexTrust: Boolean(deleteAgentModal?.remove_codex_trust),
+    })
     closeDeleteFlow()
   }
 
@@ -5833,6 +5854,7 @@ export default function App() {
           profile_name: profile?.name || profile?.agent_id || profile?.profile_id || '',
           plan: payload?.plan || null,
           remove_previous_choice: payload?.plan?.must_remove_previous ? true : null,
+          manage_codex_trust_choice: payload?.plan?.codex_project_trust?.manage_choice_required ? true : null,
           result_ok: false,
           result_message: '',
         })
@@ -5844,7 +5866,14 @@ export default function App() {
     }
 
     const openDeleteFlow = (profile) => {
-      setDeleteAgentModal({ open: true, profile, stage: 'choose' })
+      const trustMeta = profile?.last_applied?.codex_project_trust || null
+      const canRemoveTrust = String(profile?.agent_type || '').trim().toLowerCase() === 'codex' && Boolean(trustMeta?.managed)
+      setDeleteAgentModal({
+        open: true,
+        profile,
+        stage: 'choose',
+        remove_codex_trust: canRemoveTrust,
+      })
     }
 
     const setProfileActionLoading = (profileId, value) => {
@@ -5854,7 +5883,7 @@ export default function App() {
     const setHardeningOption = (profileId, patch) => {
       setHardeningOptionsByProfile((prev) => ({
         ...prev,
-        [profileId]: { ...(prev[profileId] || defaultHardeningOptionsForProfile(selectedProfile || {})), ...patch },
+        [profileId]: { ...(prev[profileId] || selectedHardeningBaseline || defaultHardeningOptionsForProfile(selectedProfile || {})), ...patch },
       }))
     }
 
@@ -5871,6 +5900,11 @@ export default function App() {
       try {
         const payload = await applyAgentConfigHardening(profileId, { autoAddMcp, options: optionsPayload })
         const diffSummary = Array.isArray(payload?.diff_summary) ? payload.diff_summary : []
+        setHardeningOptionsByProfile((prev) => {
+          const next = { ...prev }
+          delete next[profileId]
+          return next
+        })
         setMessage(`Enforcement applied for ${row?.name || row?.agent_id || profileId}`)
         setCopyAssistModal({
           open: true,
@@ -5921,6 +5955,11 @@ export default function App() {
       setSettingsError('')
       try {
         const payload = await undoAgentConfigHardening(profileId)
+        setHardeningOptionsByProfile((prev) => {
+          const next = { ...prev }
+          delete next[profileId]
+          return next
+        })
         setMessage(`Enforcement undo completed for ${row?.name || row?.agent_id || profileId}`)
         setCopyAssistModal({
           open: true,
@@ -6076,7 +6115,7 @@ export default function App() {
       ? [
           { key: 'airg_mcp_present', label: 'AIRG MCP configured', failText: 'Not found in global/project Codex config scopes' },
           { key: 'tier1_guidance_present', label: 'Guidance present', failText: 'Missing AIRG managed block in ~/.codex/AGENTS.md' },
-          { key: 'tier2_rules_present', label: 'Policy mirror present', failText: 'Missing AIRG managed block in ~/.codex/rules/default.rules' },
+          { key: 'tier2_rules_present', label: 'Policy mirror present', failText: 'Missing AIRG managed rules/airg.rules in the selected Codex scope' },
           { key: 'tier2_rules_in_sync', label: 'Policy mirror in sync', failText: 'Rules drift detected; reapply hardening' },
           { key: 'tier2_mirror_approvals_configured', label: 'Mirror approvals configured', failText: 'Mirror approvals mode missing in managed rules metadata' },
           { key: 'sandbox_mode_maximum', label: 'Sandbox mode', failText: 'Sandbox mode is not read-only' },
@@ -6525,6 +6564,7 @@ export default function App() {
                               'Codex:',
                               '- Global (default): ~/.codex/config.toml',
                               '- Project: .codex/config.toml in project',
+                              '- Project scope also needs the workspace trusted in ~/.codex/config.toml before Codex loads project .codex files.',
                               '',
                               'Official docs:',
                               '- Claude Code MCP: https://docs.anthropic.com/en/docs/claude-code/mcp',
@@ -7687,7 +7727,10 @@ export default function App() {
     if (!applyMcpModal.open) return null
     const plan = applyMcpModal.plan || {}
     const requiresChoice = Boolean(plan.requires_previous_choice)
-    const canApply = !requiresChoice || applyMcpModal.remove_previous_choice !== null
+    const trustPlan = plan.codex_project_trust || null
+    const requiresTrustChoice = Boolean(trustPlan?.manage_choice_required)
+    const canApply = (!requiresChoice || applyMcpModal.remove_previous_choice !== null)
+      && (!requiresTrustChoice || applyMcpModal.manage_codex_trust_choice !== null)
     return (
       <div
         className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4"
@@ -7735,6 +7778,43 @@ export default function App() {
                       No, keep previous config
                     </button>
                   </div>
+                </div>
+              )}
+              {trustPlan?.supported && (
+                <div className="text-xs rounded-[8px] border border-sky-200 bg-sky-50 text-sky-900 px-3 py-2 space-y-2">
+                  <div>
+                    Codex project scope loads project `.codex/` files only when the workspace is trusted in <span className="font-mono break-all">{String(trustPlan.config_path || '~/.codex/config.toml')}</span>.
+                  </div>
+                  {requiresTrustChoice ? (
+                    <>
+                      <div>Also trust <span className="font-mono break-all">{String(trustPlan.workspace || '')}</span> now?</div>
+                      <div className="flex gap-2">
+                        <button
+                          className={`px-3 py-1.5 rounded-[8px] border text-xs ${applyMcpModal.manage_codex_trust_choice === true ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}
+                          onClick={() => setApplyMcpModal((prev) => ({ ...prev, manage_codex_trust_choice: true }))}
+                        >
+                          Yes, trust workspace
+                        </button>
+                        <button
+                          className={`px-3 py-1.5 rounded-[8px] border text-xs ${applyMcpModal.manage_codex_trust_choice === false ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}
+                          onClick={() => setApplyMcpModal((prev) => ({ ...prev, manage_codex_trust_choice: false }))}
+                        >
+                          No, leave trust unchanged
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      {trustPlan.trusted
+                        ? 'Workspace is already trusted.'
+                        : 'Workspace trust will be left unchanged.'}
+                    </div>
+                  )}
+                  {trustPlan.previous_restore_needed && (
+                    <div>
+                      AIRG will restore trust state for the previously managed workspace <span className="font-mono break-all">{String(trustPlan.previous_workspace || '')}</span>.
+                    </div>
+                  )}
                 </div>
               )}
               <details className="rounded-[8px] border border-slate-200 bg-slate-50">
@@ -7789,6 +7869,8 @@ export default function App() {
   function DeleteAgentModal() {
     if (!deleteAgentModal.open || !deleteAgentModal.profile) return null
     const profile = deleteAgentModal.profile
+    const codexTrustMeta = profile?.last_applied?.codex_project_trust || null
+    const canRemoveCodexTrust = String(profile?.agent_type || '').trim().toLowerCase() === 'codex' && Boolean(codexTrustMeta?.managed)
     return (
       <div
         className="fixed inset-0 z-30 bg-slate-900/40 flex items-center justify-center p-4"
@@ -7835,6 +7917,28 @@ export default function App() {
               <div className="text-sm text-red-700">
                 Warning: If multiple instances of the same agent use the same workspace, this change will affect all of them due to limitations in STDIO MCP.
               </div>
+              {canRemoveCodexTrust && (
+                <div className="text-xs rounded-[8px] border border-amber-200 bg-amber-50 text-amber-900 px-3 py-2 space-y-2">
+                  <div>
+                    AIRG previously added Codex trust for <span className="font-mono break-all">{String(codexTrustMeta?.workspace || profile?.workspace || '')}</span>.
+                    Remove that trust entry and restore the previous user config state too?
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className={`px-3 py-1.5 rounded-[8px] border text-xs ${deleteAgentModal.remove_codex_trust ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}
+                      onClick={() => setDeleteAgentModal((prev) => ({ ...prev, remove_codex_trust: true }))}
+                    >
+                      Yes, remove trust
+                    </button>
+                    <button
+                      className={`px-3 py-1.5 rounded-[8px] border text-xs ${!deleteAgentModal.remove_codex_trust ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-300 bg-white text-slate-700'}`}
+                      onClick={() => setDeleteAgentModal((prev) => ({ ...prev, remove_codex_trust: false }))}
+                    >
+                      No, keep trust
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2 justify-end">
                 <button
                   className="px-3 py-1.5 rounded-[10px] border border-slate-300 text-slate-700"

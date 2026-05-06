@@ -119,7 +119,32 @@ Verification:
 1. Re-open `Security Posture` and check signals for `hook_enforcement_active`, `hook_fail_closed_active`, and `sandbox_hardened`.
 2. Optional signals are `permissions_airg_allowlist_configured`, `permissions_terminal_allowlist_locked`, `optional_read_hooks_active`, and `cursorignore_synced`.
 
-## 11. Known Boundaries
+## 11. Codex Hardening (GUI)
+Use this flow in `Settings -> Agents` for Codex profiles:
+1. Select a Codex profile and configure MCP first with `Apply MCP Config`.
+2. Choose `Global` or `Project` scope in the profile.
+3. For `Project` scope, trust the workspace in `~/.codex/config.toml` so Codex loads the project `.codex/` layer.
+
+Scope targets:
+1. `Global` writes:
+   - `~/.codex/config.toml`
+   - `~/.codex/AGENTS.md`
+   - `~/.codex/rules/airg.rules`
+2. `Project` writes:
+   - `<workspace>/.codex/config.toml`
+   - `<workspace>/.codex/AGENTS.md`
+   - `<workspace>/.codex/rules/airg.rules`
+
+Control groups:
+1. `STANDARD`: MCP configuration only.
+2. `STRICT`: guidance block in `AGENTS.md` plus policy mirror in `rules/airg.rules`.
+3. `MAXIMUM`: `sandbox_mode`, `approval_policy`, and `sandbox_workspace_write` settings in `config.toml`.
+
+Notes:
+1. AIRG uses a dedicated `airg.rules` file and does not manage `default.rules`.
+2. Codex may continue to write user-approved allowlist entries into `~/.codex/rules/default.rules`; this is separate from AIRG-managed policy mirror state.
+
+## 12. Known Boundaries
 1. AIRG enforces only AIRG MCP tool calls.
 2. Native client tools outside MCP can bypass AIRG unless separately restricted in the client.
 3. Client capabilities differ; some hardening controls are unavailable on some agents.
@@ -133,7 +158,7 @@ Failure modes and practical limitations:
 6. Mention-only sentinel matches are audit-visible but non-enforcing.
 7. In STDIO deployments, practical identity separation is profile/environment based, not authenticated per-instance identity.
 
-## 12. Hardening Checklist (Recommended Baseline)
+## 13. Hardening Checklist (Recommended Baseline)
 1. Route all file/shell operations through AIRG MCP tools and disable risky native tools where the client supports it.
 2. Enable and verify hook enforcement (`preToolUse`, `beforeShellExecution`, `beforeMCPExecution`; optional `beforeReadFile`) in clients that support hooks.
 3. Set `network.enforcement_mode` to `enforce`; use `allowed_domains` and set `block_unknown_domains=true` for default-deny egress control.
@@ -143,7 +168,7 @@ Failure modes and practical limitations:
 7. Use distinct `AIRG_AGENT_ID` values per agent profile/workspace and avoid shared identities for high-sensitivity workflows.
 8. Periodically validate posture and bypass resistance using `tests/test_airg_hook.py`, `tests/test_attacker_suite.py`, and substitution tests.
 
-## 13. Telemetry
+## 14. Telemetry
 1. AIRG supports optional anonymous telemetry with one aggregate payload per UTC day when enabled.
 2. Setup/update flow prompts for telemetry opt-in with default Yes.
 3. You can change telemetry preference at any time in GUI: `Policy -> Advanced -> Anonymous telemetry` (`Enable/Disable` + `See Payload`).

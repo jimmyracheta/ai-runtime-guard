@@ -724,6 +724,7 @@ def settings_agents_delete():
     payload = request.get_json(silent=True) or {}
     profile_id = str(payload.get("profile_id", "")).strip()
     remove_mode = str(payload.get("remove_mode", "agent_only") or "agent_only").strip().lower()
+    remove_codex_trust = bool(payload.get("remove_codex_trust", False))
     if not profile_id:
         return jsonify({"ok": False, "errors": ["profile_id is required"]}), 400
     paths = _agent_paths()
@@ -732,7 +733,7 @@ def settings_agents_delete():
     if not isinstance(profile, dict):
         return jsonify({"ok": False, "errors": ["Profile not found"]}), 404
     if remove_mode == "everything":
-        removed = mcp_config_manager.remove_applied_mcp(paths, profile)
+        removed = mcp_config_manager.remove_applied_mcp(paths, profile, remove_codex_trust=remove_codex_trust)
         if not removed.get("ok"):
             return jsonify(removed), 400
     elif remove_mode not in {"agent_only", "everything"}:
@@ -818,8 +819,11 @@ def settings_agents_mcp_apply():
     profile_id = str(payload.get("profile_id", "")).strip()
     dry_run = bool(payload.get("dry_run", False))
     remove_previous = payload.get("remove_previous", None)
+    manage_codex_trust = payload.get("manage_codex_trust", None)
     if remove_previous is not None:
         remove_previous = bool(remove_previous)
+    if manage_codex_trust is not None:
+        manage_codex_trust = bool(manage_codex_trust)
     if not profile_id:
         return jsonify({"ok": False, "errors": ["profile_id is required"]}), 400
 
@@ -833,10 +837,11 @@ def settings_agents_mcp_apply():
         paths,
         profile,
         remove_previous=remove_previous,
+        manage_codex_trust=manage_codex_trust,
         dry_run=dry_run,
     )
     if not result.get("ok"):
-        status = 409 if result.get("requires_previous_choice") else 400
+        status = 409 if result.get("requires_previous_choice") or result.get("requires_trust_choice") else 400
         return jsonify(result), status
 
     current_profiles = result.get("profiles", profiles)

@@ -51,6 +51,11 @@ Codex stores MCP config in:
    - Create `.codex/` in your project root.
    - Add `.codex/config.toml`.
    - Put your AIRG MCP config there.
+4. Project trust bootstrap:
+   - Add a user-layer trust entry in `~/.codex/config.toml`:
+   - `[projects."/absolute/path/to/project"]`
+   - `trust_level = "trusted"`
+   - Without this, Codex does not load project-local `.codex/` config/rules for that workspace.
 
 Add AIRG via CLI:
 ```bash
@@ -69,6 +74,18 @@ AIRG `Settings -> Agents -> Apply MCP Config` supports Codex directly:
 1. `global` scope writes to `~/.codex/config.toml`
 2. `project` scope writes to `<workspace>/.codex/config.toml`
 3. AIRG manages only the `mcp_servers.ai-runtime-guard` section and preserves unrelated Codex settings.
+4. For `project` scope, AIRG can also add/update the matching trust entry in user config (`~/.codex/config.toml`) after explicit confirmation in the GUI.
+
+AIRG Codex hardening artifacts are scope-aware:
+1. `global` scope:
+   - `~/.codex/config.toml`
+   - `~/.codex/AGENTS.md`
+   - `~/.codex/rules/airg.rules`
+2. `project` scope:
+   - `<workspace>/.codex/config.toml`
+   - `<workspace>/.codex/AGENTS.md`
+   - `<workspace>/.codex/rules/airg.rules`
+3. AIRG intentionally avoids `default.rules`; Codex may use that file for user/TUI-managed approvals.
 
 Example `config.toml` entry:
 ```toml
