@@ -11,7 +11,7 @@ Example payload:
 
 ```json
 {
-  "airg_version": "2.3.0",
+  "airg_version": "2.3.1",
   "platform": "macos",
   "python_version": "3.12.3",
   "install_method": "unknown",
@@ -53,12 +53,18 @@ Example payload:
 - Default endpoint: `https://telemetry.runtime-guard.ai/v1/telemetry`
 - Method: `POST` JSON (`Content-Type: application/json`)
 - Timeout: 5 seconds total
-- Retries: none
-- Failures are silently dropped (no queue/persist)
+- Retries: implicit via outbox persistence (failed uploads remain queued)
+- Failures are logged to `activity.log` telemetry events
 - Success is HTTP `204 No Content`
 - AIRG sets an explicit `User-Agent` header for telemetry requests.
-- AIRG evaluates telemetry send eligibility on UI backend startup and then once per UTC day via a lightweight background ticker.
-- Sleep/wake behavior: the ticker uses bounded sleeps (max 15 minutes) and re-checks UTC day rollover after wake, so long sleep sessions do not block daily telemetry checks until the original long timer would have completed.
+- AIRG telemetry scheduler runs every 60 minutes and starts generator/uploader workers in parallel.
+- Generator creates one payload per UTC day when enabled and writes it to the telemetry outbox.
+- Uploader scans outbox payloads and POSTs them to the configured endpoint.
+- Worker stand-down behavior:
+  - telemetry disabled: both stand down
+  - generator already ran today: generator stands down
+  - uploader no payloads: uploader stands down
+- Outbox location: `<state_dir>/telemetry/telemetry-YYYY-MM-DD.json` where `<state_dir>` is the directory containing `approvals.db`.
 
 To point to a different endpoint, set `policy.telemetry.endpoint` to a custom URL.
 
@@ -66,6 +72,11 @@ To point to a different endpoint, set `policy.telemetry.endpoint` to a custom UR
 
 - Check policy state in the active runtime policy file (`AIRG_POLICY_PATH`):
   - `telemetry.enabled` should be `true`
-  - `telemetry.last_sent_date` should advance after a successful daily send
+  - `telemetry.last_payload_generated_date` should match the latest generated UTC day
+  - `telemetry.last_payload_uploaded_at` should advance after successful uploads
+- `telemetry.last_sent_date` remains as compatibility state and updates on upload success.
+- In GUI `Policy -> Advanced -> Anonymous telemetry`, use:
+  - `View Status` to see generator/uploader `status` and `last run`
+  - `Restart` to run workers immediately.
 - Confirm AIRG service/runtime is running the expected package version (for example after upgrades/reinstalls).
 - Use `AIRG_DEBUG=1` when launching AIRG to surface telemetry send errors in service logs.

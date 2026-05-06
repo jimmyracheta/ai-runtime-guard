@@ -88,8 +88,23 @@ def _normalize_last_applied(raw_last_applied: Any) -> dict[str, Any] | None:
     workspace = str(raw_last_applied.get("workspace") or "").strip()
     agent_id = str(raw_last_applied.get("agent_id") or "").strip()
     created_by_airg = bool(raw_last_applied.get("created_by_airg", False))
+    codex_project_trust = raw_last_applied.get("codex_project_trust")
     if not (scope and file_path and timestamp):
         return None
+    normalized_trust: dict[str, Any] | None = None
+    if isinstance(codex_project_trust, dict):
+        config_path = str(codex_project_trust.get("config_path") or "").strip()
+        workspace = str(codex_project_trust.get("workspace") or "").strip()
+        section_text = str(codex_project_trust.get("section_text") or "")
+        if config_path and workspace:
+            normalized_trust = {
+                "managed": bool(codex_project_trust.get("managed", False)),
+                "config_path": config_path,
+                "workspace": workspace,
+                "before_exists": bool(codex_project_trust.get("before_exists", False)),
+                "section_present": bool(codex_project_trust.get("section_present", False)),
+                "section_text": section_text,
+            }
     return {
         "scope": scope,
         "file_path": file_path,
@@ -98,6 +113,7 @@ def _normalize_last_applied(raw_last_applied: Any) -> dict[str, Any] | None:
         "agent_id": agent_id,
         "agent_type": str(raw_last_applied.get("agent_type") or "").strip().lower(),
         "created_by_airg": created_by_airg,
+        "codex_project_trust": normalized_trust,
     }
 
 
@@ -271,7 +287,8 @@ def _codex_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> t
         "Alternative file-based setup:\n"
         "1. Open ~/.codex/config.toml for global scope or .codex/config.toml in your project for project scope.\n"
         "2. Add ai-runtime-guard under mcp_servers.\n"
-        "3. Restart Codex."
+        "3. For project scope, trust the project .codex layer in ~/.codex/config.toml so project rules/config load.\n"
+        "4. Restart Codex."
     )
     return server_block, file_payload, command, instructions, remove_command
 

@@ -2,6 +2,79 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-05-06 (v2.3.1.dev4 Codex project-only tool approvals + docs reconciliation)
+- Refined Codex MCP config generation so AIRG tool approval entries (`[mcp_servers.ai-runtime-guard.tools.*]`) are written only to project-scoped `<workspace>/.codex/config.toml`, never to user `~/.codex/config.toml`.
+- Kept Codex cleanup logic broad enough to remove older AIRG-managed tool approval entries from prior writes during reapply/remove flows.
+- Reconciled current documentation with shipped Codex behavior:
+  - updated `README.md`, `docs/AGENT_MCP_CONFIGS.md`, and `docs/MANUAL.md`
+  - corrected stale manual version text
+  - aligned status/version metadata with the new release-candidate version.
+- Updated Codex tests to assert:
+  - no AIRG tool approval stanzas in global Codex config
+  - AIRG tool approval stanzas present in project Codex config.
+- Bumped package/dev version to `2.3.1.dev4`.
+
+## 2026-05-06 (v2.3.1.dev3 Codex scope/trust refactor)
+- Refactored Codex MCP apply/remove in `src/mcp_config_manager.py`:
+  - project/global MCP targets remain scope-aware
+  - added explicit project-trust planning and apply/remove support for `~/.codex/config.toml` (`[projects."<workspace>"].trust_level = "trusted"`)
+  - trust state is now tracked in profile `last_applied` metadata for safe restoration on workspace changes or profile removal
+  - tightened Codex TOML write verification and improved MCP idempotency.
+- Refactored Codex hardening in `src/agent_configurator.py`:
+  - `config.toml`, `AGENTS.md`, and rules are now written to the selected scope (`~/.codex/` or `<workspace>/.codex/`)
+  - AIRG now uses dedicated `rules/airg.rules` instead of Codex `default.rules`
+  - Tier 3 sandbox/approval settings are managed as an explicit AIRG block in scoped `config.toml`.
+- Updated Codex posture detection in `src/agent_posture.py`:
+  - Tier 1/Tier 2/Tier 3 signals now resolve from the selected scope
+  - recommendations and signal scopes reference scoped Codex artifacts instead of fixed global paths.
+- Updated GUI flows in `ui_v3/src/App.jsx` and backend routes in `src/ui/backend_flask.py`:
+  - `Apply MCP Config` for project-scoped Codex profiles now prompts for workspace trust
+  - profile deletion can optionally remove AIRG-managed Codex trust state
+  - fixed false `Pending Changes` badge behavior by baselining hardening options from live posture instead of static defaults.
+- Added regression coverage:
+  - Codex project-trust apply/remove behavior in `tests/test_mcp_config_manager.py`
+  - Codex project-scope hardening targets in `tests/test_agent_configurator.py`
+  - Codex project-scope posture detection in `tests/test_agent_posture.py`.
+- Updated documentation/context:
+  - `docs/AGENT_MCP_CONFIGS.md`
+  - `docs/MANUAL.md`
+  - `AGENT_CONTEXT.md`
+  - `STATUS.md`
+- Bumped package/dev version to `2.3.1.dev3`.
+
+## 2026-05-05 (v2.3.1.dev2 reports log truncation + expansion consistency)
+- Fixed policy path extension checks in `src/policy_engine.py` (`check_path_policy`) to eliminate `NameError: name 'lower' is not defined` affecting `write_file`/`edit_file`.
+- Added regression coverage in `tests/test_attacker_suite.py` to guard blocked-extension write paths against this crash.
+- Updated Reports -> Log table rendering in `ui_v3/src/App.jsx`:
+  - fixed table layout and explicit column widths for stable responsive boundaries
+  - truncation guards for long values in `Event`, `Matched Rule`, and `Command / Path` cells
+  - consistent `Show more` modal expansion controls for all non-empty event/rule/command-path values.
+- Rebuilt frontend artifacts after log-table UI changes.
+
+## 2026-04-28 (v2.3.1.dev telemetry scheduler rewrite)
+- Reworked telemetry runtime architecture in `src/telemetry.py`:
+  - split into generator and uploader workers
+  - generator writes outbox payloads to `<state_dir>/telemetry/telemetry-YYYY-MM-DD.json`
+  - uploader scans outbox and posts pending payloads.
+- Added telemetry policy runtime fields:
+  - `telemetry.last_payload_generated_date`
+  - `telemetry.last_payload_uploaded_at`
+  - retained `telemetry.last_sent_date` as compatibility state.
+- Replaced UTC day-rollover ticker in `src/ui/backend_flask.py` with hourly telemetry scheduler:
+  - runs generator and uploader in parallel each cycle
+  - keeps standalone scheduler separate from GUI ticker and reports reconcile loops.
+- Added telemetry backend endpoints:
+  - `GET /telemetry/service-status`
+  - `POST /telemetry/service-restart`.
+- Added telemetry Advanced Policy UI controls in `ui_v3/src/App.jsx`:
+  - status modal (generator/uploader `status` + `last run`)
+  - warning banner for stale generator or failed uploader
+  - restart button.
+- Added/updated tests:
+  - telemetry generator same-day stand-down
+  - telemetry uploader empty-outbox stand-down
+  - successful upload updates policy fields and clears queued payload.
+
 ## 2026-04-15 (v2.1.0 substitution policy hardening)
 - Hardened `execute_command` substitution handling in `src/policy_engine.py`:
   - recursive extraction for `$(...)`, backticks, and process substitution (`<(...)`, `>(...)`)

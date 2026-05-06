@@ -98,6 +98,8 @@ class MCPConfigManagerTests(unittest.TestCase):
         self.assertIn("[mcp_servers.ai-runtime-guard]", text)
         self.assertIn("AIRG_AGENT_ID", text)
         self.assertIn("AIRG_WORKSPACE", text)
+        self.assertNotIn("[mcp_servers.ai-runtime-guard.tools.server_info]", text)
+        self.assertNotIn('approval_mode = "approve"', text)
         self.assertEqual(str(applied.get("plan", {}).get("scope", "")), "global")
 
         updated_profile = applied.get("profile", profile)
@@ -108,18 +110,69 @@ class MCPConfigManagerTests(unittest.TestCase):
         self.assertIn("[mcp_servers.existing]", after_text)
         self.assertNotIn("[mcp_servers.ai-runtime-guard]", after_text)
 
+    def test_apply_codex_global_config_is_idempotent(self) -> None:
+        profile = self._upsert_codex_profile("global")
+        target = self.home / ".codex" / "config.toml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('[mcp_servers.existing]\ncommand = "node"\n')
+
+        with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
+            first = mcp_config_manager.apply_mcp_config(self.paths, profile)
+        self.assertTrue(first.get("ok"), msg=first)
+        first_text = target.read_text()
+
+        with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
+            second = mcp_config_manager.apply_mcp_config(self.paths, first.get("profile", profile))
+        self.assertTrue(second.get("ok"), msg=second)
+        self.assertEqual(target.read_text(), first_text)
+
     def test_apply_codex_project_config_creates_project_file(self) -> None:
         profile = self._upsert_codex_profile("project")
         target = self.workspace / ".codex" / "config.toml"
+        home_target = self.home / ".codex" / "config.toml"
 
         with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
-            applied = mcp_config_manager.apply_mcp_config(self.paths, profile)
+            applied = mcp_config_manager.apply_mcp_config(self.paths, profile, manage_codex_trust=True)
         self.assertTrue(applied.get("ok"), msg=applied)
         self.assertTrue(target.exists())
         text = target.read_text()
         self.assertIn("[mcp_servers.ai-runtime-guard]", text)
         self.assertIn("AIRG_AGENT_ID", text)
         self.assertIn("AIRG_WORKSPACE", text)
+        self.assertIn("[mcp_servers.ai-runtime-guard.tools.server_info]", text)
+        self.assertIn("[mcp_servers.ai-runtime-guard.tools.execute_command]", text)
+        self.assertIn("[mcp_servers.ai-runtime-guard.tools.list_directory]", text)
+        self.assertIn('approval_mode = "approve"', text)
+        self.assertTrue(home_target.exists())
+        trust_text = home_target.read_text()
+        self.assertIn(f'[projects."{self.workspace}"]', trust_text)
+        self.assertIn('trust_level = "trusted"', trust_text)
+        self.assertTrue(bool(applied.get("profile", {}).get("last_applied", {}).get("codex_project_trust", {}).get("managed")))
+
+    def test_apply_codex_project_config_without_trust_choice_requires_confirmation(self) -> None:
+        profile = self._upsert_codex_profile("project")
+        with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
+            result = mcp_config_manager.apply_mcp_config(self.paths, profile)
+        self.assertFalse(result.get("ok"))
+        self.assertTrue(result.get("requires_trust_choice"))
+
+    def test_remove_codex_project_config_can_restore_trust_state(self) -> None:
+        profile = self._upsert_codex_profile("project")
+        home_target = self.home / ".codex" / "config.toml"
+        home_target.parent.mkdir(parents=True, exist_ok=True)
+        home_target.write_text('[projects."/tmp/existing"]\ntrust_level = "trusted"\n')
+
+        with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
+            applied = mcp_config_manager.apply_mcp_config(self.paths, profile, manage_codex_trust=True)
+        self.assertTrue(applied.get("ok"), msg=applied)
+
+        updated_profile = applied.get("profile", profile)
+        with patch("mcp_config_manager.pathlib.Path.home", return_value=self.home):
+            removed = mcp_config_manager.remove_applied_mcp(self.paths, updated_profile, remove_codex_trust=True)
+        self.assertTrue(removed.get("ok"), msg=removed)
+        trust_text = home_target.read_text()
+        self.assertNotIn(f'[projects."{self.workspace}"]', trust_text)
+        self.assertIn('[projects."/tmp/existing"]', trust_text)
 
     def _upsert_cursor_profile(self, scope: str) -> dict:
         profile = {

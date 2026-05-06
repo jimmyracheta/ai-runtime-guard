@@ -32,7 +32,13 @@ class UIPolicyServiceTests(unittest.TestCase):
             "backup_access": {"block_agent_tools": True},
             "restore": {"require_dry_run_before_apply": True, "confirmation_ttl_seconds": 300},
             "audit": {"backup_enabled": True, "backup_on_content_change_only": True, "max_versions_per_file": 5, "backup_root": str(self.base / "backups"), "backup_retention_days": 30, "log_level": "verbose", "redact_patterns": []},
-            "telemetry": {"enabled": True, "endpoint": "https://telemetry.runtime-guard.ai/v1/telemetry", "last_sent_date": ""},
+            "telemetry": {
+                "enabled": True,
+                "endpoint": "https://telemetry.runtime-guard.ai/v1/telemetry",
+                "last_payload_generated_date": "",
+                "last_payload_uploaded_at": "",
+                "last_sent_date": "",
+            },
             "script_sentinel": {
                 "enabled": False,
                 "mode": "match_original",

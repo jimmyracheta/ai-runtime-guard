@@ -883,6 +883,7 @@ def is_protected_runtime_path(path: str) -> bool:
 
 def check_path_policy(path: str, tool: str | None = None) -> tuple[str, str] | None:
     blocked = POLICY.get("blocked", {})
+    lower_path = str(path).lower()
     try:
         resolved = pathlib.Path(path).resolve()
     except Exception:
@@ -896,7 +897,7 @@ def check_path_policy(path: str, tool: str | None = None) -> tuple[str, str] | N
             )
 
     for ext in blocked.get("extensions", []):
-        if re.search(rf"{re.escape(ext)}\b", lower):
+        if re.search(rf"{re.escape(ext)}\b", lower_path):
             return (
                 f"Sensitive file extension not permitted: '{ext}' files may contain private keys or certificates",
                 ext,

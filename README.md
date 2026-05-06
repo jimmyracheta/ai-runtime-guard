@@ -103,6 +103,8 @@ Developers and operators running AI agents who want deterministic guardrails on 
 
 Enforcement depth varies by client. MCP policy enforcement is universal; hook-based native tool restriction and sandboxing depend on what each client exposes.
 
+For Codex, AIRG supports both user-scope (`~/.codex/`) and project-scope (`<workspace>/.codex/`) artifacts. Project-scope enforcement requires the workspace to be trusted in the user-layer `~/.codex/config.toml` before Codex will load the project `.codex/` files. AIRG writes Codex tool approval stanzas only in the project-scoped `.codex/config.toml`.
+
 ## Scope and boundaries
 
 **What AIRG is designed for**: reducing accidental damage from agent mistakes, hallucinated commands, and policy-evasion patterns.

@@ -9,15 +9,6 @@ import reports
 import telemetry
 
 
-class _ImmediateThread:
-    def __init__(self, target=None, **_kwargs):
-        self._target = target
-
-    def start(self):
-        if self._target:
-            self._target()
-
-
 class TelemetryTests(unittest.TestCase):
     def test_bucket_boundaries(self) -> None:
         cases = {
@@ -94,56 +85,7 @@ class TelemetryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     telemetry.validate_payload(invalid)
 
-    def test_last_sent_date_logic(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            base = pathlib.Path(tmp)
-            policy_path = base / "policy.json"
-            reports_db = base / "reports.db"
-            approval_db = base / "approvals.db"
-            log_path = base / "activity.log"
-            reports.init_reports_store(reports_db)
-            log_path.write_text("")
-
-            policy = {
-                "telemetry": {
-                    "enabled": True,
-                    "endpoint": "https://telemetry.runtime-guard.ai/v1/telemetry",
-                    "last_sent_date": "2026-04-16",
-                },
-                "reports": {"enabled": True},
-                "script_sentinel": {"enabled": True},
-            }
-            policy_path.write_text(json.dumps(policy))
-
-            now_same_day = datetime.datetime(2026, 4, 16, 10, 0, 0, tzinfo=datetime.UTC)
-            sent = telemetry.maybe_send_daily(
-                policy_path=policy_path,
-                reports_db_path=reports_db,
-                approval_db_path=approval_db,
-                log_path=log_path,
-                now=now_same_day,
-            )
-            self.assertFalse(sent)
-
-            with patch.object(telemetry.threading, "Thread", _ImmediateThread), patch.object(
-                telemetry, "_send_once", return_value=204
-            ):
-                now_next_day = datetime.datetime(2026, 4, 17, 1, 0, 0, tzinfo=datetime.UTC)
-                sent_next = telemetry.maybe_send_daily(
-                    policy_path=policy_path,
-                    reports_db_path=reports_db,
-                    approval_db_path=approval_db,
-                    log_path=log_path,
-                    now=now_next_day,
-                )
-                self.assertTrue(sent_next)
-
-            updated = json.loads(policy_path.read_text())
-            self.assertEqual(updated.get("telemetry", {}).get("last_sent_date"), "2026-04-17")
-            self.assertIn("enabled", updated.get("telemetry", {}))
-            self.assertIn("endpoint", updated.get("telemetry", {}))
-
-    def test_maybe_send_daily_backfills_missing_telemetry_defaults(self) -> None:
+    def test_generator_writes_daily_payload_and_stands_down_same_day(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = pathlib.Path(tmp)
             policy_path = base / "policy.json"
@@ -156,29 +98,97 @@ class TelemetryTests(unittest.TestCase):
             policy_path.write_text(
                 json.dumps(
                     {
-                        "telemetry": {"last_sent_date": "2026-04-16"},
+                        "telemetry": {"enabled": True, "endpoint": telemetry.DEFAULT_ENDPOINT},
                         "reports": {"enabled": True},
                         "script_sentinel": {"enabled": True},
                     }
                 )
             )
 
-            sent = telemetry.maybe_send_daily(
+            now = datetime.datetime(2026, 4, 28, 12, 0, 0, tzinfo=datetime.UTC)
+            generated = telemetry.run_generator_once(
                 policy_path=policy_path,
                 reports_db_path=reports_db,
                 approval_db_path=approval_db,
                 log_path=log_path,
-                now=datetime.datetime(2026, 4, 16, 10, 0, 0, tzinfo=datetime.UTC),
+                now=now,
             )
-            self.assertFalse(sent)
+            self.assertEqual(generated.get("status"), "generated")
 
+            payload_path = approval_db.parent / telemetry.OUTBOX_DIR_NAME / "telemetry-2026-04-28.json"
+            self.assertTrue(payload_path.exists())
             updated = json.loads(policy_path.read_text())
-            self.assertEqual(updated.get("telemetry", {}).get("last_sent_date"), "2026-04-16")
-            self.assertTrue(updated.get("telemetry", {}).get("enabled"))
-            self.assertEqual(
-                updated.get("telemetry", {}).get("endpoint"),
-                telemetry.DEFAULT_ENDPOINT,
+            self.assertEqual(updated.get("telemetry", {}).get("last_payload_generated_date"), "2026-04-28")
+
+            same_day = telemetry.run_generator_once(
+                policy_path=policy_path,
+                reports_db_path=reports_db,
+                approval_db_path=approval_db,
+                log_path=log_path,
+                now=now,
             )
+            self.assertEqual(same_day.get("status"), "stand_down_same_day")
+
+    def test_uploader_stands_down_or_uploads_and_updates_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = pathlib.Path(tmp)
+            policy_path = base / "policy.json"
+            approval_db = base / "approvals.db"
+            log_path = base / "activity.log"
+            log_path.write_text("")
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "telemetry": {"enabled": True, "endpoint": telemetry.DEFAULT_ENDPOINT},
+                        "reports": {"enabled": True},
+                        "script_sentinel": {"enabled": True},
+                    }
+                )
+            )
+
+            empty_result = telemetry.run_uploader_once(
+                policy_path=policy_path,
+                approval_db_path=approval_db,
+                log_path=log_path,
+                now=datetime.datetime(2026, 4, 28, 12, 0, 0, tzinfo=datetime.UTC),
+            )
+            self.assertEqual(empty_result.get("status"), "stand_down_empty")
+
+            out_dir = approval_db.parent / telemetry.OUTBOX_DIR_NAME
+            out_dir.mkdir(parents=True, exist_ok=True)
+            payload_path = out_dir / "telemetry-2026-04-28.json"
+            payload_path.write_text(
+                json.dumps(
+                    {
+                        "airg_version": "2.2.2",
+                        "platform": "macos",
+                        "python_version": "3.14.3",
+                        "install_method": "unknown",
+                        "agents_bucket": "0",
+                        "agent_types": ["cursor"],
+                        "events_bucket": "0",
+                        "blocked_bucket": "0",
+                        "approvals_bucket": "0",
+                        "sentinel_enabled": True,
+                        "sentinel_flagged_bucket": "0",
+                        "sentinel_blocked_bucket": "0",
+                        "period_days": 1,
+                    }
+                )
+            )
+            with patch.object(telemetry, "_send_once", return_value=204):
+                uploaded = telemetry.run_uploader_once(
+                    policy_path=policy_path,
+                    approval_db_path=approval_db,
+                    log_path=log_path,
+                    now=datetime.datetime(2026, 4, 28, 13, 0, 0, tzinfo=datetime.UTC),
+                )
+            self.assertEqual(uploaded.get("status"), "uploaded")
+            self.assertFalse(payload_path.exists())
+            updated = json.loads(policy_path.read_text())
+            telemetry_cfg = updated.get("telemetry", {})
+            self.assertEqual(telemetry_cfg.get("last_sent_date"), "2026-04-28")
+            self.assertTrue(str(telemetry_cfg.get("last_payload_uploaded_at", "")).endswith("Z"))
 
     def test_send_once_sets_user_agent_header(self) -> None:
         captured: dict[str, str] = {}

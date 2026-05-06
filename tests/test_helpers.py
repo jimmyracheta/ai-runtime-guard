@@ -58,6 +58,8 @@ DEFAULT_TEST_POLICY = {
     "telemetry": {
         "enabled": True,
         "endpoint": "https://telemetry.runtime-guard.ai/v1/telemetry",
+        "last_payload_generated_date": "",
+        "last_payload_uploaded_at": "",
         "last_sent_date": "",
     },
     "script_sentinel": {

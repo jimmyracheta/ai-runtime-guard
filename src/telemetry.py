@@ -17,12 +17,20 @@ import reports
 
 DEFAULT_ENDPOINT = "https://telemetry.runtime-guard.ai/v1/telemetry"
 REQUEST_TIMEOUT_SECONDS = 5
+OUTBOX_DIR_NAME = "telemetry"
+SCHEDULER_INTERVAL_SECONDS = 3600
 _VERSION_ALLOWED_RE = re.compile(r"[^0-9A-Za-z.\-+]+")
 _VERSION_VALIDATE_RE = re.compile(r"^[0-9A-Za-z.\-+]+$")
 _BUCKET_VALUES = {"0", "1", "2-5", "6-10", "11-50", "51-100", "101-1000", "1000+"}
 _AGENT_TYPES_ALLOWED = {"claude_code", "cursor", "codex", "windsurf", "cline", "aider", "other"}
 _INSTALL_METHOD_ALLOWED = {"pip", "pipx", "editable", "docker", "unknown"}
 _PLATFORM_ALLOWED = {"linux", "macos", "windows", "unknown"}
+
+_STATUS_LOCK = threading.Lock()
+_SERVICE_STATUS: dict[str, dict[str, str]] = {
+    "generator": {"status": "starting", "last_run": ""},
+    "uploader": {"status": "starting", "last_run": ""},
+}
 
 
 def _debug(message: str) -> None:
@@ -37,6 +45,45 @@ def _utc_now() -> datetime.datetime:
 def _utc_today(now: datetime.datetime | None = None) -> str:
     current = now or _utc_now()
     return current.strftime("%Y-%m-%d")
+
+
+def _utc_iso(now: datetime.datetime | None = None) -> str:
+    current = now or _utc_now()
+    return current.isoformat().replace("+00:00", "Z")
+
+
+def _set_service_status(service: str, status: str, *, now: datetime.datetime | None = None) -> None:
+    with _STATUS_LOCK:
+        _SERVICE_STATUS[service] = {
+            "status": status,
+            "last_run": _utc_iso(now),
+        }
+
+
+def service_status() -> dict[str, dict[str, str]]:
+    with _STATUS_LOCK:
+        return {
+            "generator": dict(_SERVICE_STATUS.get("generator", {"status": "unknown", "last_run": ""})),
+            "uploader": dict(_SERVICE_STATUS.get("uploader", {"status": "unknown", "last_run": ""})),
+        }
+
+
+def _append_info_log(log_path: pathlib.Path, event: str, **fields: Any) -> None:
+    entry = {
+        "timestamp": _utc_iso(),
+        "source": "mcp-server",
+        "tool": "telemetry",
+        "event": event,
+        "policy_decision": "allowed",
+        "decision_tier": "allowed",
+    }
+    entry.update(fields)
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        _debug(f"failed to append telemetry info log: {exc}")
 
 
 def bucket(value: int) -> str:
@@ -147,8 +194,49 @@ def _telemetry_endpoint(policy: dict[str, Any]) -> str:
     return configured or DEFAULT_ENDPOINT
 
 
-def _last_sent_date(policy: dict[str, Any]) -> str:
-    return str(_telemetry_section(policy).get("last_sent_date", "")).strip()
+def _last_payload_generated_date(policy: dict[str, Any]) -> str:
+    return str(_telemetry_section(policy).get("last_payload_generated_date", "")).strip()
+
+
+def _ensure_telemetry_defaults(policy: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    section = _telemetry_section(policy)
+    updated = dict(section)
+    changed = False
+
+    if "enabled" not in updated:
+        updated["enabled"] = True
+        changed = True
+
+    endpoint = str(updated.get("endpoint", "")).strip()
+    if not endpoint:
+        updated["endpoint"] = DEFAULT_ENDPOINT
+        changed = True
+
+    for key in ["last_payload_generated_date", "last_payload_uploaded_at", "last_sent_date"]:
+        value = updated.get(key, "")
+        if not isinstance(value, str):
+            updated[key] = str(value).strip()
+            changed = True
+        elif key not in updated:
+            updated[key] = ""
+            changed = True
+
+    if changed:
+        normalized = dict(policy)
+        normalized["telemetry"] = updated
+        return normalized, True
+    return policy, False
+
+
+def _update_telemetry_fields(policy_path: pathlib.Path, **updates: str) -> None:
+    policy = _load_policy(policy_path)
+    policy, _ = _ensure_telemetry_defaults(policy)
+    telemetry = dict(_telemetry_section(policy))
+    for key, value in updates.items():
+        telemetry[key] = str(value or "")
+    policy = dict(policy)
+    policy["telemetry"] = telemetry
+    _save_policy(policy_path, policy)
 
 
 def _ensure_telemetry_defaults(policy: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -337,6 +425,14 @@ def build_payload_from_paths(
     )
 
 
+def _outbox_dir(approval_db_path: pathlib.Path) -> pathlib.Path:
+    return approval_db_path.expanduser().resolve().parent / OUTBOX_DIR_NAME
+
+
+def _payload_file_path(approval_db_path: pathlib.Path, day: str) -> pathlib.Path:
+    return _outbox_dir(approval_db_path) / f"telemetry-{day}.json"
+
+
 def _send_once(endpoint: str, payload: dict[str, Any], timeout_seconds: int) -> int | None:
     body = json.dumps(payload).encode("utf-8")
     user_agent = f"ai-runtime-guard/{payload.get('airg_version', 'unknown')}"
@@ -364,15 +460,113 @@ def _send_once(endpoint: str, payload: dict[str, Any], timeout_seconds: int) -> 
         return None
 
 
-def _update_last_sent_date(policy_path: pathlib.Path, today: str) -> None:
+def run_generator_once(
+    *,
+    policy_path: pathlib.Path,
+    reports_db_path: pathlib.Path,
+    approval_db_path: pathlib.Path,
+    log_path: pathlib.Path,
+    now: datetime.datetime | None = None,
+) -> dict[str, Any]:
+    current = now or _utc_now()
+    _set_service_status("generator", "running", now=current)
+
     policy = _load_policy(policy_path)
-    policy, _changed = _ensure_telemetry_defaults(policy)
-    telemetry = _telemetry_section(policy)
-    updated = dict(telemetry)
-    updated["last_sent_date"] = today
-    policy = dict(policy)
-    policy["telemetry"] = updated
-    _save_policy(policy_path, policy)
+    policy, changed = _ensure_telemetry_defaults(policy)
+    if changed:
+        _save_policy(policy_path, policy)
+
+    if not _telemetry_enabled(policy):
+        _set_service_status("generator", "stand_down_disabled", now=current)
+        _append_info_log(log_path, "telemetry_generator_stand_down", reason="disabled")
+        return {"status": "stand_down_disabled"}
+
+    today = _utc_today(current)
+    if _last_payload_generated_date(policy) == today:
+        _set_service_status("generator", "stand_down_same_day", now=current)
+        _append_info_log(log_path, "telemetry_generator_stand_down", reason="same_day", day=today)
+        return {"status": "stand_down_same_day", "day": today}
+
+    payload = build_payload(
+        policy=policy,
+        reports_db_path=reports_db_path,
+        approval_db_path=approval_db_path,
+        log_path=log_path,
+        now=current,
+    )
+    out_path = _payload_file_path(approval_db_path, today)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    _update_telemetry_fields(policy_path, last_payload_generated_date=today)
+    _set_service_status("generator", "generated", now=current)
+    _append_info_log(log_path, "telemetry_payload_generated", path=str(out_path), day=today)
+    return {"status": "generated", "day": today, "path": str(out_path)}
+
+
+def run_uploader_once(
+    *,
+    policy_path: pathlib.Path,
+    approval_db_path: pathlib.Path,
+    log_path: pathlib.Path,
+    now: datetime.datetime | None = None,
+) -> dict[str, Any]:
+    current = now or _utc_now()
+    _set_service_status("uploader", "running", now=current)
+
+    policy = _load_policy(policy_path)
+    policy, changed = _ensure_telemetry_defaults(policy)
+    if changed:
+        _save_policy(policy_path, policy)
+
+    if not _telemetry_enabled(policy):
+        _set_service_status("uploader", "stand_down_disabled", now=current)
+        _append_info_log(log_path, "telemetry_uploader_stand_down", reason="disabled")
+        return {"status": "stand_down_disabled"}
+
+    endpoint = _telemetry_endpoint(policy)
+    out_dir = _outbox_dir(approval_db_path)
+    payload_files = sorted(out_dir.glob("telemetry-*.json")) if out_dir.exists() else []
+
+    if not payload_files:
+        _set_service_status("uploader", "stand_down_empty", now=current)
+        _append_info_log(log_path, "telemetry_uploader_stand_down", reason="empty_outbox")
+        return {"status": "stand_down_empty", "uploaded": 0}
+
+    uploaded = 0
+    failures = 0
+    for payload_path in payload_files:
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            _append_info_log(log_path, "telemetry_upload_attempted", path=str(payload_path), endpoint=endpoint)
+            status = _send_once(endpoint, payload, REQUEST_TIMEOUT_SECONDS)
+            if status == 204:
+                uploaded += 1
+                _append_info_log(log_path, "telemetry_upload_succeeded", path=str(payload_path), http_status=204)
+                payload_path.unlink(missing_ok=True)
+                _update_telemetry_fields(
+                    policy_path,
+                    last_payload_uploaded_at=_utc_iso(current),
+                    last_sent_date=_utc_today(current),
+                )
+            else:
+                failures += 1
+                _append_info_log(
+                    log_path,
+                    "telemetry_upload_failed",
+                    path=str(payload_path),
+                    http_status=int(status or 0),
+                )
+        except Exception as exc:
+            failures += 1
+            _append_info_log(log_path, "telemetry_upload_failed", path=str(payload_path), error=str(exc))
+
+    if failures:
+        _set_service_status("uploader", "failed", now=current)
+        return {"status": "failed", "uploaded": uploaded, "failed": failures}
+
+    _set_service_status("uploader", "uploaded", now=current)
+    return {"status": "uploaded", "uploaded": uploaded, "failed": 0}
 
 
 def maybe_send_daily(
@@ -383,30 +577,18 @@ def maybe_send_daily(
     log_path: pathlib.Path,
     now: datetime.datetime | None = None,
 ) -> bool:
-    policy = _load_policy(policy_path)
-    policy, changed = _ensure_telemetry_defaults(policy)
-    if changed:
-        _save_policy(policy_path, policy)
-    if not _telemetry_enabled(policy):
-        return False
-
-    today = _utc_today(now)
-    if _last_sent_date(policy) == today:
-        return False
-
-    payload = build_payload(
-        policy=policy,
+    # Backward-compatible wrapper for callers/tests expecting a bool.
+    generated = run_generator_once(
+        policy_path=policy_path,
         reports_db_path=reports_db_path,
         approval_db_path=approval_db_path,
         log_path=log_path,
         now=now,
     )
-    endpoint = _telemetry_endpoint(policy)
-
-    def _worker() -> None:
-        status = _send_once(endpoint, payload, REQUEST_TIMEOUT_SECONDS)
-        if status == 204:
-            _update_last_sent_date(policy_path, today)
-
-    threading.Thread(target=_worker, daemon=True, name="airg-telemetry").start()
-    return True
+    run_uploader_once(
+        policy_path=policy_path,
+        approval_db_path=approval_db_path,
+        log_path=log_path,
+        now=now,
+    )
+    return generated.get("status") == "generated"

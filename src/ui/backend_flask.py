@@ -91,29 +91,48 @@ def _load_or_create_ui_api_token() -> str:
 UI_API_TOKEN = _load_or_create_ui_api_token()
 _TELEMETRY_TICKER_LOCK = threading.Lock()
 _TELEMETRY_TICKER_STARTED = False
-_TELEMETRY_TICKER_MAX_SLEEP_SECONDS = 900
+_TELEMETRY_INTERVAL_SECONDS = telemetry.SCHEDULER_INTERVAL_SECONDS
+_TELEMETRY_ACTIVE_RUN_LOCK = threading.Lock()
 
-def _trigger_daily_telemetry() -> None:
+
+def _telemetry_log_path() -> pathlib.Path:
+    return pathlib.Path(os.environ.get("AIRG_LOG_PATH", config.LOG_PATH)).expanduser().resolve()
+
+
+def _run_telemetry_workers_once() -> None:
+    if not _TELEMETRY_ACTIVE_RUN_LOCK.acquire(blocking=False):
+        return
     try:
-        telemetry.maybe_send_daily(
-            policy_path=POLICY_PATH,
-            reports_db_path=REPORTS_DB_PATH,
-            approval_db_path=APPROVAL_DB_PATH,
-            log_path=pathlib.Path(os.environ.get("AIRG_LOG_PATH", config.LOG_PATH)).expanduser().resolve(),
-        )
-    except Exception as exc:
-        if os.environ.get("AIRG_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}:
-            print(f"[airg][telemetry][debug] telemetry scheduling failed: {exc}", file=sys.stderr)
+        now = datetime.now(UTC)
+
+        def _run_generator() -> None:
+            telemetry.run_generator_once(
+                policy_path=POLICY_PATH,
+                reports_db_path=REPORTS_DB_PATH,
+                approval_db_path=APPROVAL_DB_PATH,
+                log_path=_telemetry_log_path(),
+                now=now,
+            )
+
+        def _run_uploader() -> None:
+            telemetry.run_uploader_once(
+                policy_path=POLICY_PATH,
+                approval_db_path=APPROVAL_DB_PATH,
+                log_path=_telemetry_log_path(),
+                now=now,
+            )
+
+        generator_thread = threading.Thread(target=_run_generator, daemon=True, name="airg-telemetry-generator")
+        uploader_thread = threading.Thread(target=_run_uploader, daemon=True, name="airg-telemetry-uploader")
+        generator_thread.start()
+        uploader_thread.start()
+        generator_thread.join()
+        uploader_thread.join()
+    finally:
+        _TELEMETRY_ACTIVE_RUN_LOCK.release()
 
 
-def _seconds_until_next_utc_day(now: datetime | None = None) -> int:
-    current = now or datetime.now(UTC)
-    next_day = (current + timedelta(days=1)).replace(hour=0, minute=0, second=5, microsecond=0)
-    wait_seconds = int((next_day - current).total_seconds())
-    return max(60, wait_seconds)
-
-
-def _start_daily_telemetry_ticker() -> None:
+def _start_telemetry_scheduler() -> None:
     global _TELEMETRY_TICKER_STARTED
     with _TELEMETRY_TICKER_LOCK:
         if _TELEMETRY_TICKER_STARTED:
@@ -121,20 +140,15 @@ def _start_daily_telemetry_ticker() -> None:
         _TELEMETRY_TICKER_STARTED = True
 
     def _worker() -> None:
-        last_checked_day = datetime.now(UTC).date()
         while True:
-            wait_seconds = min(_seconds_until_next_utc_day(), _TELEMETRY_TICKER_MAX_SLEEP_SECONDS)
-            time.sleep(wait_seconds)
-            current_day = datetime.now(UTC).date()
-            if current_day != last_checked_day:
-                _trigger_daily_telemetry()
-                last_checked_day = current_day
+            _run_telemetry_workers_once()
+            time.sleep(_TELEMETRY_INTERVAL_SECONDS)
 
-    threading.Thread(target=_worker, daemon=True, name="airg-telemetry-ticker").start()
+    threading.Thread(target=_worker, daemon=True, name="airg-telemetry-scheduler").start()
 
 
-_trigger_daily_telemetry()
-_start_daily_telemetry_ticker()
+_run_telemetry_workers_once()
+_start_telemetry_scheduler()
 
 
 def _agent_paths() -> dict[str, pathlib.Path]:
@@ -604,6 +618,40 @@ def telemetry_payload_preview():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+@app.route("/telemetry/service-status", methods=["GET", "OPTIONS"])
+def telemetry_service_status():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    status = telemetry.service_status()
+    now = datetime.now(UTC)
+    generator_last_run = str(status.get("generator", {}).get("last_run", "")).strip()
+    uploader_status = str(status.get("uploader", {}).get("status", "")).strip()
+
+    generator_stale = False
+    if generator_last_run:
+        try:
+            ts = datetime.fromisoformat(generator_last_run.replace("Z", "+00:00"))
+            generator_stale = (now - ts) > timedelta(days=1)
+        except ValueError:
+            generator_stale = True
+
+    warning = {
+        "generator_stale": generator_stale,
+        "uploader_failed": uploader_status == "failed",
+    }
+    warning["active"] = bool(warning["generator_stale"] or warning["uploader_failed"])
+    return jsonify({"ok": True, "services": status, "warning": warning})
+
+
+@app.route("/telemetry/service-restart", methods=["POST", "OPTIONS"])
+def telemetry_service_restart():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    _run_telemetry_workers_once()
+    status = telemetry.service_status()
+    return jsonify({"ok": True, "services": status})
+
+
 @app.route("/settings/agents", methods=["GET", "OPTIONS"])
 def settings_agents():
     if request.method == "OPTIONS":
@@ -676,6 +724,7 @@ def settings_agents_delete():
     payload = request.get_json(silent=True) or {}
     profile_id = str(payload.get("profile_id", "")).strip()
     remove_mode = str(payload.get("remove_mode", "agent_only") or "agent_only").strip().lower()
+    remove_codex_trust = bool(payload.get("remove_codex_trust", False))
     if not profile_id:
         return jsonify({"ok": False, "errors": ["profile_id is required"]}), 400
     paths = _agent_paths()
@@ -684,7 +733,7 @@ def settings_agents_delete():
     if not isinstance(profile, dict):
         return jsonify({"ok": False, "errors": ["Profile not found"]}), 404
     if remove_mode == "everything":
-        removed = mcp_config_manager.remove_applied_mcp(paths, profile)
+        removed = mcp_config_manager.remove_applied_mcp(paths, profile, remove_codex_trust=remove_codex_trust)
         if not removed.get("ok"):
             return jsonify(removed), 400
     elif remove_mode not in {"agent_only", "everything"}:
@@ -770,8 +819,11 @@ def settings_agents_mcp_apply():
     profile_id = str(payload.get("profile_id", "")).strip()
     dry_run = bool(payload.get("dry_run", False))
     remove_previous = payload.get("remove_previous", None)
+    manage_codex_trust = payload.get("manage_codex_trust", None)
     if remove_previous is not None:
         remove_previous = bool(remove_previous)
+    if manage_codex_trust is not None:
+        manage_codex_trust = bool(manage_codex_trust)
     if not profile_id:
         return jsonify({"ok": False, "errors": ["profile_id is required"]}), 400
 
@@ -785,10 +837,11 @@ def settings_agents_mcp_apply():
         paths,
         profile,
         remove_previous=remove_previous,
+        manage_codex_trust=manage_codex_trust,
         dry_run=dry_run,
     )
     if not result.get("ok"):
-        status = 409 if result.get("requires_previous_choice") else 400
+        status = 409 if result.get("requires_previous_choice") or result.get("requires_trust_choice") else 400
         return jsonify(result), status
 
     current_profiles = result.get("profiles", profiles)

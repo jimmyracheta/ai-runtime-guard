@@ -49,6 +49,12 @@ class AttackerTestSuite(unittest.TestCase):
         output = execute_command("find . -name '*.log'")
         self.assertIn("a.log", output)
 
+    def test_write_file_extension_block_does_not_raise_nameerror(self):
+        policy_engine.POLICY["blocked"]["extensions"] = [".pem"]
+        blocked = write_file("secret.pem", "dummy")
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn(".pem", blocked)
+
     def test_xargs_rm_blocked_via_policy_command_pattern(self):
         policy_engine.POLICY["blocked"]["commands"] = ["xargs rm"]
         blocked = execute_command("printf 'a.tmp\\n' | xargs rm")

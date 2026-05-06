@@ -4,6 +4,48 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-05-06
+
+### Changed
+- Promoted the `2.3.1` development train to release and aligned package, status, hook, and documentation version markers.
+- Telemetry architecture moved to an hourly scheduler that runs generator/uploader workers in parallel.
+- Telemetry state now tracks `telemetry.last_payload_generated_date` and `telemetry.last_payload_uploaded_at` in policy.
+- Codex integration is now scope-aware across MCP apply/remove, hardening, and posture detection.
+- Codex hardening now uses dedicated scoped `rules/airg.rules` policy-mirror files instead of managing Codex `default.rules`.
+
+### Added
+- Telemetry outbox persistence in the runtime data directory (`<state_dir>/telemetry/telemetry-YYYY-MM-DD.json`).
+- Telemetry service status and restart API endpoints:
+  - `GET /telemetry/service-status`
+  - `POST /telemetry/service-restart`
+- Advanced Policy telemetry UI now includes:
+  - service status modal (`status` + `last run` for generator/uploader)
+  - warning banner for stale generator/failing uploader
+  - restart button.
+- Codex project-scope trust bootstrap in `~/.codex/config.toml` via `[projects."<workspace>"].trust_level = "trusted"` with explicit GUI confirmation.
+- Codex project-only AIRG tool approval entries in `<workspace>/.codex/config.toml` for `[mcp_servers.ai-runtime-guard.tools.*]`.
+
+### Fixed
+- Telemetry no longer depends on UTC day-rollover wake logic only; hourly scheduler runs continue while backend is active and stand down when no action is needed.
+- Upload retries now persist naturally through outbox files instead of dropping failed sends.
+- Fixed `write_file`/`edit_file` tool crashes caused by `NameError: name 'lower' is not defined` in `check_path_policy` extension checks.
+- Reports -> Log table now enforces fixed-width column truncation for long event/rule/command/path values so oversized text no longer expands row/cell boundaries.
+- Reports -> Log now exposes consistent `Show more` actions for trimmed `Event`, `Matched Rule`, and `Command / Path` values via modal expansion.
+- Codex text rewrite/apply flows are now idempotent across scoped `config.toml`, `AGENTS.md`, and `rules/airg.rules`.
+- Settings -> Agents no longer shows false `Pending Changes` for hardening state when posture already matches the applied baseline.
+
+### Security
+- Codex project scope now keeps AIRG-managed tool approvals local to the trusted project `.codex` layer instead of writing them to user `~/.codex/config.toml`.
+
+### Tests
+- Added regression coverage for:
+  - telemetry generator/uploader scheduler behavior
+  - blocked-extension write/edit regression after path-policy fix
+  - Codex project-trust apply/remove behavior
+  - Codex project-scope hardening targets and idempotency
+  - Codex project-scope posture detection
+  - Codex project-only tool approval sections.
+
 ## [2.3.0] - 2026-04-24
 
 ### Changed

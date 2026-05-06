@@ -5,6 +5,7 @@ import re
 import shlex
 import shutil
 import sys
+import tomllib
 from datetime import UTC, datetime
 from typing import Any
 
@@ -37,6 +38,7 @@ AIRG_MCP_TOOLS = [
     "list_directory",
 ]
 _CODEX_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+_CODEX_TRUST_LEVEL_RE = re.compile(r'^(\s*trust_level\s*=\s*)".*?"(\s*(?:#.*)?)$')
 
 
 def _now_iso() -> str:
@@ -106,6 +108,10 @@ def _claude_desktop_config_path() -> pathlib.Path:
 def _codex_config_path(workspace: pathlib.Path, scope: str) -> pathlib.Path:
     if scope == "project":
         return workspace / ".codex" / "config.toml"
+    return _home() / ".codex" / "config.toml"
+
+
+def _codex_user_config_path() -> pathlib.Path:
     return _home() / ".codex" / "config.toml"
 
 
@@ -323,6 +329,147 @@ def _read_text_strict(path: pathlib.Path) -> str:
         raise RuntimeError(f"Failed to read `{path}`: {exc}. Check file permissions and try again.") from exc
 
 
+def _merge_text_parts(before: str, middle: str, after: str) -> str:
+    pieces = [part for part in [before.rstrip("\n"), middle.strip("\n"), after.lstrip("\n")] if part]
+    return ("\n\n".join(pieces).rstrip() + "\n") if pieces else ""
+
+
+def _toml_section_records(text: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    lines = text.splitlines(keepends=True)
+    current_name = ""
+    current_start = -1
+    offset = 0
+    for line in lines:
+        match = _CODEX_SECTION_RE.match(line)
+        if match:
+            if current_name:
+                records.append({"name": current_name, "start": current_start, "end": offset})
+            current_name = str(match.group(1)).strip()
+            current_start = offset
+        offset += len(line)
+    if current_name:
+        records.append({"name": current_name, "start": current_start, "end": offset})
+    return records
+
+
+def _replace_or_append_toml_block(
+    text: str,
+    *,
+    managed_sections: list[str],
+    replacement: str,
+) -> tuple[str, bool]:
+    records = _toml_section_records(text)
+    managed = [record for record in records if record["name"] in managed_sections]
+    if not managed:
+        if not replacement.strip():
+            return text, False
+        if not text.strip():
+            return replacement.strip() + "\n", True
+        suffix = "" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+        return text + suffix + replacement.strip() + "\n", True
+    start = int(managed[0]["start"])
+    end = int(managed[-1]["end"])
+    updated = _merge_text_parts(text[:start], replacement, text[end:])
+    return updated, updated != text
+
+
+def _codex_project_section_name(workspace: pathlib.Path) -> str:
+    escaped = str(workspace).replace("\\", "\\\\").replace('"', '\\"')
+    return f'projects."{escaped}"'
+
+
+def _codex_project_section_state(text: str, workspace: pathlib.Path) -> dict[str, Any]:
+    section_name = _codex_project_section_name(workspace)
+    for record in _toml_section_records(text):
+        if record["name"] != section_name:
+            continue
+        section_text = text[int(record["start"]):int(record["end"])]
+        trust_level = ""
+        has_other_settings = False
+        for raw_line in section_text.splitlines()[1:]:
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("trust_level"):
+                parts = stripped.split("=", 1)
+                if len(parts) == 2:
+                    trust_level = parts[1].strip().strip('"')
+                continue
+            has_other_settings = True
+        return {
+            "section_name": section_name,
+            "section_exists": True,
+            "section_text": section_text,
+            "trust_level": trust_level,
+            "trusted": trust_level == "trusted",
+            "has_other_settings": has_other_settings,
+            "start": int(record["start"]),
+            "end": int(record["end"]),
+        }
+    return {
+        "section_name": section_name,
+        "section_exists": False,
+        "section_text": "",
+        "trust_level": "",
+        "trusted": False,
+        "has_other_settings": False,
+        "start": -1,
+        "end": -1,
+    }
+
+
+def _set_codex_project_trust(text: str, workspace: pathlib.Path) -> tuple[str, bool, dict[str, Any]]:
+    state = _codex_project_section_state(text, workspace)
+    if state["section_exists"]:
+        lines = state["section_text"].splitlines()
+        next_lines = [lines[0]]
+        trust_written = False
+        for line in lines[1:]:
+            match = _CODEX_TRUST_LEVEL_RE.match(line)
+            if match:
+                next_lines.append(f'{match.group(1)}"trusted"{match.group(2)}')
+                trust_written = True
+            else:
+                next_lines.append(line)
+        if not trust_written:
+            next_lines.append('trust_level = "trusted"')
+        replacement = "\n".join(next_lines).rstrip() + "\n"
+        updated = _merge_text_parts(text[: int(state["start"])], replacement, text[int(state["end"]):])
+        return updated, updated != text, state
+
+    replacement = f'[{state["section_name"]}]\ntrust_level = "trusted"\n'
+    if not text.strip():
+        updated = replacement
+    else:
+        suffix = "" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+        updated = text + suffix + replacement
+    return updated, updated != text, state
+
+
+def _restore_codex_project_trust_text(
+    text: str,
+    workspace: pathlib.Path,
+    metadata: dict[str, Any],
+) -> tuple[str, bool]:
+    state = _codex_project_section_state(text, workspace)
+    if bool(metadata.get("section_present", False)):
+        replacement = str(metadata.get("section_text") or "").rstrip() + "\n"
+        if state["section_exists"]:
+            updated = _merge_text_parts(text[: int(state["start"])], replacement, text[int(state["end"]):])
+        else:
+            if not text.strip():
+                updated = replacement
+            else:
+                suffix = "" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+                updated = text + suffix + replacement
+        return updated, updated != text
+    if not state["section_exists"]:
+        return text, False
+    updated = _merge_text_parts(text[: int(state["start"])], "", text[int(state["end"]):])
+    return updated, updated != text
+
+
 def _toml_escape(value: str) -> str:
     return str(value).replace("\\", "\\\\").replace('"', '\\"')
 
@@ -335,7 +482,7 @@ def _toml_list(values: list[str]) -> str:
     return "[" + ", ".join(_toml_string(v) for v in values) + "]"
 
 
-def _codex_airg_block(server_entry: dict[str, Any]) -> str:
+def _codex_airg_block(server_entry: dict[str, Any], *, include_tool_approvals: bool) -> str:
     command = str(server_entry.get("command", "")).strip()
     args = [str(v) for v in (server_entry.get("args") or [])]
     env = server_entry.get("env") if isinstance(server_entry.get("env"), dict) else {}
@@ -348,27 +495,29 @@ def _codex_airg_block(server_entry: dict[str, Any]) -> str:
     ]
     for key in sorted(env.keys()):
         lines.append(f"{key} = {_toml_string(str(env[key]))}")
+    if include_tool_approvals:
+        for tool_name in AIRG_MCP_TOOLS:
+            lines.extend(
+                [
+                    "",
+                    f"[mcp_servers.ai-runtime-guard.tools.{tool_name}]",
+                    'approval_mode = "approve"',
+                ]
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _remove_codex_airg_sections(text: str) -> tuple[str, bool]:
-    lines = text.splitlines()
-    out: list[str] = []
-    skip = False
-    removed = False
-    for line in lines:
-        m = _CODEX_SECTION_RE.match(line)
-        if m:
-            section = str(m.group(1)).strip()
-            if section == "mcp_servers.ai-runtime-guard" or section.startswith("mcp_servers.ai-runtime-guard."):
-                skip = True
-                removed = True
-                continue
-            skip = False
-        if not skip:
-            out.append(line)
-    cleaned = "\n".join(out).rstrip()
-    return (cleaned + "\n") if cleaned else "", removed
+    cleaned, changed = _replace_or_append_toml_block(
+        text,
+        managed_sections=[
+            "mcp_servers.ai-runtime-guard",
+            "mcp_servers.ai-runtime-guard.env",
+            *[f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS],
+        ],
+        replacement="",
+    )
+    return cleaned, changed
 
 
 def _codex_has_airg_section(text: str) -> bool:
@@ -382,13 +531,24 @@ def _codex_has_airg_section(text: str) -> bool:
     return False
 
 
-def _write_codex_verified(path: pathlib.Path, text: str) -> None:
+def _write_text_verified(path: pathlib.Path, text: str) -> None:
     try:
         path.write_text(text)
     except Exception as exc:  # pragma: no cover - OS-level write failures
         raise RuntimeError(
             f"Failed to write to `{path}`: {exc}. You can apply manually using the Copy buttons."
         ) from exc
+    verify = _read_text_strict(path)
+    if verify != text:
+        raise RuntimeError(f"Write appeared to succeed but verification failed. Please check the file manually at `{path}`.")
+
+
+def _write_codex_verified(path: pathlib.Path, text: str) -> None:
+    _write_text_verified(path, text)
+    try:
+        tomllib.loads(text)
+    except Exception as exc:
+        raise RuntimeError(f"Write produced invalid TOML at `{path}`: {exc}") from exc
     verify = _read_text_strict(path)
     if not _codex_has_airg_section(verify):
         raise RuntimeError(f"Write appeared to succeed but verification failed. Please check the file manually at `{path}`.")
@@ -490,6 +650,27 @@ def _normalize_last_applied(raw: Any) -> dict[str, Any] | None:
         "agent_id": str(raw.get("agent_id") or "").strip(),
         "agent_type": str(raw.get("agent_type") or "").strip().lower(),
         "created_by_airg": bool(raw.get("created_by_airg", False)),
+        "codex_project_trust": raw.get("codex_project_trust") if isinstance(raw.get("codex_project_trust"), dict) else None,
+    }
+
+
+def _codex_trust_plan(workspace: pathlib.Path, previous: dict[str, Any] | None) -> dict[str, Any] | None:
+    trust_path = _codex_user_config_path()
+    before_text = trust_path.read_text() if trust_path.exists() else ""
+    current = _codex_project_section_state(before_text, workspace)
+    previous_trust = previous.get("codex_project_trust") if isinstance(previous, dict) else None
+    previous_workspace = str(previous_trust.get("workspace") or "").strip() if isinstance(previous_trust, dict) else ""
+    previous_managed = bool(previous_trust.get("managed", False)) if isinstance(previous_trust, dict) else False
+    previous_restore_needed = previous_managed and previous_workspace and previous_workspace != str(workspace)
+    return {
+        "supported": True,
+        "config_path": str(trust_path),
+        "workspace": str(workspace),
+        "trusted": bool(current.get("trusted", False)),
+        "manage_choice_required": not bool(current.get("trusted", False)),
+        "previous_managed": previous_managed,
+        "previous_workspace": previous_workspace,
+        "previous_restore_needed": previous_restore_needed,
     }
 
 
@@ -536,6 +717,7 @@ def _build_plan(profile: dict[str, Any]) -> dict[str, Any]:
         "target_changed": target_changed,
         "must_remove_previous": must_remove_previous,
         "requires_previous_choice": requires_previous_choice,
+        "codex_project_trust": _codex_trust_plan(workspace, previous) if agent_type == "codex" and scope == "project" else None,
     }
 
 
@@ -623,8 +805,16 @@ def _apply_for_scope_codex(paths: dict[str, pathlib.Path], plan: dict[str, Any])
         before_text = ""
 
     cleaned_before, _ = _remove_codex_airg_sections(before_text)
-    block = _codex_airg_block(server_entry)
-    after_text = (cleaned_before.rstrip() + "\n\n" + block) if cleaned_before.strip() else block
+    block = _codex_airg_block(server_entry, include_tool_approvals=scope == "project")
+    after_text, _ = _replace_or_append_toml_block(
+        cleaned_before,
+        managed_sections=[
+            "mcp_servers.ai-runtime-guard",
+            "mcp_servers.ai-runtime-guard.env",
+            *[f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS],
+        ],
+        replacement=block,
+    )
 
     if after_text == before_text:
         return {
@@ -698,7 +888,11 @@ def _remove_from_last_applied(
                 "deleted_file": True,
             }
         try:
-            target.write_text(cleaned_text)
+            if cleaned_text.strip():
+                _write_text_verified(target, cleaned_text)
+                tomllib.loads(cleaned_text)
+            else:
+                target.write_text("")
         except Exception as exc:
             raise RuntimeError(f"Failed to write `{target}` after codex MCP cleanup: {exc}") from exc
         return {
@@ -744,11 +938,107 @@ def _remove_from_last_applied(
     }
 
 
+def _apply_codex_project_trust(
+    paths: dict[str, pathlib.Path],
+    workspace: pathlib.Path,
+    agent_id: str,
+) -> dict[str, Any]:
+    target = _codex_user_config_path()
+    before_exists = target.exists()
+    before_text = _read_text_strict(target) if before_exists else ""
+    after_text, changed, state = _set_codex_project_trust(before_text, workspace)
+    if not changed:
+        return {
+            "changed": False,
+            "target_path": str(target),
+            "backup_path": "",
+            "metadata": {
+                "managed": False,
+                "config_path": str(target),
+                "workspace": str(workspace),
+                "before_exists": before_exists,
+                "section_present": bool(state.get("section_exists", False)),
+                "section_text": str(state.get("section_text", "")),
+            },
+        }
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    backup = _backup_file(paths, target, agent_id)
+    try:
+        _write_text_verified(target, after_text)
+        tomllib.loads(after_text)
+    except Exception:
+        if before_exists and backup and backup.exists():
+            shutil.copy2(backup, target)
+        elif not before_exists and target.exists():
+            try:
+                target.unlink()
+            except Exception:
+                pass
+        raise
+
+    return {
+        "changed": True,
+        "target_path": str(target),
+        "backup_path": str(backup) if backup else "",
+        "metadata": {
+            "managed": True,
+            "config_path": str(target),
+            "workspace": str(workspace),
+            "before_exists": before_exists,
+            "section_present": bool(state.get("section_exists", False)),
+            "section_text": str(state.get("section_text", "")),
+        },
+    }
+
+
+def _restore_codex_project_trust(
+    paths: dict[str, pathlib.Path],
+    metadata: dict[str, Any],
+    agent_id: str,
+) -> dict[str, Any]:
+    target = pathlib.Path(str(metadata.get("config_path") or "")).expanduser().resolve()
+    workspace_raw = str(metadata.get("workspace") or "").strip()
+    if not str(target) or not workspace_raw:
+        return {"restored": False, "target_path": str(target), "backup_path": ""}
+    workspace = pathlib.Path(workspace_raw).expanduser().resolve()
+    before_exists = target.exists()
+    before_text = _read_text_strict(target) if before_exists else ""
+    after_text, changed = _restore_codex_project_trust_text(before_text, workspace, metadata)
+    if not changed:
+        return {"restored": False, "target_path": str(target), "backup_path": ""}
+
+    backup = _backup_file(paths, target, agent_id)
+    if not after_text.strip():
+        try:
+            if target.exists():
+                target.unlink()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to remove Codex trust config from `{target}`: {exc}") from exc
+        return {"restored": True, "target_path": str(target), "backup_path": str(backup) if backup else "", "deleted_file": True}
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _write_text_verified(target, after_text)
+        tomllib.loads(after_text)
+    except Exception:
+        if before_exists and backup and backup.exists():
+            shutil.copy2(backup, target)
+        elif not before_exists and target.exists():
+            try:
+                target.unlink()
+            except Exception:
+                pass
+        raise
+    return {"restored": True, "target_path": str(target), "backup_path": str(backup) if backup else "", "deleted_file": False}
+
+
 def apply_mcp_config(
     paths: dict[str, pathlib.Path],
     profile: dict[str, Any],
     *,
     remove_previous: bool | None = None,
+    manage_codex_trust: bool | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     planned = plan_apply(paths, profile)
@@ -762,6 +1052,7 @@ def apply_mcp_config(
     previous = plan.get("previous")
     must_remove_previous = bool(plan.get("must_remove_previous", False))
     requires_choice = bool(plan.get("requires_previous_choice", False))
+    trust_plan = plan.get("codex_project_trust") if isinstance(plan.get("codex_project_trust"), dict) else None
 
     if requires_choice and remove_previous is None:
         return {
@@ -772,14 +1063,46 @@ def apply_mcp_config(
                 "Previous MCP configuration was found in a different location. Choose whether to remove it before applying the new config."
             ],
         }
+    if trust_plan and bool(trust_plan.get("manage_choice_required", False)) and manage_codex_trust is None:
+        return {
+            "ok": False,
+            "requires_trust_choice": True,
+            "plan": plan,
+            "errors": [
+                "Choose whether AIRG should trust the workspace in Codex so the project .codex layer will load."
+            ],
+        }
 
     previous_removal: dict[str, Any] | None = None
     settings_local_sync: dict[str, Any] | None = None
+    codex_trust_result: dict[str, Any] | None = None
+    codex_trust_cleanup: dict[str, Any] | None = None
     try:
         if previous and (must_remove_previous or (requires_choice and bool(remove_previous))):
             previous_removal = _remove_from_last_applied(paths, previous, strict_missing_file=True)
 
+        previous_trust = previous.get("codex_project_trust") if isinstance(previous, dict) else None
+        previous_trust_workspace = str(previous_trust.get("workspace") or "").strip() if isinstance(previous_trust, dict) else ""
+        if isinstance(previous_trust, dict) and bool(previous_trust.get("managed", False)):
+            should_restore_previous_trust = (
+                str(plan.get("agent_type", "")).strip().lower() != "codex"
+                or str(plan.get("scope", "")).strip().lower() != "project"
+                or previous_trust_workspace != str(plan.get("workspace", "")).strip()
+            )
+            if should_restore_previous_trust:
+                codex_trust_cleanup = _restore_codex_project_trust(
+                    paths,
+                    previous_trust,
+                    str(plan.get("agent_id") or "default"),
+                )
+
         applied = _apply_for_scope(paths, plan)
+        if trust_plan and bool(manage_codex_trust):
+            codex_trust_result = _apply_codex_project_trust(
+                paths,
+                pathlib.Path(str(plan["workspace"])).resolve(),
+                str(plan["agent_id"]),
+            )
         if str(plan.get("agent_type", "")).strip().lower() == "claude_code":
             settings_local_sync = _sync_settings_local_allowlist(
                 paths,
@@ -806,6 +1129,7 @@ def apply_mcp_config(
         "agent_id": plan["agent_id"],
         "agent_type": str(plan.get("agent_type") or "").strip().lower(),
         "created_by_airg": bool(applied.get("created_by_airg", False)),
+        "codex_project_trust": (codex_trust_result or {}).get("metadata"),
     }
     profile_id = str(profile.get("profile_id") or "").strip()
     if not profile_id:
@@ -820,22 +1144,40 @@ def apply_mcp_config(
         "applied": applied,
         "settings_local": settings_local_sync,
         "previous_removed": previous_removal,
+        "codex_project_trust": codex_trust_result,
+        "codex_project_trust_cleanup": codex_trust_cleanup,
         "profile": updated.get("profile"),
         "profiles": updated.get("profiles", []),
     }
 
 
-def remove_applied_mcp(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> dict[str, Any]:
+def remove_applied_mcp(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    remove_codex_trust: bool = False,
+) -> dict[str, Any]:
     last_applied = _normalize_last_applied(profile.get("last_applied"))
     workspace_raw = str(profile.get("workspace") or "").strip()
     workspace_path = pathlib.Path(workspace_raw).expanduser().resolve() if workspace_raw else None
     settings_local_cleanup: dict[str, Any] | None = None
+    codex_trust_cleanup: dict[str, Any] | None = None
 
     if last_applied:
         try:
             removal = _remove_from_last_applied(paths, last_applied, strict_missing_file=True)
         except Exception as exc:
             return {"ok": False, "errors": [str(exc)]}
+        trust_meta = last_applied.get("codex_project_trust") if isinstance(last_applied, dict) else None
+        if remove_codex_trust and isinstance(trust_meta, dict) and bool(trust_meta.get("managed", False)):
+            try:
+                codex_trust_cleanup = _restore_codex_project_trust(
+                    paths,
+                    trust_meta,
+                    str(last_applied.get("agent_id") or profile.get("agent_id") or "default"),
+                )
+            except Exception as exc:
+                return {"ok": False, "errors": [str(exc)]}
     else:
         removal = {"removed": False, "reason": "no_last_applied"}
 
@@ -861,6 +1203,7 @@ def remove_applied_mcp(paths: dict[str, pathlib.Path], profile: dict[str, Any]) 
         "ok": True,
         "removed": removal,
         "settings_local": settings_local_cleanup,
+        "codex_project_trust_cleanup": codex_trust_cleanup,
         "profile": updated.get("profile"),
         "profiles": updated.get("profiles", []),
     }
