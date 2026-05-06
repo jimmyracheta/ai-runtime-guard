@@ -32,6 +32,16 @@ CODEX_RULES_END = "# AIRG_CODEX_TIER2_END"
 CODEX_TIER3_BEGIN = "# AIRG_CODEX_TIER3_BEGIN"
 CODEX_TIER3_END = "# AIRG_CODEX_TIER3_END"
 CODEX_AIRG_RULES_FILE = "airg.rules"
+AIRG_MCP_TOOLS = [
+    "server_info",
+    "restore_backup",
+    "execute_command",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "list_directory",
+]
 CURSORIGNORE_MANAGED_BEGIN = "# AIRG_CURSORIGNORE_BEGIN"
 CURSORIGNORE_MANAGED_END = "# AIRG_CURSORIGNORE_END"
 _CODEX_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
@@ -677,9 +687,16 @@ def _remove_codex_airg_sections(text: str) -> str:
         match = _CODEX_SECTION_RE.match(line)
         if match:
             section = str(match.group(1)).strip()
-            if skip and section != "mcp_servers.ai-runtime-guard.env":
+            if skip and section not in {
+                "mcp_servers.ai-runtime-guard.env",
+                *{f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS},
+            }:
                 skip = False
-            if section in {"mcp_servers.ai-runtime-guard", "mcp_servers.ai-runtime-guard.env"}:
+            if section in {
+                "mcp_servers.ai-runtime-guard",
+                "mcp_servers.ai-runtime-guard.env",
+                *{f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS},
+            }:
                 skip = True
                 continue
             if skip:
@@ -691,7 +708,9 @@ def _remove_codex_airg_sections(text: str) -> str:
     return (cleaned + "\n") if cleaned else ""
 
 
-def _codex_airg_mcp_block(paths: dict[str, pathlib.Path], workspace: pathlib.Path, agent_id: str) -> str:
+def _codex_airg_mcp_block(
+    paths: dict[str, pathlib.Path], workspace: pathlib.Path, agent_id: str, *, include_tool_approvals: bool
+) -> str:
     server_entry = _airg_server_block(paths, workspace, agent_id)
     command = str(server_entry.get("command", "")).strip()
     args = [str(v) for v in (server_entry.get("args") or [])]
@@ -705,6 +724,15 @@ def _codex_airg_mcp_block(paths: dict[str, pathlib.Path], workspace: pathlib.Pat
     ]
     for key in sorted(env.keys()):
         lines.append(f"{key} = {_toml_string(str(env[key]))}")
+    if include_tool_approvals:
+        for tool_name in AIRG_MCP_TOOLS:
+            lines.extend(
+                [
+                    "",
+                    f"[mcp_servers.ai-runtime-guard.tools.{tool_name}]",
+                    'approval_mode = "approve"',
+                ]
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -712,7 +740,7 @@ def _apply_codex_mcp(paths: dict[str, pathlib.Path], workspace: pathlib.Path, ag
     target = _codex_config_path(workspace, scope)
     before = _read_text_optional(target)
     cleaned = _remove_codex_airg_sections(before)
-    block = _codex_airg_mcp_block(paths, workspace, agent_id)
+    block = _codex_airg_mcp_block(paths, workspace, agent_id, include_tool_approvals=str(scope).strip().lower() == "project")
     after = (cleaned.rstrip() + "\n\n" + block) if cleaned.strip() else block
     change = _write_text_with_backup(paths, target, after, agent_id)
     change["scope"] = scope

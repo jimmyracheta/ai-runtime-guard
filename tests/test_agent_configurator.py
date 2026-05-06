@@ -351,6 +351,10 @@ class AgentConfiguratorTests(unittest.TestCase):
 
             cfg_text = codex_cfg.read_text()
             self.assertIn('[mcp_servers.ai-runtime-guard]', cfg_text)
+            self.assertNotIn('[mcp_servers.ai-runtime-guard.tools.server_info]', cfg_text)
+            self.assertNotIn('[mcp_servers.ai-runtime-guard.tools.execute_command]', cfg_text)
+            self.assertNotIn('[mcp_servers.ai-runtime-guard.tools.list_directory]', cfg_text)
+            self.assertNotIn('approval_mode = "approve"', cfg_text)
             self.assertIn('sandbox_mode = "workspace-write"', cfg_text)
             self.assertIn('approval_policy = "on-request"', cfg_text)
             self.assertIn('exclude_slash_tmp = true', cfg_text)
@@ -406,7 +410,12 @@ class AgentConfiguratorTests(unittest.TestCase):
         self.assertTrue((project_codex_dir / "AGENTS.md").exists())
         self.assertTrue((project_codex_dir / "rules" / "airg.rules").exists())
         self.assertTrue((project_codex_dir / "config.toml").exists())
-        self.assertIn('[mcp_servers.ai-runtime-guard]', (project_codex_dir / "config.toml").read_text())
+        config_text = (project_codex_dir / "config.toml").read_text()
+        self.assertIn('[mcp_servers.ai-runtime-guard]', config_text)
+        self.assertIn('[mcp_servers.ai-runtime-guard.tools.server_info]', config_text)
+        self.assertIn('[mcp_servers.ai-runtime-guard.tools.execute_command]', config_text)
+        self.assertIn('[mcp_servers.ai-runtime-guard.tools.list_directory]', config_text)
+        self.assertIn('approval_mode = "approve"', config_text)
         self.assertFalse((home_dir / ".codex" / "AGENTS.md").exists())
 
     def test_codex_project_scope_hardening_is_idempotent(self) -> None:

@@ -177,6 +177,12 @@ class AgentPostureTests(unittest.TestCase):
             '[mcp_servers.ai-runtime-guard.env]\n'
             'AIRG_AGENT_ID = "codex-1"\n'
             f'AIRG_WORKSPACE = "{self.workspace}"\n'
+            '\n'
+            '[mcp_servers.ai-runtime-guard.tools.server_info]\n'
+            'approval_mode = "approve"\n'
+            '\n'
+            '[mcp_servers.ai-runtime-guard.tools.execute_command]\n'
+            'approval_mode = "approve"\n'
         )
         profile = {
             "profile_id": "p6",
@@ -205,6 +211,12 @@ class AgentPostureTests(unittest.TestCase):
             '[mcp_servers.ai-runtime-guard.env]\n'
             'AIRG_AGENT_ID = "codex-1"\n'
             f'AIRG_WORKSPACE = "{self.workspace}"\n'
+            '\n'
+            '[mcp_servers.ai-runtime-guard.tools.server_info]\n'
+            'approval_mode = "approve"\n'
+            '\n'
+            '[mcp_servers.ai-runtime-guard.tools.execute_command]\n'
+            'approval_mode = "approve"\n'
         )
         profile = {
             "profile_id": "p7",

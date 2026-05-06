@@ -482,7 +482,7 @@ def _toml_list(values: list[str]) -> str:
     return "[" + ", ".join(_toml_string(v) for v in values) + "]"
 
 
-def _codex_airg_block(server_entry: dict[str, Any]) -> str:
+def _codex_airg_block(server_entry: dict[str, Any], *, include_tool_approvals: bool) -> str:
     command = str(server_entry.get("command", "")).strip()
     args = [str(v) for v in (server_entry.get("args") or [])]
     env = server_entry.get("env") if isinstance(server_entry.get("env"), dict) else {}
@@ -495,13 +495,26 @@ def _codex_airg_block(server_entry: dict[str, Any]) -> str:
     ]
     for key in sorted(env.keys()):
         lines.append(f"{key} = {_toml_string(str(env[key]))}")
+    if include_tool_approvals:
+        for tool_name in AIRG_MCP_TOOLS:
+            lines.extend(
+                [
+                    "",
+                    f"[mcp_servers.ai-runtime-guard.tools.{tool_name}]",
+                    'approval_mode = "approve"',
+                ]
+            )
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _remove_codex_airg_sections(text: str) -> tuple[str, bool]:
     cleaned, changed = _replace_or_append_toml_block(
         text,
-        managed_sections=["mcp_servers.ai-runtime-guard", "mcp_servers.ai-runtime-guard.env"],
+        managed_sections=[
+            "mcp_servers.ai-runtime-guard",
+            "mcp_servers.ai-runtime-guard.env",
+            *[f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS],
+        ],
         replacement="",
     )
     return cleaned, changed
@@ -792,10 +805,14 @@ def _apply_for_scope_codex(paths: dict[str, pathlib.Path], plan: dict[str, Any])
         before_text = ""
 
     cleaned_before, _ = _remove_codex_airg_sections(before_text)
-    block = _codex_airg_block(server_entry)
+    block = _codex_airg_block(server_entry, include_tool_approvals=scope == "project")
     after_text, _ = _replace_or_append_toml_block(
         cleaned_before,
-        managed_sections=["mcp_servers.ai-runtime-guard", "mcp_servers.ai-runtime-guard.env"],
+        managed_sections=[
+            "mcp_servers.ai-runtime-guard",
+            "mcp_servers.ai-runtime-guard.env",
+            *[f"mcp_servers.ai-runtime-guard.tools.{tool_name}" for tool_name in AIRG_MCP_TOOLS],
+        ],
         replacement=block,
     )
 

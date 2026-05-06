@@ -1,6 +1,6 @@
 # AI Runtime Guard Manual
 
-This manual documents current runtime behavior for v2.0.0.
+This manual documents current runtime behavior for v2.3.1.dev4.
 
 ## 1. Runtime Surface
 AIRG MCP tools:
@@ -134,6 +134,7 @@ Scope targets:
    - `<workspace>/.codex/config.toml`
    - `<workspace>/.codex/AGENTS.md`
    - `<workspace>/.codex/rules/airg.rules`
+3. AIRG writes Codex tool approval entries (`[mcp_servers.ai-runtime-guard.tools.*]`) only in project-scoped `<workspace>/.codex/config.toml`.
 
 Control groups:
 1. `STANDARD`: MCP configuration only.
@@ -143,6 +144,7 @@ Control groups:
 Notes:
 1. AIRG uses a dedicated `airg.rules` file and does not manage `default.rules`.
 2. Codex may continue to write user-approved allowlist entries into `~/.codex/rules/default.rules`; this is separate from AIRG-managed policy mirror state.
+3. Project `.codex` trust lives in user `~/.codex/config.toml`, but AIRG does not write Codex tool approval entries to that user-layer file.
 
 ## 12. Known Boundaries
 1. AIRG enforces only AIRG MCP tool calls.

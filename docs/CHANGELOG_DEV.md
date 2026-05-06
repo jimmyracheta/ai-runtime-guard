@@ -2,6 +2,18 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-05-06 (v2.3.1.dev4 Codex project-only tool approvals + docs reconciliation)
+- Refined Codex MCP config generation so AIRG tool approval entries (`[mcp_servers.ai-runtime-guard.tools.*]`) are written only to project-scoped `<workspace>/.codex/config.toml`, never to user `~/.codex/config.toml`.
+- Kept Codex cleanup logic broad enough to remove older AIRG-managed tool approval entries from prior writes during reapply/remove flows.
+- Reconciled current documentation with shipped Codex behavior:
+  - updated `README.md`, `docs/AGENT_MCP_CONFIGS.md`, and `docs/MANUAL.md`
+  - corrected stale manual version text
+  - aligned status/version metadata with the new release-candidate version.
+- Updated Codex tests to assert:
+  - no AIRG tool approval stanzas in global Codex config
+  - AIRG tool approval stanzas present in project Codex config.
+- Bumped package/dev version to `2.3.1.dev4`.
+
 ## 2026-05-06 (v2.3.1.dev3 Codex scope/trust refactor)
 - Refactored Codex MCP apply/remove in `src/mcp_config_manager.py`:
   - project/global MCP targets remain scope-aware
