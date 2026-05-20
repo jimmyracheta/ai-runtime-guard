@@ -137,6 +137,24 @@ class AttackerTestSuite(unittest.TestCase):
         self.assertIn("[POLICY BLOCK]", blocked)
         self.assertIn("Shell workspace containment blocked", blocked)
 
+    def test_shell_workspace_containment_tracks_cd_before_relative_targets(self):
+        policy_engine.POLICY["execution"]["shell_workspace_containment"] = {
+            "mode": "enforce",
+            "exempt_commands": [],
+            "log_paths": True,
+        }
+        outside = self.workspace.parent / "dual-litho"
+        outside.mkdir(parents=True, exist_ok=True)
+
+        command = f"cd {outside} && .venv/bin/python tmp_compute_td.py && rm tmp_compute_td.py"
+        blocked = execute_command(command)
+
+        self.assertIn("[POLICY BLOCK]", blocked)
+        self.assertIn("Shell workspace containment blocked", blocked)
+        allowed, reason, paths = policy_engine.shell_workspace_containment_check(command)
+        self.assertFalse(allowed, msg=reason or "")
+        self.assertIn(str(outside / "tmp_compute_td.py"), paths)
+
     def test_shell_workspace_containment_monitor_allows_with_warning_logged(self):
         policy_engine.POLICY["execution"]["shell_workspace_containment"] = {
             "mode": "monitor",

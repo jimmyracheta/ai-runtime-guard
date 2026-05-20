@@ -2,6 +2,22 @@
 
 Note: older entries in this file are preserved as historical development records and may reference superseded setup flows or intermediate branch/release states.
 
+## 2026-05-20 (v2.3.2.dev0 containment + roadmap P2 follow-up)
+- Hardened shell workspace containment in `src/policy_engine.py` to carry current working directory state across chained shell segments. Relative path tokens after `cd <outside-workspace>` are now resolved against that changed directory instead of AIRG workspace root.
+- Added regression coverage for `cd <outside> && .venv/bin/python tmp_compute_td.py && rm tmp_compute_td.py` style command chains.
+- Expanded default blocked-path coverage in `policy.json` and the setup fallback template for common cloud/developer credential stores:
+  - `.aws`
+  - `.azure`
+  - `.config/gcloud`
+  - `.docker/config.json`
+  - `.kube`
+  - `.netrc`
+  - `.npmrc`
+  - `.pypirc`.
+- Added `scripts/check_docs.py` and wired it into CI to catch local Markdown link drift and package-version reference drift.
+- Reconciled `TODO_INTERNAL.md`, `STATUS.md`, and public changelog notes with the new post-v2.3.1 work.
+- Bumped package/dev version and hook version to `2.3.2.dev0`.
+
 ## 2026-05-06 (v2.3.1.dev4 Codex project-only tool approvals + docs reconciliation)
 - Refined Codex MCP config generation so AIRG tool approval entries (`[mcp_servers.ai-runtime-guard.tools.*]`) are written only to project-scoped `<workspace>/.codex/config.toml`, never to user `~/.codex/config.toml`.
 - Kept Codex cleanup logic broad enough to remove older AIRG-managed tool approval entries from prior writes during reapply/remove flows.

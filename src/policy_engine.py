@@ -456,11 +456,12 @@ def _looks_like_path_token(token: str) -> bool:
     return False
 
 
-def _resolve_candidate_path(token: str) -> pathlib.Path:
+def _resolve_candidate_path(token: str, base_dir: pathlib.Path | None = None) -> pathlib.Path:
     expanded = os.path.expanduser(token)
     if os.path.isabs(expanded):
         return pathlib.Path(expanded).resolve()
-    return (pathlib.Path(WORKSPACE_ROOT) / expanded).resolve()
+    base = base_dir or pathlib.Path(WORKSPACE_ROOT)
+    return (base / expanded).resolve()
 
 
 def _runtime_protected_paths() -> set[pathlib.Path]:
@@ -510,28 +511,56 @@ def _blocked_path_matches(candidate: pathlib.Path, blocked_path: str) -> bool:
     return candidate_lower.endswith(lowered)
 
 
+def _candidate_paths_for_segment(
+    segment: str,
+    cwd: pathlib.Path,
+) -> tuple[list[pathlib.Path], pathlib.Path, bool]:
+    tokens, err = tokenize_shell_segment(segment)
+    if err:
+        return [], cwd, True
+
+    resolved: list[pathlib.Path] = []
+    next_cwd = cwd
+    command_token, command_index = _primary_command_token(tokens)
+    if command_token is None:
+        return resolved, next_cwd, False
+
+    candidates: list[str] = []
+    cmd_name = os.path.basename(str(command_token)).lower()
+    if _looks_like_path_token(str(command_token)):
+        candidates.append(str(command_token))
+
+    if cmd_name == "cd":
+        cd_target = tokens[command_index + 1] if command_index + 1 < len(tokens) else "~"
+        candidates.append(cd_target)
+        try:
+            next_cwd = _resolve_candidate_path(cd_target.strip("'\""), cwd)
+        except Exception:
+            next_cwd = cwd
+
+    candidates.extend(t for t in tokens[command_index + 1 :] if _looks_like_path_token(t))
+    candidates.extend(_extract_redirection_targets(segment))
+
+    for candidate in candidates:
+        try:
+            resolved.append(_resolve_candidate_path(candidate.strip("'\""), cwd))
+        except Exception:
+            continue
+
+    return resolved, next_cwd, False
+
+
 def _command_path_candidates(command: str) -> list[pathlib.Path]:
     resolved: list[pathlib.Path] = []
     seen: set[str] = set()
 
     for ctx_command in shell_command_contexts(command):
+        cwd = pathlib.Path(WORKSPACE_ROOT).resolve()
         for segment in split_shell_segments(ctx_command):
-            tokens, err = tokenize_shell_segment(segment)
+            paths, cwd, err = _candidate_paths_for_segment(segment, cwd)
             if err:
                 continue
-            candidates: list[str] = []
-            if tokens:
-                cmd_name = str(tokens[0]).lower()
-                if cmd_name == "cd" and len(tokens) >= 2:
-                    candidates.append(tokens[1])
-                candidates.extend(t for t in tokens[1:] if _looks_like_path_token(t))
-            candidates.extend(_extract_redirection_targets(segment))
-
-            for candidate in candidates:
-                try:
-                    path = _resolve_candidate_path(candidate.strip("'\""))
-                except Exception:
-                    continue
+            for path in paths:
                 key = str(path)
                 if key in seen:
                     continue
@@ -582,36 +611,33 @@ def shell_workspace_containment_check(command: str) -> tuple[bool, str | None, l
     offending_paths: list[str] = []
     seen: set[str] = set()
 
-    for segment in split_shell_segments(command):
-        tokens, err = tokenize_shell_segment(segment)
-        if err:
-            reason = "Shell workspace containment blocked command: shell tokenization failed."
-            if mode == "monitor":
-                return True, reason, []
-            return False, reason, []
-        if not tokens:
-            continue
-        cmd_name = str(tokens[0]).lower()
-        if cmd_name in exempt:
-            continue
-
-        candidates: list[str] = []
-        if cmd_name == "cd" and len(tokens) >= 2:
-            candidates.append(tokens[1])
-        candidates.extend(t for t in tokens[1:] if _looks_like_path_token(t))
-        candidates.extend(_extract_redirection_targets(segment))
-
-        for candidate in candidates:
-            try:
-                resolved = _resolve_candidate_path(candidate)
-            except Exception:
+    for ctx_command in shell_command_contexts(command):
+        cwd = pathlib.Path(WORKSPACE_ROOT).resolve()
+        for segment in split_shell_segments(ctx_command):
+            tokens, err = tokenize_shell_segment(segment)
+            if err:
+                reason = "Shell workspace containment blocked command: shell tokenization failed."
+                if mode == "monitor":
+                    return True, reason, []
+                return False, reason, []
+            command_token, _command_index = _primary_command_token(tokens)
+            if command_token is not None and os.path.basename(str(command_token)).lower() in exempt:
                 continue
-            resolved_str = str(resolved)
-            if resolved_str in seen:
-                continue
-            seen.add(resolved_str)
-            if not is_within_workspace(resolved_str):
-                offending_paths.append(resolved_str)
+
+            paths, cwd, err = _candidate_paths_for_segment(segment, cwd)
+            if err:
+                reason = "Shell workspace containment blocked command: shell tokenization failed."
+                if mode == "monitor":
+                    return True, reason, []
+                return False, reason, []
+
+            for resolved in paths:
+                resolved_str = str(resolved)
+                if resolved_str in seen:
+                    continue
+                seen.add(resolved_str)
+                if not is_within_workspace(resolved_str):
+                    offending_paths.append(resolved_str)
 
     if not offending_paths:
         return True, None, []

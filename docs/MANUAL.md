@@ -1,6 +1,6 @@
 # AI Runtime Guard Manual
 
-This manual documents current runtime behavior for v2.3.1.
+This manual documents current runtime behavior for v2.3.2.dev0.
 
 ## 1. Runtime Surface
 AIRG MCP tools:
@@ -69,6 +69,7 @@ Boundary:
 1. Path checks apply to all file tools and enforce workspace boundary plus blocked paths/extensions.
 2. `allowed.paths_whitelist` can extend permitted roots.
 3. `allowed.max_directory_depth` applies to directory listing depth controls.
+4. The default blocked path set includes AIRG runtime state plus common credential stores such as `.ssh`, `.aws`, `.azure`, `.config/gcloud`, `.docker/config.json`, `.kube`, `.netrc`, `.npmrc`, and `.pypirc`.
 
 ## 6. Approvals
 1. `requires_confirmation` commands return tokenized block responses.

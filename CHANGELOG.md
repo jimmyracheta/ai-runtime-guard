@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Default blocked path coverage now includes common cloud and developer credential stores: `.aws`, `.azure`, `.config/gcloud`, `.docker/config.json`, `.kube`, `.netrc`, `.npmrc`, and `.pypirc`.
+- CI now runs a local documentation check for Markdown link drift and release-version references.
+
+### Fixed
+- Shell workspace containment now tracks `cd` across chained shell segments, so relative targets after an out-of-workspace directory change are evaluated against the changed working directory.
+
+### Tests
+- Added regression coverage for chained `cd ... && ... && rm relative-file` containment analysis.
+- Added default-policy coverage for common credential-store blocked paths.
+
 ## [2.3.1] - 2026-05-06
 
 ### Changed
