@@ -50,5 +50,6 @@ TODO_INTERNAL.md
 docs/summary.md
 ui_v3/src/assets/style-reference.md
 AGENT_CONTEXT.md
+os_enforcement_work.md
 OWASP_AGENTIC_ALIGNMENT.md
 tests/test_owasp_agentic_alignment.py
