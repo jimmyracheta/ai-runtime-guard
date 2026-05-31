@@ -37,6 +37,7 @@ airg = "airg_cli:main"
 airg-setup = "airg_cli:main_setup_entrypoint"
 airg-init = "airg_cli:main_init"
 airg-server = "airg_cli:main_server"
+airg-run = "airg_cli:main_run"
 airg-ui = "airg_cli:main_ui"
 airg-up = "airg_cli:main_up_entrypoint"
 airg-doctor = "airg_cli:main_doctor"
@@ -65,6 +66,8 @@ py-modules = [
   "mcp_config_manager",
   "airg_hook",
   "unix_socket_server",
+  "sandbox_launcher",
+  "codex_sandbox_reconcile",
 ]
 
 [tool.setuptools.packages.find]

@@ -5,6 +5,7 @@ import importlib.util
 import os
 import pathlib
 import platform
+import re
 import runpy
 import secrets
 import shlex
@@ -909,6 +910,168 @@ def main_server() -> None:
     _ensure_policy_file(paths, force=False)
     _warn_if_paths_inside_unsafe_roots(paths)
     runpy.run_module("server", run_name="__main__")
+
+
+def _agent_socket_path(state_dir: pathlib.Path, agent_id: str) -> pathlib.Path:
+    """Per-agent bridge socket path (transport-bridge-design.md §4.2):
+    $AIRG_STATE_DIR/sockets/<agent_id>.sock. The sockets/ dir is 0700."""
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id or "default")
+    sockets_dir = (state_dir / "sockets")
+    sockets_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(sockets_dir, 0o700)
+    except OSError:
+        pass
+    return (sockets_dir / f"{safe_id}.sock").resolve()
+
+
+def main_run() -> None:
+    """airg-run -- <agent command...>
+
+    Wrap an agent command in AIRG's OS sandbox (Linux: landrun/bwrap) confined
+    to the workspace, with AIRG running OUTSIDE via the AF_UNIX bridge socket
+    (Topology A). Resolves workspace + policy, computes the per-agent bridge
+    socket path, runs the capability probe, selects a launcher, builds the
+    sandbox argv + agent env, applies fail-closed checks, performs Codex
+    no-double-sandbox reconciliation, and execs the sandbox-wrapped command.
+
+    OUT OF SCOPE here (deferred, see transport-bridge-design.md §8): wiring the
+    agent's MCP client to point at the in-sandbox shim (agent_configs.py
+    shim-command). This entrypoint establishes the OS wall + env; the MCP-client
+    shim wiring is a separate integration step.
+
+    External AIRG socket server: this entrypoint does NOT start it. It PRINTS
+    the exact ``airg-server --socket <path>`` command to run alongside (in a
+    separate process, outside the sandbox). This keeps the unconfined control
+    plane lifecycle explicit and operator-owned.
+    """
+    import sandbox_launcher
+    import codex_sandbox_reconcile
+
+    parser = argparse.ArgumentParser(
+        description="Run an agent command wrapped in AIRG's OS sandbox.",
+        add_help=True,
+    )
+    parser.add_argument("--workspace", default="", help="Workspace root (default: AIRG_WORKSPACE / cwd-derived).")
+    parser.add_argument("--agent-id", default="", help="Agent profile id (default: AIRG_AGENT_ID or 'default').")
+    parser.add_argument("--agent", default="codex", help="Agent type for sandbox reconciliation (default: codex).")
+    parser.add_argument("--dry-run", action="store_true", help="Print the resolved sandbox argv and exit (no exec).")
+    parser.add_argument("agent_command", nargs=argparse.REMAINDER, help="-- <agent command...>")
+    args = parser.parse_args()
+
+    agent_argv = list(args.agent_command)
+    if agent_argv and agent_argv[0] == "--":
+        agent_argv = agent_argv[1:]
+    if not agent_argv:
+        print("[airg-run] error: no agent command. Usage: airg-run -- <agent command...>", file=sys.stderr)
+        sys.exit(2)
+
+    # Resolve workspace + policy (reuse existing resolution).
+    workspace = pathlib.Path(args.workspace or _default_workspace_path()).expanduser().resolve()
+    os.environ["AIRG_WORKSPACE"] = str(workspace)
+    agent_id = (args.agent_id or os.environ.get("AIRG_AGENT_ID", "") or "default").strip()
+    os.environ["AIRG_AGENT_ID"] = agent_id
+
+    paths = _resolve_paths()
+    _apply_runtime_env(paths)
+    _secure_permissions(paths)
+    _ensure_policy_file(paths, force=False)
+
+    import config as _config
+    base_policy = _config._validate_and_normalize_policy(_config._load_policy())
+    effective = _config._resolve_effective_policy(base_policy, agent_id)
+    os_sandbox_cfg = effective.get("os_sandbox", {}) if isinstance(effective.get("os_sandbox"), dict) else {}
+
+    # Per-agent bridge socket path.
+    fs_cfg = os_sandbox_cfg.get("filesystem", {}) if isinstance(os_sandbox_cfg.get("filesystem"), dict) else {}
+    socket_path = (
+        str(fs_cfg.get("bridge_socket_path", "")).strip()
+        or os.environ.get("AIRG_SOCKET_PATH", "").strip()
+        or str(_agent_socket_path(paths["state_dir"], agent_id))
+    )
+    os.environ["AIRG_SOCKET_PATH"] = socket_path
+
+    # Capability probe (reuse the probe module for launcher selection).
+    scripts_dir = _project_root() / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        import airg_sandbox_probe
+        probe_result = airg_sandbox_probe.run_probe()
+    except Exception as exc:  # pragma: no cover - probe import failure
+        probe_result = {}
+        print(f"[airg-run][warn] probe unavailable: {exc}", file=sys.stderr)
+
+    mode = str(os_sandbox_cfg.get("mode", "off")).strip() or "off"
+
+    # Print the external AIRG socket-server command (operator runs it alongside).
+    print(
+        f"[airg-run] Start the AIRG control plane in a SEPARATE process (outside the sandbox):\n"
+        f"           airg-server --socket {shlex.quote(socket_path)}",
+        file=sys.stderr,
+    )
+
+    try:
+        plan = sandbox_launcher.establish_and_launch(
+            os_sandbox_cfg=os_sandbox_cfg,
+            probe_result=probe_result,
+            workspace_root=str(workspace),
+            socket_path=socket_path,
+            agent_argv=agent_argv,
+            logger=lambda m: print(f"[airg-run] {m}", file=sys.stderr),
+        )
+    except sandbox_launcher.SandboxSetupError as exc:
+        print(f"[airg-run][error] {exc}", file=sys.stderr)
+        sys.exit(3)
+
+    # Codex no-double-sandbox reconciliation (T7). Detection is read-only; the
+    # weakening write only happens AFTER the outer wall is confirmed (plan.confined).
+    if str(args.agent).strip().lower() == "codex":
+        detection = codex_sandbox_reconcile.detect_codex_sandbox_mode(
+            home=pathlib.Path.home(), workspace=workspace
+        )
+        if mode == "enforce" and not detection.get("readable", True):
+            print(
+                "[airg-run][error] os_sandbox=enforce but Codex sandbox state is "
+                "unreadable; fail closed.",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+        decision = codex_sandbox_reconcile.reconcile_decision(
+            codex_mode=detection.get("effective_sandbox_mode"),
+            os_sandbox_mode=mode,
+            outer_wall_confirmed=plan.confined,
+        )
+        print(f"[airg-run] codex reconcile: {decision['action']} ({decision['reason']})", file=sys.stderr)
+        if decision["action"] == codex_sandbox_reconcile.ACTION_FAIL_CLOSED:
+            print("[airg-run][error] Codex reconciliation failed closed.", file=sys.stderr)
+            sys.exit(3)
+        if decision["action"] == codex_sandbox_reconcile.ACTION_SET_DANGER_FULL_ACCESS:
+            cfg_path = codex_sandbox_reconcile.effective_config_path_for_write(detection)
+            # Outer wall (plan.confined) is True here; write + restore around exec.
+            with codex_sandbox_reconcile.apply_and_restore(
+                cfg_path,
+                decision["write_value"],
+                outer_wall_confirmed=plan.confined,
+                logger=lambda m: print(f"[airg-run] {m}", file=sys.stderr),
+            ):
+                if args.dry_run:
+                    print(sandbox_launcher.describe_plan(plan))
+                    return
+                _run_wrapped(plan)
+            return
+
+    if args.dry_run:
+        print(sandbox_launcher.describe_plan(plan))
+        return
+    _run_wrapped(plan)
+
+
+def _run_wrapped(plan: "Any") -> None:
+    """Spawn the wrapped command as a child (so Codex config restore can run on
+    return). Exits with the child's return code."""
+    proc = subprocess.run(plan.sandbox_argv, env=plan.env)
+    sys.exit(proc.returncode)
 
 
 def main_ui(with_runtime_env: bool | None = None) -> None:
