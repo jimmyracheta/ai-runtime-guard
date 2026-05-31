@@ -652,6 +652,23 @@ def telemetry_service_restart():
     return jsonify({"ok": True, "services": status})
 
 
+@app.route("/api/os-sandbox/status", methods=["GET", "OPTIONS"])
+def api_os_sandbox_status():
+    """Read-only GET: return AIRG OS-sandbox capability + posture summary.
+
+    Side-effect-free. Protected by the existing localhost host-guard and CORS
+    guards from request_security_guard / add_cors_headers.  Does NOT expose
+    secrets or filesystem paths beyond what other status routes expose.
+    """
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        posture = agent_posture.build_os_sandbox_posture()
+        return jsonify({"ok": True, **posture})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/settings/agents", methods=["GET", "OPTIONS"])
 def settings_agents():
     if request.method == "OPTIONS":

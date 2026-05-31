@@ -1139,6 +1139,145 @@ def _fmt_mode(path: pathlib.Path) -> str:
         return "n/a"
 
 
+def _doctor_os_sandbox_checks(issues: list[str], warnings: list[str]) -> None:
+    """Append OS-sandbox checks to the doctor issues/warnings lists and print results.
+
+    Imports the probe and sandbox_launcher on-demand so that the doctor command
+    works even on hosts where those modules haven't been activated yet.  All
+    checks are read-only / non-mutating.
+    """
+    print("[airg] --- OS sandbox capability ---")
+
+    # Ensure the scripts/ directory is importable (editable source layout).
+    scripts_dir = str(_project_root() / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    # ---- 1. Run the capability probe -----------------------------------------
+    probe_result: dict = {}
+    probe_error: str = ""
+    try:
+        import airg_sandbox_probe as _probe_mod  # type: ignore[import]
+        probe_result = _probe_mod.run_probe()
+    except Exception as exc:
+        probe_error = str(exc)
+        warnings.append(f"OS sandbox probe unavailable: {exc}")
+
+    # ---- 2. Print Landlock ABI / unprivileged userns / launcher availability --
+    if probe_result:
+        plat = probe_result.get("platform", {})
+        system = str(plat.get("system", "")).strip()
+        ll = probe_result.get("landlock", {})
+        us = probe_result.get("userns", {})
+        launchers = probe_result.get("launchers", {})
+        sandbox_exec = probe_result.get("sandbox_exec", {})
+
+        if system == "Linux":
+            ll_avail = bool(ll.get("available", False))
+            ll_abi = ll.get("abi_version")
+            if ll_avail and ll_abi is not None:
+                print(f"[info] Landlock ABI: v{ll_abi} ({ll.get('abi_meaning', '')})")
+            else:
+                print(f"[info] Landlock: not available ({ll.get('note', 'no details')})")
+
+            usns_verdict = str(us.get("verdict", "unknown"))
+            print(f"[info] Unprivileged user namespaces: {usns_verdict}")
+        elif system == "Darwin":
+            se_found = bool(sandbox_exec.get("found", False))
+            if se_found:
+                print(f"[info] macOS sandbox-exec: found ({sandbox_exec.get('path', '')})")
+            else:
+                print("[info] macOS sandbox-exec: not found (deprecated in macOS 15+)")
+        else:
+            print(f"[info] Platform: {system} — sandbox capability probe ran but may not apply")
+
+        found_any = False
+        for name, info in launchers.items():
+            if bool((info or {}).get("found", False)):
+                path_str = str((info or {}).get("path", ""))
+                print(f"[info] launcher {name}: FOUND ({path_str})")
+                found_any = True
+        if not found_any:
+            print("[info] launchers: none found (bwrap / landrun / nsjail / firejail / minijail0)")
+    else:
+        if probe_error:
+            print(f"[warn] OS sandbox probe failed: {probe_error}")
+        else:
+            print("[info] OS sandbox probe returned no data")
+
+    # ---- 3. Read effective os_sandbox config from policy ---------------------
+    try:
+        paths = _resolve_paths()
+        import json as _json
+        policy_doc = _json.loads(paths["policy_path"].read_text()) if paths["policy_path"].exists() else {}
+        os_sandbox_cfg = policy_doc.get("os_sandbox", {}) if isinstance(policy_doc, dict) else {}
+        if not isinstance(os_sandbox_cfg, dict):
+            os_sandbox_cfg = {}
+    except Exception as exc:
+        os_sandbox_cfg = {}
+        warnings.append(f"Could not read os_sandbox config from policy: {exc}")
+
+    mode = str(os_sandbox_cfg.get("mode", "off")).strip() or "off"
+    launcher_pref = str(os_sandbox_cfg.get("launcher", "auto")).strip() or "auto"
+    on_setup_failure = str(os_sandbox_cfg.get("on_setup_failure", "fail_closed")).strip() or "fail_closed"
+    print(f"[info] os_sandbox.mode: {mode}  launcher: {launcher_pref}  on_setup_failure: {on_setup_failure}")
+
+    # ---- 4. Select launcher and report ---------------------------------------
+    selected_launcher = None
+    if probe_result:
+        try:
+            src_dir = str(_project_root() / "src")
+            if src_dir not in sys.path:
+                sys.path.insert(0, src_dir)
+            import sandbox_launcher as _sl  # type: ignore[import]
+            selected_launcher = _sl.select_launcher(probe_result, os_sandbox_cfg)
+        except Exception as exc:
+            warnings.append(f"Could not import sandbox_launcher to check selected launcher: {exc}")
+
+    if selected_launcher:
+        print(f"[ok] OS sandbox launcher selected: {selected_launcher}")
+    else:
+        if mode == "off":
+            print("[ok] OS sandbox is disabled — no launcher required")
+        else:
+            print("[info] No usable OS sandbox launcher found for this host")
+
+    # ---- 5. CRITICAL: enforce mode but no usable launcher → fail-closed ------
+    if mode == "enforce" and selected_launcher is None and probe_result:
+        if on_setup_failure == "fail_closed":
+            issues.append(
+                "OS sandbox FAIL-CLOSED MISCONFIGURATION: os_sandbox.mode=enforce but "
+                "no usable launcher (bwrap / landrun) is available on this host. "
+                "Agent launch will be REFUSED. Either install a supported launcher "
+                "or set os_sandbox.on_setup_failure=warn_and_run_unconfined "
+                "to allow unconfined fallback."
+            )
+            print(
+                "[error] OS sandbox FAIL-CLOSED MISCONFIGURATION: enforce mode set but "
+                "no usable launcher found — agent launch will be refused."
+            )
+        else:
+            warnings.append(
+                "OS sandbox: mode=enforce but no usable launcher found. "
+                "on_setup_failure=warn_and_run_unconfined — agent will run unconfined "
+                "by explicit operator opt-out."
+            )
+            print(
+                "[warn] OS sandbox enforce mode but no launcher: agent will run "
+                "unconfined (warn_and_run_unconfined opt-out active)."
+            )
+    elif mode == "off":
+        print("[ok] OS sandbox: not enabled (mode=off) — no enforcement action taken")
+    elif mode == "monitor":
+        print(
+            f"[ok] OS sandbox: monitor mode "
+            f"(launcher={'none available' if selected_launcher is None else selected_launcher}) "
+            "— observation only, no enforcement"
+        )
+    elif mode == "enforce" and selected_launcher is not None:
+        print(f"[ok] OS sandbox: enforce mode with launcher '{selected_launcher}' — ready to confine")
+
+
 def main_doctor() -> None:
     paths = _resolve_paths()
     _apply_runtime_env(paths)
@@ -1284,6 +1423,10 @@ def main_doctor() -> None:
                 warnings.append("Reports db last_ingested_at is present but unreadable.")
     except Exception as exc:
         warnings.append(f"Reports DB check failed: {exc}")
+
+    # ---- OS sandbox capability checks ----------------------------------------
+    _doctor_os_sandbox_checks(issues, warnings)
+    # ---------------------------------------------------------------------------
 
     for w in warnings:
         print(f"[warn] {w}")

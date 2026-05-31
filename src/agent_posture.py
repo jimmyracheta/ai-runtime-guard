@@ -1212,6 +1212,181 @@ def _build_generic_posture(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _os_sandbox_posture_signal(
+    os_sandbox_cfg: dict[str, Any],
+    probe_result: dict[str, Any],
+    launcher: str | None,
+) -> dict[str, Any]:
+    """Return a posture signal dict for AIRG's own OS-sandbox enforcement.
+
+    This is about AIRG's OS-level confinement capability (os_sandbox policy
+    section), NOT about the CLIENT agent's built-in sandbox config (which is
+    read by `_sandbox_hardened()` and the `sandbox_enabled`/`sandbox_escape_closed`
+    signals in `_build_claude_posture()`).
+
+    Keys returned:
+      os_sandbox_mode         -- "off" | "monitor" | "enforce"
+      os_sandbox_enabled      -- bool (mode != "off")
+      os_sandbox_launcher_pref -- "auto" | "bwrap" | "landrun" | "sandbox-exec"
+      os_sandbox_launcher_selected -- the launcher select_launcher() chose, or None
+      os_sandbox_confined_capable -- True iff enforce or monitor AND a usable
+                                     launcher is present
+      os_sandbox_fail_closed_misconfig -- True iff mode=="enforce" but launcher==None
+                                          AND on_setup_failure=="fail_closed"
+      os_sandbox_on_setup_failure -- "fail_closed" | "warn_and_run_unconfined"
+    """
+    cfg = os_sandbox_cfg if isinstance(os_sandbox_cfg, dict) else {}
+    mode = str(cfg.get("mode", "off")).strip() or "off"
+    enabled = mode != "off"
+    launcher_pref = str(cfg.get("launcher", "auto")).strip() or "auto"
+    on_setup_failure = str(cfg.get("on_setup_failure", "fail_closed")).strip() or "fail_closed"
+
+    # A usable launcher means: a launcher was selected from the probe
+    launcher_present = launcher is not None
+
+    # "confined-capable" = sandbox is active (monitor or enforce) AND there is a
+    # usable launcher backing it
+    confined_capable = enabled and launcher_present
+
+    # Fail-closed misconfiguration: enforce mode requested but no launcher usable
+    # and policy would fail closed (the key operational guardrail)
+    fail_closed_misconfig = (
+        mode == "enforce"
+        and not launcher_present
+        and on_setup_failure == "fail_closed"
+    )
+
+    # Extract probe capability summary (safe; probe may be empty on macOS / unsupported hosts)
+    probe = probe_result if isinstance(probe_result, dict) else {}
+    landlock_available = bool((probe.get("landlock") or {}).get("available", False))
+    landlock_abi = (probe.get("landlock") or {}).get("abi_version")
+    userns_verdict = str((probe.get("userns") or {}).get("verdict", "not_applicable"))
+    launchers_found = {
+        name: bool((probe.get("launchers") or {}).get(name, {}).get("found", False))
+        for name in ("bwrap", "landrun", "nsjail", "firejail", "minijail0")
+    }
+
+    return {
+        "os_sandbox_mode": mode,
+        "os_sandbox_enabled": enabled,
+        "os_sandbox_launcher_pref": launcher_pref,
+        "os_sandbox_launcher_selected": launcher,
+        "os_sandbox_confined_capable": confined_capable,
+        "os_sandbox_fail_closed_misconfig": fail_closed_misconfig,
+        "os_sandbox_on_setup_failure": on_setup_failure,
+        "os_sandbox_probe_summary": {
+            "landlock_available": landlock_available,
+            "landlock_abi_version": landlock_abi,
+            "userns_verdict": userns_verdict,
+            "launchers_found": launchers_found,
+        },
+    }
+
+
+def build_os_sandbox_posture(
+    os_sandbox_cfg: dict[str, Any] | None = None,
+    probe_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a standalone AIRG OS-sandbox posture dict.
+
+    Reads os_sandbox config from AIRG policy (via the AIRG_POLICY_PATH env
+    if no override is passed). Runs the probe via importing airg_sandbox_probe
+    (if available on the path, as in the scripts/ directory).
+
+    Returns a dict with:
+      signal       -- the raw signal dict from _os_sandbox_posture_signal()
+      status       -- "green" | "yellow" | "red" | "gray"
+      rationale    -- human-readable string
+    """
+    import sys
+    import os
+
+    # --- Resolve os_sandbox config ---
+    if os_sandbox_cfg is None:
+        cfg_payload = _effective_policy_for_agent(os.environ.get("AIRG_AGENT_ID", ""))
+        os_sandbox_cfg = cfg_payload.get("os_sandbox", {}) if isinstance(cfg_payload, dict) else {}
+    if not isinstance(os_sandbox_cfg, dict):
+        os_sandbox_cfg = {}
+
+    # --- Resolve probe result ---
+    if probe_result is None:
+        probe_result = {}
+        # Try to import the probe from scripts/ (editable source layout)
+        probe_scripts_dir = str(pathlib.Path(__file__).resolve().parent.parent / "scripts")
+        if probe_scripts_dir not in sys.path:
+            sys.path.insert(0, probe_scripts_dir)
+        try:
+            import airg_sandbox_probe  # type: ignore[import]
+            probe_result = airg_sandbox_probe.run_probe()
+        except Exception:
+            pass
+
+    # --- Select launcher via sandbox_launcher.select_launcher ---
+    launcher: str | None = None
+    try:
+        import sandbox_launcher  # type: ignore[import]
+        launcher = sandbox_launcher.select_launcher(probe_result, os_sandbox_cfg)
+    except Exception:
+        pass
+
+    signal = _os_sandbox_posture_signal(os_sandbox_cfg, probe_result, launcher)
+
+    mode = signal["os_sandbox_mode"]
+    fail_closed_misconfig = signal["os_sandbox_fail_closed_misconfig"]
+    confined_capable = signal["os_sandbox_confined_capable"]
+
+    # Status scoring:
+    #   red   = enforce mode but no usable launcher (fail-closed misconfiguration)
+    #   green = enforce mode and a usable launcher is present (enforcing)
+    #   yellow = monitor mode (observation only; not yet enforcing)
+    #   gray  = off (no OS sandbox requested)
+    if fail_closed_misconfig:
+        status = "red"
+        rationale = (
+            "AIRG OS sandbox is set to enforce but no usable launcher "
+            "(bwrap / landrun) is available on this host. Fail-closed "
+            "misconfiguration — agent launch will be refused."
+        )
+    elif mode == "enforce" and confined_capable:
+        status = "green"
+        rationale = (
+            f"AIRG OS sandbox is enforcing confinement with launcher "
+            f"'{signal['os_sandbox_launcher_selected']}'."
+        )
+    elif mode == "enforce" and not confined_capable:
+        # enforce + warn_and_run_unconfined + no launcher
+        status = "yellow"
+        rationale = (
+            "AIRG OS sandbox mode=enforce but no usable launcher found. "
+            "on_setup_failure=warn_and_run_unconfined — agent will run "
+            "unconfined by explicit operator opt-out."
+        )
+    elif mode == "monitor":
+        if confined_capable:
+            status = "yellow"
+            rationale = (
+                f"AIRG OS sandbox is in monitor mode with launcher "
+                f"'{signal['os_sandbox_launcher_selected']}' available "
+                f"(observation only, not yet enforcing)."
+            )
+        else:
+            status = "yellow"
+            rationale = (
+                "AIRG OS sandbox is in monitor mode but no usable launcher "
+                "is available (observation only; cannot enforce)."
+            )
+    else:
+        # off
+        status = "gray"
+        rationale = "AIRG OS sandbox is disabled (os_sandbox.mode=off)."
+
+    return {
+        "status": status,
+        "rationale": rationale,
+        "signal": signal,
+    }
+
+
 def build_posture_for_profile(profile: dict[str, Any]) -> dict[str, Any]:
     normalized = {
         "profile_id": str(profile.get("profile_id", "")).strip(),
