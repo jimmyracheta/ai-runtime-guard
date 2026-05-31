@@ -56,8 +56,8 @@ containment.** The "not a full malicious-actor containment platform" disclaimer 
    sandbox on SSE).
 5. **Codex double-sandbox:** AIRG treats Codex's built-in sandbox as AIRG-controlled
    state and must NOT stack a second sandbox. AIRG is the authoritative outer wall.
-   **⚠ See §5 BLOCKING-1 — the code does not currently match the "ships disabled"
-   characterization in this decision.**
+   AIRG's default `tier3_sandbox_mode = "workspace-write"` enforces Codex's sandbox ON
+   (upstream Codex ships with its sandbox disabled). See §5 for the resolved framing.
 6. **North star:** as above, with the §13.11 spatial/behavioral calibration.
 
 ---
@@ -260,19 +260,15 @@ One prioritized, de-duplicated list gathering every open item across T1–T7 and
 
 ### BLOCKING
 
-**BLOCKING-1 — Codex default contradicts the locked "ships disabled" decision. (T7)**
-The code's actual Codex default is `tier3_sandbox_mode = "workspace-write"` — Codex's own
-sandbox is **ACTIVE** (workspace-confined), not disabled. `"danger-full-access"` (the
-value that disables Codex's sandbox) exists in `CODEX_SANDBOX_MODES` but is **never
-emitted as a default**. This directly **CONTRADICTS** §13.1 #5's "AIRG already ships with
-Codex's own sandbox disabled."
-*Implication:* The no-double-sandbox reconciliation (T7) is built on this premise. Until
-resolved, the launcher cannot assume Codex is unconfined. **Recommended resolution (T7
-open Q5, option a):** keep `workspace-write` as the shipped default; AIRG writes
-`danger-full-access` ONLY at OS-enforce launch time, AFTER its outer wall is confirmed up
-(never before — that would leave users *less* protected). Operator must explicitly
-confirm this interpretation; do not change the code default to `danger-full-access`
-globally. *Blocks:* P1 (Codex reconciliation), and any honest statement of §13.1 #5.
+**BLOCKING-1 — RESOLVED: Codex "ships disabled" framing clarified. (T7)**
+The earlier framing flagged a "contradiction" between §13.1 #5 ("ships disabled") and
+AIRG's `tier3_sandbox_mode = "workspace-write"` default. This was a misread. The correct
+understanding: **upstream Codex** (the OpenAI CLI) ships with its own sandbox **disabled
+by default** (permissive / full-access). AIRG's value-add is enforcing the sandbox
+**ON** — `workspace-write` is AIRG adding protection, not contradicting §13.1 #5. AIRG
+writes `danger-full-access` only transiently at OS-enforce launch time, AFTER its outer
+wall is confirmed up (never before). There is no contradiction; the reconciliation logic
+in T7 stands as designed. *No longer blocks P1.*
 
 **BLOCKING-2 — Landlock + AF_UNIX `connect(2)` is unverified. (T2 §7.1, T3 §9.1, T5)**
 Does a Landlock FS read/write rule on a pathname socket inode actually permit `connect(2)`
@@ -286,10 +282,8 @@ landrun v0.1.14 may not expose tmpfs creation. Test in P0 (gate 2). Not fatal �
 is host `/tmp` rw with audit-log naming — but the decision changes the carve-out shape.
 *Blocks:* finalizing P1 `writable_paths` behavior.
 
-**BLOCKING-4 — Scope decision: does this effort advance from design to implementation?**
-This session and T1–T7 are explicitly *design-only*. P0 is the first phase that writes
-code. The operator must decide whether to authorize P0 implementation now, or hold at the
-design tier. *Blocks:* everything past this document.
+**BLOCKING-4 — RESOLVED: Operator authorized P0 + P1 MVP (2026-05-31).**
+Implementation is authorized. P0 spike and P1 Linux MVP may proceed. *No longer blocks.*
 
 ### NON-BLOCKING (resolved-conditionally or deferrable)
 
@@ -374,8 +368,8 @@ Rough relative sizing (no calendar):
 `P0 gate 1 (Landlock+AF_UNIX connect)` → `run_unix_socket_async + shim` → `Linux launcher
 + carve-out baseline` → `os_sandbox schema wiring` → `Codex reconciliation` → P1 ships.
 macOS (P3) and hardening (P2) branch off P1 and can proceed in parallel once the launcher
-abstraction and schema are stable. **BLOCKING-1 (Codex default) and BLOCKING-4 (scope
-authorization) gate the start of P0/P1 and are operator decisions, not engineering work.**
+abstraction and schema are stable. **BLOCKING-1 (Codex framing) and BLOCKING-4 (scope authorization) are both RESOLVED —
+P0/P1 implementation is authorized and the Codex framing question is closed.**
 
 ---
 

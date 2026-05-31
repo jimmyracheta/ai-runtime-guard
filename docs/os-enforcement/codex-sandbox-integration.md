@@ -9,11 +9,15 @@
 ## 0. Executive Summary
 
 AGENT_CONTEXT.md §13.1 #5 states that "AIRG already ships with Codex's own sandbox **disabled**."
-**This claim is NOT confirmed by the code as written.** AIRG's default `tier3_sandbox_mode` is
-`"workspace-write"` — Codex's own sandbox is active (workspace-confined), not disabled.
-`"danger-full-access"` is the mode that would disable Codex's sandbox entirely. As of the code
-reviewed, AIRG never writes `danger-full-access` (the constant exists in `CODEX_SANDBOX_MODES`
-but is not the default and no code path emits it as a default or enforcement output).
+This refers to **upstream Codex** (the OpenAI CLI), which ships with its own sandbox **disabled by
+default** (permissive / `danger-full-access` equivalent). AIRG's value-add is that it **enforces
+the sandbox ON**: AIRG's managed default `tier3_sandbox_mode = "workspace-write"` (written by
+`_normalize_codex_hardening_options` in `agent_configurator.py`) confines Codex to the workspace.
+The `workspace-write` default is AIRG *enabling* protection, not a contradiction of §13.1 #5.
+
+The earlier "contradiction / BLOCKING-1" framing was a misread that conflated "Codex ships
+disabled" (true, about the upstream Codex CLI) with "AIRG ships Codex disabled" (false — AIRG
+enforces `workspace-write`). **This is resolved and no longer a blocking question.**
 
 This document:
 1. Documents the current state accurately.
@@ -88,29 +92,24 @@ block delimited by `# AIRG_CODEX_TIER3_BEGIN` / `# AIRG_CODEX_TIER3_END`.
 | `sandbox_workspace_write.exclude_slash_tmp` | `true` | line 304 |
 | `sandbox_workspace_write.exclude_tmpdir_env_var` | `true` | line 305 |
 
-### 1.3 Verification of the "ships disabled" claim
+### 1.3 The "ships disabled" claim — clarified (RESOLVED)
 
-**Verdict: NOT CONFIRMED.**
+**Verdict: CORRECT — framing clarified.**
 
-The claim in §13.1 #5 that AIRG "ships with Codex's own sandbox disabled" is inaccurate as of the
-current code. What the code actually does:
+§13.1 #5 states AIRG ships with Codex's own sandbox "disabled." This refers to the fact that
+**upstream Codex** (the OpenAI CLI) ships with its sandbox **disabled by default** (permissive /
+full-access). AIRG's value-add is **enforcing the sandbox ON**:
 
-- **Default mode written:** `sandbox_mode = "workspace-write"` — this is Codex's own sandbox in
-  **active** mode (workspace-confined write access), not disabled.
+- **Default mode written by AIRG:** `sandbox_mode = "workspace-write"` — Codex's own sandbox in
+  **active** mode (workspace-confined write access). This is AIRG adding protection, not removing it.
 - **The disabling mode** is `"danger-full-access"` — Codex's equivalent of "no sandbox". This value
   exists in `CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}` (line 24)
-  but is **never the default** and **no code path in `_render_codex_tier3_config` or
-  `_normalize_codex_hardening_options` emits it as a default**. A caller could explicitly pass
-  `tier3_sandbox_mode: "danger-full-access"` in options, but AIRG does not do so automatically.
+  and is what the upstream Codex binary defaults to. AIRG never writes it as a standing default;
+  it is only written transiently at OS-enforce launch time (see §3), AFTER the outer wall is up.
 
-**What §13.1 #5 probably intended:** AIRG controls the sandbox setting and can enforce whatever
-value it writes. The "disabled" characterization may reflect a prior design decision or an intended
-direction (AIRG owns the outer wall, so Codex's inner sandbox becomes redundant). The current code
-does NOT implement that direction — it writes `workspace-write` (active sandbox), not
-`danger-full-access` (disabled sandbox).
-
-This is a significant discrepancy that must be resolved before OS enforcement is implemented.
-Section 3 below proposes the reconciliation logic that would implement §13.1 #5's intent.
+**Summary:** `workspace-write` = AIRG enforcing the sandbox ON (Codex ships disabled upstream).
+There is no discrepancy between the code and §13.1 #5. Section 3 documents the reconciliation
+logic for OS enforcement (when AIRG's OS sandbox is active and the inner sandbox must be relaxed).
 
 ---
 
@@ -409,10 +408,8 @@ setting) means the reconciliation code must use `os_sandbox.mode` (AIRG's policy
    `mcp_config_manager.py`), but the launch-time detection must also check trust to avoid false
    "sandbox confirmed disabled" conclusions.
 
-5. **§13.1 #5 intent vs code state:** The mismatch between the locked decision ("ships disabled")
-   and the actual code default (`workspace-write`) must be resolved by the operator before
-   implementation begins. Two options: (a) Change the operator decision — AIRG ships with
-   `workspace-write` and disables only when OS enforcement is active. (b) Change the code default
-   to `danger-full-access` (effectively disabling Codex's inner sandbox today, before OS enforcement
-   exists). Option (a) is strongly preferred: disabling Codex's inner sandbox before AIRG's outer
-   wall is in place would leave users less protected, not more.
+5. **§13.1 #5 framing — RESOLVED.** The earlier "contradiction" between "ships disabled" and
+   `workspace-write` was a misread: "Codex ships disabled" refers to the upstream Codex CLI
+   default (permissive / `danger-full-access`); AIRG's `workspace-write` default is AIRG
+   enforcing protection ON. There is no mismatch. AIRG writes `danger-full-access` only
+   transiently at OS-enforce launch time, AFTER the outer wall is confirmed up (see §3–§4).
