@@ -69,6 +69,22 @@ DEFAULT_TEST_POLICY = {
         "max_scan_bytes": 1048576,
         "include_wrappers": True,
     },
+    "os_sandbox": {
+        "enabled": False,
+        "mode": "off",
+        "launcher": "auto",
+        "filesystem": {
+            "workspace_root": "",
+            "readable_paths": [],
+            "read_exec_paths": [],
+            "writable_paths": ["/tmp"],
+            "bridge_socket_path": "",
+        },
+        "network_mode": "none",
+        "allowed_tcp_ports": [],
+        "credential_carve_outs": [],
+        "on_setup_failure": "fail_closed",
+    },
 }
 
 

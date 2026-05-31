@@ -207,6 +207,29 @@ def _policy_template() -> dict[str, Any]:
             "include_wrappers": True,
         },
         "agent_overrides": {},
+        "os_sandbox": {
+            "enabled": False,
+            "mode": "off",
+            "launcher": "auto",
+            "filesystem": {
+                "workspace_root": "",
+                "readable_paths": [],
+                "read_exec_paths": [
+                    "/usr", "/lib", "/lib64", "/lib32", "/libx32",
+                    "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+                    "/usr/local", "/proc/self", "/dev/null",
+                    "/dev/urandom", "/dev/random", "/etc/ld.so.cache",
+                    "/etc/ld.so.conf", "/etc/ld.so.conf.d",
+                    "/etc/ssl/certs", "/etc/ca-certificates",
+                ],
+                "writable_paths": ["/tmp"],
+                "bridge_socket_path": "",
+            },
+            "network_mode": "none",
+            "allowed_tcp_ports": [],
+            "credential_carve_outs": [],
+            "on_setup_failure": "fail_closed",
+        },
     }
 
 

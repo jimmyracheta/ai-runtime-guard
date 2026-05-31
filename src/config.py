@@ -247,6 +247,106 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
     if not isinstance(script_sentinel["include_wrappers"], bool):
         raise ValueError("script_sentinel.include_wrappers must be boolean")
 
+    # os_sandbox: AIRG-owned OS-level sandboxing policy (schema per docs/os-enforcement/sandbox-policy-schema.md)
+    # Default is mode:"off"/enabled:false so existing installs are unaffected.
+    _OS_SANDBOX_READ_EXEC_PATHS_DEFAULT = [
+        "/usr", "/lib", "/lib64", "/lib32", "/libx32",
+        "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+        "/usr/local", "/proc/self", "/dev/null",
+        "/dev/urandom", "/dev/random", "/etc/ld.so.cache",
+        "/etc/ld.so.conf", "/etc/ld.so.conf.d",
+        "/etc/ssl/certs", "/etc/ca-certificates",
+    ]
+    os_sandbox = policy.get("os_sandbox")
+    if os_sandbox is None:
+        os_sandbox = {}
+    if not isinstance(os_sandbox, dict):
+        raise ValueError("policy.os_sandbox must be an object")
+    policy["os_sandbox"] = os_sandbox
+
+    os_sandbox.setdefault("enabled", False)
+    if not isinstance(os_sandbox["enabled"], bool):
+        raise ValueError("os_sandbox.enabled must be boolean")
+
+    os_sandbox.setdefault("mode", "off")
+    if str(os_sandbox["mode"]).strip() not in {"off", "monitor", "enforce"}:
+        raise ValueError("os_sandbox.mode must be one of: off, monitor, enforce")
+
+    os_sandbox.setdefault("launcher", "auto")
+    if str(os_sandbox["launcher"]).strip() not in {"auto", "bwrap", "landrun", "sandbox-exec"}:
+        raise ValueError("os_sandbox.launcher must be one of: auto, bwrap, landrun, sandbox-exec")
+
+    os_sandbox.setdefault("on_setup_failure", "fail_closed")
+    if str(os_sandbox["on_setup_failure"]).strip() not in {"fail_closed", "warn_and_run_unconfined"}:
+        raise ValueError("os_sandbox.on_setup_failure must be one of: fail_closed, warn_and_run_unconfined")
+
+    os_sandbox.setdefault("network_mode", "none")
+    if str(os_sandbox["network_mode"]).strip() not in {"none", "loopback_only", "unrestricted"}:
+        raise ValueError("os_sandbox.network_mode must be one of: none, loopback_only, unrestricted")
+
+    _ensure_list(os_sandbox, "allowed_tcp_ports")
+    for i, port in enumerate(os_sandbox["allowed_tcp_ports"]):
+        try:
+            port_int = int(port)
+        except (TypeError, ValueError):
+            raise ValueError(f"os_sandbox.allowed_tcp_ports[{i}] must be an integer")
+        if not (1 <= port_int <= 65535):
+            raise ValueError(f"os_sandbox.allowed_tcp_ports[{i}] must be in range 1-65535")
+
+    # filesystem sub-object
+    fs = os_sandbox.get("filesystem")
+    if fs is None:
+        fs = {}
+    if not isinstance(fs, dict):
+        raise ValueError("os_sandbox.filesystem must be an object")
+    os_sandbox["filesystem"] = fs
+
+    fs.setdefault("workspace_root", "")
+    if not isinstance(fs["workspace_root"], str):
+        raise ValueError("os_sandbox.filesystem.workspace_root must be a string")
+
+    fs.setdefault("bridge_socket_path", "")
+    if not isinstance(fs["bridge_socket_path"], str):
+        raise ValueError("os_sandbox.filesystem.bridge_socket_path must be a string")
+
+    _ensure_list(fs, "readable_paths")
+    for i, p in enumerate(fs["readable_paths"]):
+        if not isinstance(p, str) or not p.strip():
+            raise ValueError(f"os_sandbox.filesystem.readable_paths[{i}] must be a non-empty string")
+
+    # read_exec_paths: if absent or null → apply baseline default; if [] → operator explicitly cleared it
+    if "read_exec_paths" not in fs or fs["read_exec_paths"] is None:
+        fs["read_exec_paths"] = list(_OS_SANDBOX_READ_EXEC_PATHS_DEFAULT)
+    if not isinstance(fs["read_exec_paths"], list):
+        raise ValueError("os_sandbox.filesystem.read_exec_paths must be an array")
+    for i, p in enumerate(fs["read_exec_paths"]):
+        if not isinstance(p, str):
+            raise ValueError(f"os_sandbox.filesystem.read_exec_paths[{i}] must be a string")
+
+    fs.setdefault("writable_paths", ["/tmp"])
+    if not isinstance(fs["writable_paths"], list):
+        raise ValueError("os_sandbox.filesystem.writable_paths must be an array")
+    for i, p in enumerate(fs["writable_paths"]):
+        if not isinstance(p, str):
+            raise ValueError(f"os_sandbox.filesystem.writable_paths[{i}] must be a string")
+
+    # credential_carve_outs
+    carve_outs = os_sandbox.get("credential_carve_outs")
+    if carve_outs is None:
+        carve_outs = []
+    if not isinstance(carve_outs, list):
+        raise ValueError("os_sandbox.credential_carve_outs must be an array")
+    os_sandbox["credential_carve_outs"] = carve_outs
+    for i, entry in enumerate(carve_outs):
+        if not isinstance(entry, dict):
+            raise ValueError(f"os_sandbox.credential_carve_outs[{i}] must be an object")
+        if not isinstance(entry.get("path"), str) or not entry["path"].strip():
+            raise ValueError(f"os_sandbox.credential_carve_outs[{i}].path must be a non-empty string")
+        if entry.get("access") not in {"read", "read_exec"}:
+            raise ValueError(f"os_sandbox.credential_carve_outs[{i}].access must be 'read' or 'read_exec'")
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            raise ValueError(f"os_sandbox.credential_carve_outs[{i}].reason must be a non-empty string")
+
     agent_overrides = policy.get("agent_overrides", {})
     if agent_overrides is None:
         agent_overrides = {}
@@ -258,6 +358,7 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
         "allowed",
         "network",
         "execution",
+        "os_sandbox",
     }
     normalized_overrides: dict[str, dict] = {}
     tier_rank = {"off": 0, "monitor": 1, "enforce": 2}
@@ -330,6 +431,94 @@ def _validate_and_normalize_policy(policy: dict) -> dict:
                 raise ValueError(
                     f"policy.agent_overrides['{agent_key}'].policy.execution.shell_workspace_containment.mode cannot be less restrictive than baseline"
                 )
+
+        # os_sandbox tightening rules
+        # Per sandbox-policy-schema.md §3.2: overrides may only tighten (more restrictive).
+        # Implemented: mode rank, network_mode rank, on_setup_failure, allowed_tcp_ports subset,
+        #   credential_carve_outs subset (by path), filesystem.*_paths subsets.
+        os_sandbox_base = policy.get("os_sandbox", {}) if isinstance(policy.get("os_sandbox"), dict) else {}
+        os_sandbox_overlay = overlay.get("os_sandbox", {}) if isinstance(overlay.get("os_sandbox"), dict) else {}
+
+        # mode: tier_rank {"off":0, "monitor":1, "enforce":2} — override must be >= base
+        if "mode" in os_sandbox_overlay:
+            base_mode = str(os_sandbox_base.get("mode", "off")).lower()
+            override_mode = str(os_sandbox_overlay.get("mode", "off")).lower()
+            if tier_rank.get(override_mode, -1) < tier_rank.get(base_mode, -1):
+                raise ValueError(
+                    f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.mode cannot be less restrictive than baseline"
+                )
+
+        # on_setup_failure: fail_closed is more restrictive; cannot loosen from fail_closed
+        if "on_setup_failure" in os_sandbox_overlay:
+            base_osf = str(os_sandbox_base.get("on_setup_failure", "fail_closed")).strip()
+            override_osf = str(os_sandbox_overlay.get("on_setup_failure", "fail_closed")).strip()
+            if base_osf == "fail_closed" and override_osf != "fail_closed":
+                raise ValueError(
+                    f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.on_setup_failure cannot loosen baseline fail_closed"
+                )
+
+        # network_mode rank: unrestricted=0, loopback_only=1, none=2 — override must be >= base
+        _net_mode_rank = {"unrestricted": 0, "loopback_only": 1, "none": 2}
+        if "network_mode" in os_sandbox_overlay:
+            base_nm = str(os_sandbox_base.get("network_mode", "none")).lower()
+            override_nm = str(os_sandbox_overlay.get("network_mode", "none")).lower()
+            if _net_mode_rank.get(override_nm, -1) < _net_mode_rank.get(base_nm, -1):
+                raise ValueError(
+                    f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.network_mode cannot be less restrictive than baseline"
+                )
+
+        # allowed_tcp_ports: override must be a subset of baseline (cannot add new ports)
+        if "allowed_tcp_ports" in os_sandbox_overlay:
+            base_ports = set(int(p) for p in os_sandbox_base.get("allowed_tcp_ports", []) if isinstance(p, (int, float, str)))
+            overlay_ports_raw = os_sandbox_overlay.get("allowed_tcp_ports", [])
+            if isinstance(overlay_ports_raw, list):
+                for p in overlay_ports_raw:
+                    try:
+                        if int(p) not in base_ports:
+                            raise ValueError(
+                                f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.allowed_tcp_ports cannot add port {p} not in baseline"
+                            )
+                    except (TypeError, ValueError) as exc:
+                        if "cannot add port" in str(exc):
+                            raise
+                        raise ValueError(
+                            f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.allowed_tcp_ports entries must be integers"
+                        ) from exc
+
+        # credential_carve_outs: override must be a subset of baseline by path (cannot add new paths)
+        if "credential_carve_outs" in os_sandbox_overlay:
+            base_carve_paths = {
+                str(e.get("path", "")).strip()
+                for e in os_sandbox_base.get("credential_carve_outs", [])
+                if isinstance(e, dict)
+            }
+            overlay_carve_outs = os_sandbox_overlay.get("credential_carve_outs", [])
+            if isinstance(overlay_carve_outs, list):
+                for entry in overlay_carve_outs:
+                    if not isinstance(entry, dict):
+                        continue
+                    p = str(entry.get("path", "")).strip()
+                    if p and p not in base_carve_paths:
+                        raise ValueError(
+                            f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.credential_carve_outs cannot add path '{p}' not in baseline"
+                        )
+
+        # filesystem.*_paths: each override list must be a subset of baseline list
+        # (Deferred: read_exec_paths subset check — the default baseline list is large and most
+        # overrides will legitimately shrink it. Subset check applies only when baseline is non-default.)
+        # Implemented: readable_paths, writable_paths subsets.
+        fs_base = os_sandbox_base.get("filesystem", {}) if isinstance(os_sandbox_base.get("filesystem"), dict) else {}
+        fs_overlay = os_sandbox_overlay.get("filesystem", {}) if isinstance(os_sandbox_overlay.get("filesystem"), dict) else {}
+        for path_field in ("readable_paths", "writable_paths"):
+            if path_field in fs_overlay:
+                base_paths = set(str(p).strip() for p in fs_base.get(path_field, []) if isinstance(p, str) and str(p).strip())
+                overlay_paths_raw = fs_overlay.get(path_field, [])
+                if isinstance(overlay_paths_raw, list):
+                    for p in overlay_paths_raw:
+                        if isinstance(p, str) and str(p).strip() and str(p).strip() not in base_paths:
+                            raise ValueError(
+                                f"policy.agent_overrides['{agent_key}'].policy.os_sandbox.filesystem.{path_field} cannot add path '{p}' not in baseline"
+                            )
 
     for agent_key, override in agent_overrides.items():
         if isinstance(agent_key, str) and agent_key.startswith("_"):
