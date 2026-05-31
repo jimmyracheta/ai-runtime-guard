@@ -1,5 +1,8 @@
 """Thin MCP entrypoint that wires tool handlers from modular components."""
 
+import os
+
+import anyio
 from mcp.server.fastmcp import FastMCP
 
 import approvals
@@ -32,4 +35,11 @@ for tool in [
 
 
 if __name__ == "__main__":
-    mcp.run()
+    # Socket path may come from env (set by airg-server --socket or launcher).
+    # If set, serve over AF_UNIX socket; otherwise fall back to default stdio.
+    _socket_path = os.environ.get("AIRG_SOCKET_PATH", "").strip()
+    if _socket_path:
+        from unix_socket_server import run_unix_socket_async
+        anyio.run(run_unix_socket_async, mcp, _socket_path)
+    else:
+        mcp.run()

@@ -859,6 +859,27 @@ def main_setup_entrypoint() -> None:
 
 
 def main_server() -> None:
+    parser = argparse.ArgumentParser(
+        description="Start the AIRG MCP server",
+        add_help=True,
+    )
+    parser.add_argument(
+        "--socket",
+        metavar="PATH",
+        default="",
+        help=(
+            "Serve over an AF_UNIX socket at PATH instead of stdio. "
+            "Also reads AIRG_SOCKET_PATH env var (flag takes precedence). "
+            "Default: stdio (unchanged)."
+        ),
+    )
+    args, _unknown = parser.parse_known_args()
+
+    # Resolve socket path: flag > env > empty (stdio).
+    socket_path = (args.socket or os.environ.get("AIRG_SOCKET_PATH", "")).strip()
+    if socket_path:
+        os.environ["AIRG_SOCKET_PATH"] = socket_path
+
     paths = _resolve_paths()
     _apply_runtime_env(paths)
     _secure_permissions(paths)
