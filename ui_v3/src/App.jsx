@@ -603,6 +603,9 @@ export default function App() {
   const [scriptSentinelError, setScriptSentinelError] = useState('')
   const [scriptSentinelActionLoading, setScriptSentinelActionLoading] = useState({})
   const [agentConfigActionLoading, setAgentConfigActionLoading] = useState({})
+  const [osSandboxStatus, setOsSandboxStatus] = useState(null)
+  const [osSandboxLoading, setOsSandboxLoading] = useState(false)
+  const [osSandboxError, setOsSandboxError] = useState('')
   const [advancedBackupOpen, setAdvancedBackupOpen] = useState(false)
   const [advancedReportsOpen, setAdvancedReportsOpen] = useState(false)
   const [telemetryServiceState, setTelemetryServiceState] = useState({
@@ -1248,6 +1251,31 @@ export default function App() {
     }
   }
 
+  async function fetchOsSandboxStatus() {
+    setOsSandboxLoading(true)
+    setOsSandboxError('')
+    try {
+      const res = await fetch(`${API_BASE}/api/os-sandbox/status`, { headers: { Accept: 'application/json' } })
+      if (res.status === 403) {
+        setOsSandboxStatus(null)
+        setOsSandboxError('unavailable (access restricted)')
+        return
+      }
+      const payload = await res.json().catch(() => ({}))
+      if (!res.ok || payload?.ok === false) {
+        setOsSandboxStatus(null)
+        setOsSandboxError(payload?.error ? String(payload.error) : `HTTP ${res.status}`)
+        return
+      }
+      setOsSandboxStatus(payload)
+    } catch (err) {
+      setOsSandboxStatus(null)
+      setOsSandboxError(String(err.message || err))
+    } finally {
+      setOsSandboxLoading(false)
+    }
+  }
+
   async function scriptSentinelAllowance(contentHash, allowanceType) {
     const actionKey = `${allowanceType}:${contentHash}`
     setScriptSentinelActionLoading((prev) => ({ ...prev, [actionKey]: true }))
@@ -1624,6 +1652,11 @@ export default function App() {
   useEffect(() => {
     if (activeRail !== 'settings' || activeSettingsTab !== 'agents') return
     fetchAgentPosture()
+  }, [activeRail, activeSettingsTab])
+
+  useEffect(() => {
+    if (activeRail !== 'settings' || activeSettingsTab !== 'agents') return
+    fetchOsSandboxStatus()
   }, [activeRail, activeSettingsTab])
 
   useEffect(() => {
@@ -7504,6 +7537,73 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* OS Sandbox status panel — read-only, sourced from GET /api/os-sandbox/status */}
+        <div className="bg-white border border-slate-200 rounded-[10px] shadow-sm overflow-hidden">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: '#94a3b8' }}>
+              OS SANDBOX
+            </div>
+            <button
+              onClick={() => fetchOsSandboxStatus()}
+              className="px-2 py-1 text-xs border border-slate-300 rounded-[8px] bg-white hover:bg-slate-50 disabled:opacity-50"
+              disabled={osSandboxLoading}
+            >
+              {osSandboxLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <div style={{ padding: '12px 14px' }}>
+            {osSandboxLoading && !osSandboxStatus && (
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>Loading OS sandbox status…</div>
+            )}
+            {!osSandboxLoading && osSandboxError && !osSandboxStatus && (
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>OS sandbox status unavailable</div>
+            )}
+            {osSandboxStatus && (() => {
+              const rawStatus = String(osSandboxStatus.status || 'gray').toLowerCase()
+              const status = ['green', 'yellow', 'red', 'gray'].includes(rawStatus) ? rawStatus : 'gray'
+              const statusLabel = { green: 'Enforcing', yellow: 'Monitor / Partial', red: 'Misconfigured', gray: 'Off' }[status]
+              const rationale = String(osSandboxStatus.rationale || '')
+              const sig = osSandboxStatus.signal || {}
+              const signalRows = [
+                { label: 'Mode', value: String(sig.os_sandbox_mode || '—') },
+                { label: 'Launcher selected', value: String(sig.os_sandbox_launcher_selected || 'none') },
+                { label: 'Confinement capable', value: sig.os_sandbox_confined_capable === true ? 'Yes' : sig.os_sandbox_confined_capable === false ? 'No' : '—' },
+                { label: 'Fail-closed misconfig', value: sig.os_sandbox_fail_closed_misconfig === true ? 'Yes (error)' : sig.os_sandbox_fail_closed_misconfig === false ? 'No' : '—' },
+                { label: 'On setup failure', value: String(sig.os_sandbox_on_setup_failure || '—') },
+              ].filter((row) => row.value && row.value !== '—')
+              return (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: rationale ? 8 : 0 }}>
+                    <span className={`posture-badge ${status}`}>{statusLabel}</span>
+                  </div>
+                  {rationale && (
+                    <div style={{ fontSize: 12, color: '#374151', marginBottom: signalRows.length ? 10 : 0, lineHeight: 1.5 }}>
+                      {rationale}
+                    </div>
+                  )}
+                  {signalRows.length > 0 && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 14px', fontSize: 12 }}>
+                      {signalRows.map((row) => (
+                        <React.Fragment key={row.label}>
+                          <span style={{ color: '#94a3b8', whiteSpace: 'nowrap' }}>{row.label}</span>
+                          <span style={{
+                            color: row.label === 'Fail-closed misconfig' && row.value === 'Yes (error)' ? '#dc2626'
+                              : row.label === 'Confinement capable' && row.value === 'Yes' ? '#15803d'
+                              : '#374151',
+                            fontWeight: row.label === 'Fail-closed misconfig' && row.value === 'Yes (error)' ? 600 : 400,
+                          }}>
+                            {row.value}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        </div>
       </div>
     )
   }
