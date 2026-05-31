@@ -166,6 +166,33 @@ def _server_block(workspace: pathlib.Path, agent_id: str) -> dict[str, Any]:
     }
 
 
+def _bridged_server_block(
+    workspace: pathlib.Path,
+    agent_id: str,
+    socket_path: str,
+) -> dict[str, Any]:
+    """Return the MCP server block pointing at the in-sandbox shim (bridged mode).
+
+    Mirrors ``agent_configs._bridged_server_process``:
+    - command = current Python interpreter (same deterministic idiom as _server_process)
+    - args    = [path to scripts/airg_stdio_bridge.py]
+    - env     = AIRG_AGENT_ID + AIRG_WORKSPACE + AIRG_SOCKET_PATH
+    """
+    from agent_configs import _bridge_shim_path  # type: ignore[import]
+
+    python = str(pathlib.Path(sys.executable).resolve())
+    shim = str(_bridge_shim_path())
+    return {
+        "command": python,
+        "args": [shim],
+        "env": {
+            "AIRG_AGENT_ID": str(agent_id or "").strip() or "default",
+            "AIRG_WORKSPACE": str(workspace),
+            "AIRG_SOCKET_PATH": socket_path,
+        },
+    }
+
+
 def _target_file_for_scope(agent_type: str, workspace: pathlib.Path, scope: str) -> pathlib.Path:
     normalized = str(agent_type or "").strip().lower()
     if normalized == "claude_desktop":
@@ -674,7 +701,7 @@ def _codex_trust_plan(workspace: pathlib.Path, previous: dict[str, Any] | None) 
     }
 
 
-def _build_plan(profile: dict[str, Any]) -> dict[str, Any]:
+def _build_plan(profile: dict[str, Any], *, bridged: bool = False) -> dict[str, Any]:
     agent_type, workspace, scope, agent_id = _validate_profile(profile)
     target_path = _target_file_for_scope(agent_type, workspace, scope)
     previous = _normalize_last_applied(profile.get("last_applied"))
@@ -702,14 +729,18 @@ def _build_plan(profile: dict[str, Any]) -> dict[str, Any]:
         elif target_changed and (workspace_changed or agent_id_changed):
             requires_previous_choice = True
 
+    # Build the initial server block using the direct path.  If bridged=True,
+    # plan_apply (which has access to `paths`) will patch this to the shim block.
+    entry = _server_block(workspace, agent_id)
+
     return {
         "agent_type": agent_type,
         "scope": scope,
         "workspace": str(workspace),
         "agent_id": agent_id,
         "target_path": str(target_path),
-        "server_entry": _server_block(workspace, agent_id),
-        "preview_json": {"mcpServers": {"ai-runtime-guard": _server_block(workspace, agent_id)}},
+        "server_entry": entry,
+        "preview_json": {"mcpServers": {"ai-runtime-guard": entry}},
         "previous": previous,
         "scope_changed": scope_changed,
         "workspace_changed": workspace_changed,
@@ -718,12 +749,36 @@ def _build_plan(profile: dict[str, Any]) -> dict[str, Any]:
         "must_remove_previous": must_remove_previous,
         "requires_previous_choice": requires_previous_choice,
         "codex_project_trust": _codex_trust_plan(workspace, previous) if agent_type == "codex" and scope == "project" else None,
+        "bridged": bridged,
     }
 
 
-def plan_apply(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> dict[str, Any]:
+def plan_apply(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    bridged: bool = False,
+) -> dict[str, Any]:
+    """Build the apply plan for an agent profile.
+
+    Parameters
+    ----------
+    bridged:
+        If True, the plan's ``server_entry`` will point at the in-sandbox shim
+        (``scripts/airg_stdio_bridge.py``) with ``AIRG_SOCKET_PATH`` set to the
+        per-agent socket path.  Default is False (direct-stdio AIRG spawn).
+    """
     try:
-        plan = _build_plan(profile)
+        plan = _build_plan(profile, bridged=bridged)
+        if bridged:
+            # Patch in the real socket_path now that we have `paths`.
+            from agent_configs import _agent_socket_path_for_config  # type: ignore[import]
+
+            socket_path = str(_agent_socket_path_for_config(_state_dir(paths), plan["agent_id"]))
+            workspace = pathlib.Path(str(plan["workspace"])).resolve()
+            entry = _bridged_server_block(workspace, plan["agent_id"], socket_path)
+            plan["server_entry"] = entry
+            plan["preview_json"] = {"mcpServers": {"ai-runtime-guard": entry}}
         return {"ok": True, "plan": plan}
     except Exception as exc:
         return {"ok": False, "errors": [str(exc)]}
@@ -1040,8 +1095,18 @@ def apply_mcp_config(
     remove_previous: bool | None = None,
     manage_codex_trust: bool | None = None,
     dry_run: bool = False,
+    bridged: bool = False,
 ) -> dict[str, Any]:
-    planned = plan_apply(paths, profile)
+    """Apply the MCP config for an agent profile.
+
+    Parameters
+    ----------
+    bridged:
+        If True, write the bridged (in-sandbox shim) MCP config: ``command``
+        points at ``scripts/airg_stdio_bridge.py`` and ``AIRG_SOCKET_PATH`` is
+        set to the per-agent socket path.  Default is False (direct-stdio spawn).
+    """
+    planned = plan_apply(paths, profile, bridged=bridged)
     if not planned.get("ok"):
         return planned
 

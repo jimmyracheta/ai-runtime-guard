@@ -10,6 +10,46 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def _bridge_shim_path() -> pathlib.Path:
+    """Absolute path to scripts/airg_stdio_bridge.py.
+
+    The shim lives at ``<project_root>/scripts/airg_stdio_bridge.py``.
+    Resolves relative to this module's location: src/ → parent → scripts/.
+    """
+    here = pathlib.Path(__file__).resolve().parent  # src/
+    # Editable source layout: src/ is one level below the repo root.
+    if here.name == "src" and (here.parent / "scripts" / "airg_stdio_bridge.py").exists():
+        return (here.parent / "scripts" / "airg_stdio_bridge.py").resolve()
+    # Installed/flat layout fallback: look sibling scripts/ next to this file.
+    alt = here / "scripts" / "airg_stdio_bridge.py"
+    if alt.exists():
+        return alt.resolve()
+    # Final fallback: return the canonical source-layout path even if absent
+    # (config generation is valid regardless; the shim must be present at runtime).
+    return (here.parent / "scripts" / "airg_stdio_bridge.py").resolve()
+
+
+def _agent_socket_path_for_config(state_dir: pathlib.Path, agent_id: str) -> pathlib.Path:
+    """Return the per-agent bridge socket path using the SAME convention as
+    ``airg_cli._agent_socket_path()`` (transport-bridge-design.md §4.2):
+    ``$AIRG_STATE_DIR/sockets/<agent_id>.sock``.
+
+    Unlike the CLI version this function does NOT create the sockets/ directory
+    (pure path computation for config generation; actual dir creation happens
+    when the AIRG server starts via ``airg_cli._agent_socket_path``).
+    The path formula is kept in sync by delegation: we import the private helper
+    from airg_cli so the convention stays in exactly one place.
+    """
+    try:
+        import airg_cli as _airg_cli  # type: ignore[import]
+        return _airg_cli._agent_socket_path(state_dir, agent_id)
+    except Exception:
+        # Fallback: replicate the exact formula verbatim so tests remain runnable
+        # even if airg_cli has an import-time side effect or circular import issue.
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id or "default")
+        return (state_dir / "sockets" / f"{safe_id}.sock").resolve()
+
+
 AGENT_TYPES = [
     {"id": "claude_code", "label": "Claude Code"},
     {"id": "claude_desktop", "label": "Claude Desktop"},
@@ -216,10 +256,39 @@ def _server_process() -> tuple[str, list[str]]:
     return str(pathlib.Path(sys.executable).resolve()), ["-m", "airg_cli", "server"]
 
 
-def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+def _bridged_server_process(socket_path: str) -> tuple[str, list[str], dict[str, str]]:
+    """Return (command, args, extra_env) for the in-sandbox shim (bridged mode).
+
+    In bridged mode the MCP client spawns ``scripts/airg_stdio_bridge.py``
+    over stdio (instead of spawning AIRG directly).  The shim reads
+    ``AIRG_SOCKET_PATH`` from its environment and forwards bytes to the AIRG
+    server running OUTSIDE the sandbox over an AF_UNIX socket.
+
+    The command is always ``sys.executable`` (the current Python interpreter),
+    matching the deterministic-interpreter idiom used by ``_server_process()``.
+    The args list is ``[str(_bridge_shim_path())]``.
+    The returned extra_env dict must be merged into the MCP server env block
+    alongside AIRG_AGENT_ID / AIRG_WORKSPACE.
+    """
+    python = str(pathlib.Path(sys.executable).resolve())
+    shim = str(_bridge_shim_path())
+    extra_env = {"AIRG_SOCKET_PATH": socket_path}
+    return python, [shim], extra_env
+
+
+def _claude_code_payload(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    socket_path: str = "",
+) -> tuple[dict[str, Any], dict[str, Any], str, str]:
     scope = _normalize_scope("claude_code", profile.get("agent_scope"))
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
-    server_command, server_args = _server_process()
+    if socket_path:
+        server_command, server_args, extra_env = _bridged_server_process(socket_path)
+        env = {**env, **extra_env}
+    else:
+        server_command, server_args = _server_process()
     add_json_payload = {
         "type": "stdio",
         "command": server_command,
@@ -256,10 +325,19 @@ def _claude_code_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]
     return add_json_payload, file_payload, command, instructions, remove_command
 
 
-def _codex_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
+def _codex_payload(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    socket_path: str = "",
+) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
     scope = _normalize_scope("codex", profile.get("agent_scope"))
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
-    server_command, server_args = _server_process()
+    if socket_path:
+        server_command, server_args, extra_env = _bridged_server_process(socket_path)
+        env = {**env, **extra_env}
+    else:
+        server_command, server_args = _server_process()
     server_block = {
         "command": server_command,
         "args": server_args,
@@ -293,10 +371,19 @@ def _codex_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> t
     return server_block, file_payload, command, instructions, remove_command
 
 
-def _cursor_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
+def _cursor_payload(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    socket_path: str = "",
+) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
     scope = _normalize_scope("cursor", profile.get("agent_scope"))
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
-    server_command, server_args = _server_process()
+    if socket_path:
+        server_command, server_args, extra_env = _bridged_server_process(socket_path)
+        env = {**env, **extra_env}
+    else:
+        server_command, server_args = _server_process()
     server_block = {
         "command": server_command,
         "args": server_args,
@@ -319,9 +406,18 @@ def _cursor_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> 
     return server_block, file_payload, command, instructions, remove_command
 
 
-def _placeholder_payload(paths: dict[str, pathlib.Path], profile: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
+def _placeholder_payload(
+    paths: dict[str, pathlib.Path],
+    profile: dict[str, Any],
+    *,
+    socket_path: str = "",
+) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
     env = _shared_env(paths, profile["workspace"], profile["agent_id"])
-    server_command, server_args = _server_process()
+    if socket_path:
+        server_command, server_args, extra_env = _bridged_server_process(socket_path)
+        env = {**env, **extra_env}
+    else:
+        server_command, server_args = _server_process()
     server_block = {
         "command": server_command,
         "args": server_args,
@@ -469,7 +565,34 @@ def set_last_applied(
     return {"ok": True, "profile": updated, "profiles": next_profiles}
 
 
-def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_file: bool = False) -> dict[str, Any]:
+def generate_config(
+    paths: dict[str, pathlib.Path],
+    profile_id: str,
+    *,
+    save_to_file: bool = False,
+    bridged: bool = False,
+) -> dict[str, Any]:
+    """Generate the MCP server config for a registered agent profile.
+
+    Parameters
+    ----------
+    paths:
+        Runtime path dict (policy, approval_db, etc.).
+    profile_id:
+        ID of the profile to generate config for.
+    save_to_file:
+        If True, write the generated JSON and instructions to the registry dir.
+    bridged:
+        If True, emit the **bridged (in-sandbox shim) MCP config** instead of
+        the default direct-stdio AIRG spawn.  In bridged mode the MCP client
+        config points at ``scripts/airg_stdio_bridge.py`` (via ``sys.executable``)
+        and includes ``AIRG_SOCKET_PATH=<per-agent socket path>`` in the env
+        block.  The per-agent socket path is derived from ``_agent_socket_path``
+        in ``airg_cli`` (same convention: ``$state_dir/sockets/<agent_id>.sock``).
+
+        Default is ``False`` — the direct-stdio config is unchanged and this
+        parameter is purely additive (existing callers are unaffected).
+    """
     registry = load_registry(paths)
     profiles = [_normalize_profile(p) for p in registry.get("profiles", [])]
     profile = next((p for p in profiles if p["profile_id"] == profile_id), None)
@@ -480,17 +603,32 @@ def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_
     if not ok:
         return {"ok": False, "errors": errors}
 
+    # Compute the per-agent bridge socket path when bridged mode is requested.
+    # Always use the same convention as airg_cli._agent_socket_path so the
+    # config path matches what the server will actually listen on.
+    socket_path = ""
+    if bridged:
+        socket_path = str(_agent_socket_path_for_config(_state_dir(paths), normalized["agent_id"]))
+
     if normalized["agent_type"] == "claude_code":
-        command_json, file_json, command_text, instructions, remove_command = _claude_code_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _claude_code_payload(
+            paths, normalized, socket_path=socket_path
+        )
         placeholder = False
     elif normalized["agent_type"] == "cursor":
-        command_json, file_json, command_text, instructions, remove_command = _cursor_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _cursor_payload(
+            paths, normalized, socket_path=socket_path
+        )
         placeholder = False
     elif normalized["agent_type"] == "codex":
-        command_json, file_json, command_text, instructions, remove_command = _codex_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _codex_payload(
+            paths, normalized, socket_path=socket_path
+        )
         placeholder = False
     else:
-        command_json, file_json, command_text, instructions, remove_command = _placeholder_payload(paths, normalized)
+        command_json, file_json, command_text, instructions, remove_command = _placeholder_payload(
+            paths, normalized, socket_path=socket_path
+        )
         placeholder = True
 
     generated_at = _now_iso()
@@ -525,6 +663,7 @@ def generate_config(paths: dict[str, pathlib.Path], profile_id: str, *, save_to_
             "agent_type": normalized["agent_type"],
             "generated_at": generated_at,
             "placeholder": placeholder,
+            "bridged": bridged,
             "command_json": command_json,
             "command_text": command_text,
             "remove_command": remove_command,
