@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+      # Never trigger PyPI publishing for experimental/dev tags (e.g. v3.0.dev*).
+      - "!v*dev*"
   workflow_dispatch:
     inputs:
       target:
@@ -17,6 +19,11 @@ on:
 
 jobs:
   build:
+    # Belt-and-suspenders with the tag filter above: experimental/dev tags
+    # (e.g. v3.0.dev*) must NEVER build/publish to PyPI and must not fail CI on
+    # the tag/version gate. Only real release tags (no "dev") or an explicit
+    # workflow_dispatch run this job.
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.ref_name, 'dev') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
